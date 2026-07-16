@@ -141,6 +141,16 @@ gotchas), not human onboarding.
       (rebuild/rename/delete/split-save paths). SplitPlot data trace is
       colorFor(i+1) (orange first) so it can't melt into the blue TP
       region overlays.
+- [x] Mode-bar test picker + panel sources (2026-07-16, user request) —
+      the header test dropdown is gone; a 'test:' picker appears in the
+      right-panel mode bar only when a single-test view needs it (Full
+      test, or Spectrum/XY sourced from 'full'), and in the Split/Edit
+      toolbars. Spectrum and XY have an 'of: TPs | full' source toggle
+      (states specSource/xySource, default 'tp'): TP source overlays one
+      spectrum / XY point cloud PER selected test point, computed over the
+      TP's own range in its own test (cross-test), drawn in TP colors.
+      SelectedTestPoint carries endS (open-ended TPs resolved to next TP /
+      data end at selection time) because those fetches need a real range.
 
 ## Windows gotchas (hard-won)
 
