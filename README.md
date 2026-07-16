@@ -40,6 +40,39 @@ Double-click **`start.bat`** — backend on http://127.0.0.1:8000, UI on
 http://localhost:3000 (both as minimized windows; the backend auto-restarts
 if it ever crashes). **`stop.bat`** shuts both down.
 
+## Install (Linux)
+
+The Python 3.13 pin is Windows-only (a Polars bug there) — on Linux any
+Python **3.11+** works, and Node must be **18+**. Ubuntu 24.04 satisfies
+both out of the box:
+
+```bash
+sudo apt update && sudo apt install -y git python3 python3-venv nodejs npm
+
+git clone https://github.com/onurokumus/kiha_test.git
+cd kiha_test
+
+cd backend
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+cd ../frontend
+npm install
+cd ..
+```
+
+On older distros: get Python 3.11+ from the deadsnakes PPA (Ubuntu) or
+pyenv, and Node 18+ via nvm.
+
+Run with **`./start.sh`** (backend + UI in the background, logs in
+`backend/backend.log` and `frontend/vite.log`), stop with **`./stop.sh`**.
+Or run the two halves manually in separate terminals:
+
+```bash
+cd backend && .venv/bin/python run.py     # http://127.0.0.1:8000
+cd frontend && npm run dev                # http://localhost:3000
+```
+
 ## First use
 
 Test data is not stored in git, so a fresh clone starts empty:
