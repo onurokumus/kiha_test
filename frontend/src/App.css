@@ -1,0 +1,109 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #1e1e1e;
+  color: #e0e0e0;
+  overflow: hidden;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+button {
+  font-family: inherit;
+}
+
+select {
+  font-family: inherit;
+}
+
+/* Utility classes shared by the split editor and DSP panels
+   (same look as the FMS-styled inline components). */
+.btn {
+  background: #3c3c3c;
+  color: #e0e0e0;
+  border: 1px solid #555;
+  padding: 3px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.btn:hover {
+  background: #4a4a4a;
+}
+.btn:disabled {
+  background: #2d2d2d;
+  color: #666;
+  border-color: #3c3c3c;
+  cursor: not-allowed;
+}
+
+.btn-toggle {
+  background: #3c3c3c;
+  color: #909090;
+  border: 1px solid #555;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.btn-toggle.active {
+  background: #1e3a52;
+  color: #569cd6;
+  border-color: #569cd6;
+}
+
+.panel {
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  padding: 8px;
+}
+
+.input {
+  background: #3c3c3c;
+  color: #e0e0e0;
+  border: 1px solid #555;
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-size: 11px;
+  outline: none;
+  width: 100%;
+}
+.input:focus {
+  border-color: #569cd6;
+}
+
+input[type='checkbox'] {
+  accent-color: #569cd6;
+}
+
+.badge {
+  font-size: 10px;
+  color: #569cd6;
+  background: #1e3a52;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #a0a0a0;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}

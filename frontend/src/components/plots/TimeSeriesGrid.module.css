@@ -1,0 +1,41 @@
+.gridContainer {
+  display: grid;
+  gap: 8px;
+  flex: 1;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.gridNormal {
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+}
+
+.gridExpanded {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+
+.plotWrapper {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  opacity: 1;
+}
+
+.plotWrapperHidden {
+  display: none;
+}
+
+.plotWrapperVisible {
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
