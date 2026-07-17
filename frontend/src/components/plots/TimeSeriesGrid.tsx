@@ -1,5 +1,6 @@
 import React from 'react';
-import { SelectedTestPoint, TimePlotConfig } from '../../types';
+import { FilterSpec, SelectedTestPoint, TimePlotConfig } from '../../types';
+import { DEFAULT_FILTER_UI, FilterUi } from '../../constants/filters';
 import { TimePlot } from './TimePlot';
 import { FullTestPlot } from './FullTestPlot';
 import { SpectrumPlot } from './SpectrumPlot';
@@ -11,7 +12,6 @@ export type TimeViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
 interface TimeSeriesGridProps {
   viewMode: TimeViewMode;
   test: string;
-  fs?: number | null;
   columns: string[];
   selectedTPs: SelectedTestPoint[];
   hiddenTPs: Set<string>;
@@ -23,8 +23,16 @@ interface TimeSeriesGridProps {
   specMode: 'fft' | 'welch';
   specLogY: boolean;
   specSource: 'tp' | 'full';
+  /** Active test's sample rate (Nyquist hint in per-plot filter rows). */
+  fs: number | null;
+  /** Per-plot DSP filters (dashed overlays), index-aligned with plotConfigs. */
+  plotFilters: FilterUi[];
+  plotFilterSpecs: (FilterSpec | null)[];
+  onPlotFilterChange?: (index: number, patch: Partial<FilterUi>) => void;
   xySource: 'tp' | 'full';
-  xCol: string;
+  /** Per-plot X columns for XY mode, index-aligned with plotConfigs. */
+  xyXCols: string[];
+  onXYXColChange?: (index: number, col: string) => void;
   columnsByTest: Record<string, string[]>;
   isEditMode?: boolean;
   plotConfigs: string[];
@@ -34,7 +42,6 @@ interface TimeSeriesGridProps {
 export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   viewMode,
   test,
-  fs,
   columns,
   selectedTPs,
   hiddenTPs,
@@ -46,8 +53,13 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   specMode,
   specLogY,
   specSource,
+  fs,
+  plotFilters,
+  plotFilterSpecs,
+  onPlotFilterChange,
   xySource,
-  xCol,
+  xyXCols,
+  onXYXColChange,
   columnsByTest,
   isEditMode = false,
   plotConfigs,
@@ -85,12 +97,19 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
           allConfigs,
           onConfigChange: (newKey: string) => handleConfigChange(idx, newKey),
         };
+        const filterProps = {
+          fs,
+          filterSpec: plotFilterSpecs[idx] ?? null,
+          filterUi: plotFilters[idx] ?? DEFAULT_FILTER_UI,
+          onFilterUiChange: (patch: Partial<FilterUi>) => onPlotFilterChange?.(idx, patch),
+        };
 
         return (
           <div key={`plot-${idx}`} className={wrapperClass}>
             {viewMode === 'tp' && (
               <TimePlot
                 {...shared}
+                {...filterProps}
                 selectedTPs={selectedTPs}
                 hiddenTPs={hiddenTPs}
                 zoomDomain={timeZoom}
@@ -101,8 +120,8 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
             {viewMode === 'full' && (
               <FullTestPlot
                 {...shared}
+                {...filterProps}
                 test={test}
-                fs={fs}
                 range={timeZoom}
                 onRangeChange={onTimeZoomChange}
                 onZoomReset={onTimeZoomReset}
@@ -125,7 +144,8 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
               <XYPlot
                 {...shared}
                 test={test}
-                xCol={xCol}
+                xCol={xyXCols[idx] ?? ''}
+                onXColChange={(c) => onXYXColChange?.(idx, c)}
                 source={xySource}
                 selectedTPs={selectedTPs}
                 hiddenTPs={hiddenTPs}

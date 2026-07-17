@@ -6,6 +6,7 @@ CLI:  python -m app.ingest <csv_path> <test_name>
 """
 
 import json
+import logging
 import shutil
 import sys
 import time
@@ -23,6 +24,8 @@ from .locks import test_write
 from .store import write_json_atomic
 
 NULL_VALUES = ["", "nan", "NaN", "NAN", "null", "NULL", "None"]
+
+logger = logging.getLogger("kiha.ingest")
 
 
 def detect_time_column(columns):
@@ -135,17 +138,24 @@ def build_pyramid(parquet_path: Path, pyr_dir: Path, time_col: str):
     return nan_counts, {f: writers[f].n_rows for f in PYRAMID_LEVELS}
 
 
-def ingest_csv(csv_path: Path, name: str, copy_raw: bool = False) -> dict:
-    """Ingest one test while excluding lifecycle operations for that name."""
+def ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
+               source_name: str | None = None) -> dict:
+    """Ingest one test while excluding lifecycle operations for that name.
+
+    source_name: original file name for meta.source_file — API uploads
+    stream into raw.csv, so csv_path.name would lose what the user sent.
+    """
     with test_write(name):
-        return _ingest_csv(csv_path, name, copy_raw)
+        return _ingest_csv(csv_path, name, copy_raw, source_name)
 
 
-def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False) -> dict:
+def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
+                source_name: str | None = None) -> dict:
     csv_path = Path(csv_path)
     test_dir = TESTS_DIR / name
     test_dir.mkdir(parents=True, exist_ok=True)
     _write_status(test_dir, "ingesting")
+    logger.info("ingest '%s': started (%s)", name, csv_path.name)
     t0 = time.time()
     try:
         if copy_raw and csv_path.resolve() != (test_dir / "raw.csv").resolve():
@@ -181,7 +191,7 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False) -> dict:
 
         meta = {
             "name": name,
-            "source_file": csv_path.name,
+            "source_file": source_name or csv_path.name,
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "n_rows": n_rows,
             "n_columns": len(columns),
@@ -199,9 +209,12 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False) -> dict:
         }
         write_json_atomic(test_dir / "meta.json", meta)
         _write_status(test_dir, "ready")
+        logger.info("ingest '%s': ready — %d rows x %d cols in %.1f s",
+                    name, n_rows, len(columns), meta["ingest_seconds"])
         return meta
     except Exception as e:
         _write_status(test_dir, "error", repr(e))
+        logger.exception("ingest '%s': FAILED", name)
         raise
 
 

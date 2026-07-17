@@ -54,6 +54,27 @@ export const PointSelectionMenu: React.FC<PointSelectionMenuProps> = ({
     setAdjustedPosition({ x: newX, y: newY });
   }, [position]);
 
+  // The menu stays open across selections (multi-select from a cluster), so
+  // outside-close must NOT consume the outside event. A full-screen invisible
+  // backdrop used to do this and ate the first click on anything else in the
+  // app after a menu selection (grid expand/minimize buttons appeared dead).
+  // Document-level listeners close the menu while the control under the
+  // cursor still receives its click. Wheel over the menu never reaches
+  // document (the panel stops propagation for its own scrolling).
+  useEffect(() => {
+    const closeIfOutside = (e: Event) => {
+      const t = e.target as Node | null;
+      if (t && menuRef.current && menuRef.current.contains(t)) return;
+      onClose();
+    };
+    document.addEventListener('mousedown', closeIfOutside);
+    document.addEventListener('wheel', closeIfOutside);
+    return () => {
+      document.removeEventListener('mousedown', closeIfOutside);
+      document.removeEventListener('wheel', closeIfOutside);
+    };
+  }, [onClose]);
+
   // Filter points based on search text
   const filteredPoints = useMemo(() => {
     if (!searchText.trim()) {
@@ -71,20 +92,6 @@ export const PointSelectionMenu: React.FC<PointSelectionMenuProps> = ({
 
   return (
     <>
-      {/* Backdrop to close menu */}
-      <div
-        data-menu-container
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: 999,
-        }}
-        onClick={onClose}
-      />
-
       {/* Menu */}
       <div
         ref={menuRef}
@@ -144,7 +151,7 @@ export const PointSelectionMenu: React.FC<PointSelectionMenuProps> = ({
         <div style={{ padding: '8px 12px', borderBottom: '1px solid #3c3c3c' }}>
           <input
             type="text"
-            placeholder="Search by tail, flight, TP, maneuver..."
+            placeholder="Search by test, TP, label..."
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
             onClick={(e) => e.stopPropagation()}

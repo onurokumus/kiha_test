@@ -23,9 +23,6 @@ interface SelectedPointsPanelProps {
   onSpecModeChange: (mode: 'fft' | 'welch') => void;
   specLogY: boolean;
   onSpecLogYChange: (logY: boolean) => void;
-  columns: string[];
-  xCol: string;
-  onXColChange: (col: string) => void;
   /** Active test for full-test-sourced views (moved here from the header). */
   tests: TestInfo[];
   currentTest: string;
@@ -54,9 +51,6 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
   onSpecModeChange,
   specLogY,
   onSpecLogYChange,
-  columns,
-  xCol,
-  onXColChange,
   tests,
   currentTest,
   onTestChange,
@@ -92,8 +86,9 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
         gap: 8,
         alignItems: 'flex-start',
         alignContent: 'flex-start',
-        height: 42,
-        overflow: 'hidden',
+        // auto height: wrapped rows (filter params, many chips) must stay
+        // visible — a fixed 42px clipped them invisibly (bug 1.13)
+        minHeight: 42,
       }}
     >
       {modeButton('tp', 'Test points')}
@@ -148,31 +143,17 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
           </select>
         </>
       )}
-      {viewMode === 'xy' && (
-        <>
-          <span style={{ color: '#a0a0a0', fontSize: 12, lineHeight: '24px' }}>X:</span>
-          <select
-            value={xCol}
-            onChange={(e) => onXColChange(e.target.value)}
-            style={{ ...SelectStyle, maxWidth: 150 }}
-          >
-            {columns.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-        </>
-      )}
       {viewMode === 'spectrum' && (
         <>
-          <button
-            onClick={() => onSpecModeChange(specMode === 'fft' ? 'welch' : 'fft')}
-            style={buttonStyle}
-            title="toggle FFT magnitude / Welch PSD"
+          <select
+            value={specMode}
+            onChange={(e) => onSpecModeChange(e.target.value as 'fft' | 'welch')}
+            style={{ ...SelectStyle, maxWidth: 140 }}
+            title="spectrum estimator"
           >
-            {specMode === 'fft' ? 'FFT' : 'Welch'}
-          </button>
+            <option value="fft">FFT magnitude</option>
+            <option value="welch">Welch PSD</option>
+          </select>
           <button
             onClick={() => onSpecLogYChange(!specLogY)}
             style={{
@@ -217,7 +198,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
             style={{ fontSize: 12 }}
             title={`${s.test}${s.label ? ` — ${s.label}` : ''}`}
           >
-            {s.name}
+            {s.name} <span style={{ color: '#909090', fontSize: 11 }}>· {s.test}</span>
           </span>
           {loadingTestPointIds.has(s.id) && (
             <span

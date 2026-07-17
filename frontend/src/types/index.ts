@@ -4,12 +4,33 @@
 /** One row of GET /api/tests */
 export interface TestInfo {
   name: string;
-  status: string; // 'ready' | 'ingesting' | 'error' | ...
+  status: string; // 'ready' | 'receiving' | 'ingesting' | 'error' | ...
   error?: string | null;
   n_rows?: number | null;
   fs_hz?: number | null;
   duration_s?: number | null;
   n_columns?: number | null;
+  source_file?: string | null;
+  /** UTC ISO; from meta.json, or dir creation time while receiving/ingesting
+   *  (same format — lexicographic sort is chronological). */
+  created_at?: string | null;
+  edited_at?: string | null;
+  ingest_seconds?: number | null;
+  /** Bytes on disk; grows live while a test is 'receiving'. */
+  size_bytes?: number | null;
+}
+
+/** One in-flight (or failed) CSV upload, shown as a header chip and as a
+ *  live row on the Uploads page. Progress entries live until the request
+ *  settles; error entries until dismissed. */
+export interface UploadItem {
+  id: number;
+  fileName: string;
+  /** Sanitized server-side test name — lets the Uploads page merge this
+   *  entry with the backend's 'receiving' row for the same transfer. */
+  testName: string;
+  progress: number | null; // 0..1 bytes sent; null = length unknown
+  error?: string;
 }
 
 /** meta.json — GET /api/tests/{name} */

@@ -16,6 +16,10 @@ export interface ClusteredData {
  * Clusters points based on pixel distance.
  * Points within clusterRadius pixels are grouped together.
  *
+ * In PTT this is overlap disambiguation, not a perf optimization: TP scatters
+ * are ~tens of points, but two TPs flown at the same condition land on the
+ * same pixel and become indistinguishable without the cluster badge.
+ *
  * @param data - Array of scatter data points with x, y coordinates
  * @param xMin - Minimum x value in current zoom
  * @param xMax - Maximum x value in current zoom
@@ -24,7 +28,7 @@ export interface ClusteredData {
  * @param chartWidth - Chart width in pixels
  * @param chartHeight - Chart height in pixels
  * @param clusterRadius - Radius in pixels for clustering (default: 20)
- * @param minPointsForCluster - Minimum points to form a cluster (default: 3)
+ * @param minPointsForCluster - Minimum points to form a cluster (default: 2)
  */
 export const clusterPoints = (
   data: ScatterDataPoint[],
@@ -35,19 +39,21 @@ export const clusterPoints = (
   chartWidth: number,
   chartHeight: number,
   clusterRadius: number = 20,
-  minPointsForCluster: number = 3
+  minPointsForCluster: number = 2
 ): ClusteredData => {
-  // Early exit for small datasets
-  if (data.length < minPointsForCluster * 2) {
+  // Too few points to ever form a cluster
+  if (data.length < minPointsForCluster) {
     return {
       clusters: [],
       individualPoints: data,
     };
   }
 
-  // Convert data coordinates to pixel coordinates
-  const xRange = xMax - xMin;
-  const yRange = yMax - yMin;
+  // Convert data coordinates to pixel coordinates. A zero range (constant
+  // column => every point shares that coordinate) must not divide to NaN —
+  // those points genuinely stack, which is exactly when clustering matters.
+  const xRange = xMax - xMin || 1;
+  const yRange = yMax - yMin || 1;
 
   const pointsWithPixels = data.map((point) => ({
     point,
@@ -111,44 +117,16 @@ export const clusterPoints = (
 };
 
 /**
- * Determines if clustering should be enabled based on zoom level and point count.
+ * Determines if clustering should be enabled.
  *
- * @param pointCount - Total number of points
- * @param zoomLevel - Current zoom level (1 = no zoom, >1 = zoomed in)
+ * FMS gated this on point count (>500) and zoom level because clustering was
+ * a perf optimization for 10k-point datasets. PTT scatters are small, so it
+ * is always on when there is anything to overlap: clustering is pixel-based,
+ * so zooming in still separates near-neighbors naturally, while truly
+ * coincident points keep their count badge at ANY zoom (no zoom cutoff —
+ * identical points never separate, a cutoff would re-hide them). The user
+ * toggle in App is the only off switch.
  */
-export const shouldEnableClustering = (pointCount: number, zoomLevel: number): boolean => {
-  // Enable clustering if:
-  // 1. More than 500 points AND zoom level < 4
-  // 2. More than 1500 points AND zoom level < 8
-  // 3. More than 3000 points always (unless heavily zoomed in)
-
-  if (pointCount > 3000 && zoomLevel < 15) return true;
-  if (pointCount > 1500 && zoomLevel < 8) return true;
-  if (pointCount > 500 && zoomLevel < 4) return true;
-
-  return false;
-};
-
-/**
- * Calculate zoom level from current bounds.
- */
-export const calculateZoomLevel = (
-  currentXMin: number,
-  currentXMax: number,
-  currentYMin: number,
-  currentYMax: number,
-  initialXMin: number,
-  initialXMax: number,
-  initialYMin: number,
-  initialYMax: number
-): number => {
-  const initialXRange = initialXMax - initialXMin;
-  const initialYRange = initialYMax - initialYMin;
-  const currentXRange = currentXMax - currentXMin;
-  const currentYRange = currentYMax - currentYMin;
-
-  const xZoom = initialXRange / currentXRange;
-  const yZoom = initialYRange / currentYRange;
-
-  return Math.max(xZoom, yZoom);
+export const shouldEnableClustering = (pointCount: number): boolean => {
+  return pointCount >= 2;
 };

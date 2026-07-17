@@ -5,6 +5,7 @@ import math
 import os
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -27,8 +28,41 @@ def list_tests() -> list[dict]:
                     "error": status.get("error"),
                     "n_rows": meta.get("n_rows"), "fs_hz": meta.get("fs_hz"),
                     "duration_s": meta.get("duration_s"),
-                    "n_columns": meta.get("n_columns")})
+                    "n_columns": meta.get("n_columns"),
+                    # Upload-history fields.  created_at falls back to the
+                    # directory creation time so receiving/ingesting/failed
+                    # tests (no meta.json yet) still sort chronologically.
+                    "source_file": meta.get("source_file"),
+                    "created_at": meta.get("created_at") or _dir_created_at(d),
+                    "edited_at": meta.get("edited_at"),
+                    "ingest_seconds": meta.get("ingest_seconds"),
+                    "size_bytes": _dir_size(d)})
     return out
+
+
+def _dir_created_at(d: Path) -> str | None:
+    """Directory creation time as UTC ISO (same format meta.created_at uses,
+    so lexicographic sort works across both sources)."""
+    try:
+        st = d.stat()
+    except OSError:
+        return None
+    ts = getattr(st, "st_birthtime", None) or st.st_ctime
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat(
+        timespec="seconds")
+
+
+def _dir_size(d: Path) -> int:
+    """Total bytes on disk. For a 'receiving' test this grows live with the
+    transfer (raw.csv is being appended), which the UI uses as progress."""
+    total = 0
+    for p in d.rglob("*"):
+        try:
+            if p.is_file():
+                total += p.stat().st_size
+        except OSError:
+            pass  # file replaced/removed mid-walk (status.json swaps)
+    return total
 
 
 def _read_json(p: Path):

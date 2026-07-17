@@ -7,6 +7,7 @@ import { MainScatterPlot } from './components/plots/MainScatterPlot';
 import { TimeSeriesGrid } from './components/plots/TimeSeriesGrid';
 import SplitView from './components/split/SplitView';
 import EditView from './components/edit/EditView';
+import UploadView from './components/upload/UploadView';
 import { useTestPointSelection } from './hooks/useTestPointSelection';
 import { useScatterFilter } from './hooks/useScatterFilter';
 import { useMainPlotZoom } from './hooks/useMainPlotZoom';
@@ -20,6 +21,7 @@ import {
   uploadTest,
 } from './services/api';
 import { noSelect } from './constants/styles';
+import { DEFAULT_FILTER_UI, FilterUi, buildFilterSpec } from './constants/filters';
 import {
   ScatterDataPoint,
   StatsCache,
@@ -27,6 +29,7 @@ import {
   TestMeta,
   TestPoint,
   TpStat,
+  UploadItem,
 } from './types';
 import './App.css';
 
@@ -49,17 +52,29 @@ function App() {
   const [plotConfigs, setPlotConfigs] = useState<string[]>([]);
   // Right-panel mode: 'tp' overlays selected TPs from t=0; 'full' browses the
   // active test with windowed pyramid reads; 'spectrum' FFT/Welch per column;
-  // 'xy' scatters each column against a shared X column.
+  // 'xy' scatters each column against that plot's own X column.
   const [viewMode, setViewMode] = useState<'tp' | 'full' | 'spectrum' | 'xy'>('tp');
   const [fullRange, setFullRange] = useState<[number, number] | null>(null);
   const [specMode, setSpecMode] = useState<'fft' | 'welch'>('fft');
   const [specLogY, setSpecLogY] = useState(false);
   // Spectrum/XY data source: selected test points, or the active test
   const [specSource, setSpecSource] = useState<'tp' | 'full'>('tp');
+  // Per-plot DSP filters (TP + Full test modes), dashed overlays. Each grid
+  // cell has a ≈ button (next to expand) that opens its own filter row —
+  // there is no shared/broadcast filter control.
+  const [plotFilters, setPlotFilters] = useState<FilterUi[]>(() =>
+    Array.from({ length: 9 }, () => DEFAULT_FILTER_UI)
+  );
   const [xySource, setXYSource] = useState<'tp' | 'full'>('tp');
-  const [xCol, setXCol] = useState('');
+  // Per-plot X columns for XY mode, index-aligned with plotConfigs (each XY
+  // cell picks its own X in Edit Plots mode — no shared X axis).
+  const [xyXCols, setXYXCols] = useState<string[]>([]);
   const [tab, setTab] = useState<AppTab>('analyze');
   const [notice, setNotice] = useState('');
+  // In-flight/failed uploads as persistent header chips — the transient
+  // notice auto-clears after 6 s, which must never hide a running upload.
+  const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const uploadSeq = useRef(0);
   const [isDragging, setIsDragging] = useState(false);
   const dragDepth = useRef(0);
   // Set while an /edit rebuild runs; the poller reloads the test when ready.
@@ -76,6 +91,9 @@ function App() {
     useTestPointSelection(MAX_SELECTED_POINTS);
 
   const { timeZoom, setTimeZoom, resetTimeZoom } = useTimeZoom();
+
+  /** Per-plot filter specs (null while 'none' or params incomplete). */
+  const plotFilterSpecs = useMemo(() => plotFilters.map(buildFilterSpec), [plotFilters]);
 
   /** Active test's meta — split/edit tabs and full/spectrum/xy modes use it. */
   const meta = metaByTest[currentTest] ?? null;
@@ -190,7 +208,11 @@ function App() {
     const cols = meta.columns.filter((c) => c !== meta.time_column);
     setXAxis((prev) => (unionColumns.includes(prev) ? prev : cols[0] || ''));
     setYAxis((prev) => (unionColumns.includes(prev) ? prev : cols[1] || cols[0] || ''));
-    setXCol((prev) => (cols.includes(prev) ? prev : cols[0] || ''));
+    setXYXCols((prev) =>
+      Array.from({ length: 9 }, (_, i) =>
+        prev[i] && cols.includes(prev[i]) ? prev[i] : cols[0] || ''
+      )
+    );
     setPlotConfigs((prev) => {
       const valid = prev.filter((c) => cols.includes(c));
       return valid.length > 0 ? valid : cols.slice(0, 9);
@@ -198,12 +220,19 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meta]);
 
-  // Poll the test list while any ingest or rebuild runs; auto-select the
+  // Poll the test list while any ingest or rebuild runs, or while the
+  // Uploads page is open (its whole point is live status); auto-select the
   // first ready test if none is selected, and reload the current test when
   // its rebuild completes.
+  const uploadsActive = uploads.some((u) => !u.error);
   useEffect(() => {
-    const busy = tests.some((t) => t.status === 'ingesting' || t.status === 'rebuilding');
-    if (!busy && !rebuildPending.current) return;
+    const busy = tests.some(
+      (t) => t.status === 'receiving' || t.status === 'ingesting' || t.status === 'rebuilding'
+    );
+    // uploadsActive: while a body is still streaming up, the new test only
+    // exists server-side as status 'receiving' — poll so it appears in the
+    // list without waiting for the POST to resolve.
+    if (!busy && !uploadsActive && !rebuildPending.current && tab !== 'uploads') return;
     const id = window.setInterval(async () => {
       try {
         const list = await fetchTests();
@@ -228,7 +257,7 @@ function App() {
       }
     }, 2000);
     return () => window.clearInterval(id);
-  }, [tests, currentTest, invalidateTest]);
+  }, [tests, uploadsActive, currentTest, invalidateTest]);
 
   // Auto-clear transient notices
   useEffect(() => {
@@ -238,24 +267,67 @@ function App() {
   }, [notice]);
 
   const handleUploadFiles = useCallback(async (files: File[]) => {
+    // Duplicate names must be caught BEFORE any bytes are sent: the backend
+    // 409s without reading the body, which aborts the connection mid-stream
+    // and surfaces to XHR as an opaque "network error" (and would waste a
+    // multi-GB transfer). The backend check stays authoritative for races.
+    let existing: Set<string>;
+    try {
+      existing = new Set((await fetchTests()).map((t) => t.name));
+    } catch {
+      existing = new Set(tests.map((t) => t.name));
+    }
     for (const f of files) {
       if (!f.name.toLowerCase().endsWith('.csv')) {
         setNotice(`${f.name}: only .csv files can be uploaded`);
         continue;
       }
-      setNotice(`uploading ${f.name}…`);
+      // Backend test names allow [A-Za-z0-9._-] only; sanitize instead of
+      // letting "my test (1).csv" die with a 400 the user may never read.
+      const testName = f.name
+        .replace(/\.[^.]+$/, '')
+        .replace(/[^A-Za-z0-9._-]+/g, '_');
+      const id = ++uploadSeq.current;
+      if (existing.has(testName)) {
+        setUploads((prev) => [
+          ...prev,
+          {
+            id,
+            fileName: f.name,
+            testName,
+            progress: 0,
+            error: `test '${testName}' already exists — delete or rename it first`,
+          },
+        ]);
+        continue;
+      }
+      existing.add(testName);
+      setUploads((prev) => [...prev, { id, fileName: f.name, testName, progress: 0 }]);
       try {
-        const res = await uploadTest(f);
-        setNotice(`${res.name}: ingesting…`);
+        const res = await uploadTest(f, testName, (fraction) =>
+          setUploads((prev) =>
+            prev.map((u) => (u.id === id ? { ...u, progress: fraction } : u))
+          )
+        );
+        setUploads((prev) => prev.filter((u) => u.id !== id));
+        setNotice(`${res.name}: upload complete, ingesting…`);
       } catch (e) {
-        setNotice(`${f.name}: ${e instanceof Error ? e.message : String(e)}`);
+        // Keep the chip (with the reason) until the user dismisses it.
+        const message = e instanceof Error ? e.message : String(e);
+        setUploads((prev) =>
+          prev.map((u) => (u.id === id ? { ...u, error: message } : u))
+        );
+      }
+      try {
+        setTests(await fetchTests());
+      } catch {
+        // list refresh failure is non-fatal; polling will catch up
       }
     }
-    try {
-      setTests(await fetchTests());
-    } catch {
-      // list refresh failure is non-fatal; polling will catch up
-    }
+  }, [tests]);
+
+  const dismissUpload = useCallback((id: number) => {
+    setUploads((prev) => prev.filter((u) => u.id !== id));
   }, []);
 
   // Switching back from the split editor: the active test's TP definitions
@@ -265,6 +337,41 @@ function App() {
     setTab(next);
     if (next === 'analyze' && currentTest) {
       invalidateTest(currentTest);
+    }
+    if (next === 'uploads') {
+      // Fresh history immediately; the 2 s poller takes over while open.
+      fetchTests().then(setTests).catch(() => {});
+    }
+  };
+
+  // -- Uploads tab callbacks --
+  const handleOpenTest = (name: string) => {
+    handleTestChange(name);
+    setTab('analyze');
+  };
+
+  const handleTestDeleted = async (name: string) => {
+    // Refresh the list BEFORE pruning caches (batched into one render):
+    // dropping metaByTest while `tests` still lists the deleted test makes
+    // the meta loader refetch it and 404.
+    try {
+      const list = await fetchTests();
+      setTests(list);
+      invalidateTest(name);
+      if (currentTest === name) {
+        const firstReady = list.find((t) => t.status === 'ready');
+        setCurrentTest(firstReady?.name ?? '');
+      }
+    } catch {
+      invalidateTest(name); // poller will fix the list
+    }
+  };
+
+  const handleTestsChanged = async () => {
+    try {
+      setTests(await fetchTests());
+    } catch {
+      // poller will catch up
     }
   };
 
@@ -506,15 +613,17 @@ function App() {
   };
 
   const handleTestGone = async (newName: string) => {
+    // Same ordering rule as handleTestDeleted: list first, then prune,
+    // batched — or the meta loader refetches the vanished name and 404s.
     const old = currentTest;
-    invalidateTest(old);
     if (newName) {
-      setCurrentTest(newName);
       try {
         setTests(await fetchTests());
       } catch {
         // list refresh is cosmetic here
       }
+      invalidateTest(old);
+      setCurrentTest(newName);
       return;
     }
     // deleted — fall back to the first ready test
@@ -522,15 +631,31 @@ function App() {
     try {
       const list = await fetchTests();
       setTests(list);
+      invalidateTest(old);
       const firstReady = list.find((t) => t.status === 'ready' && t.name !== old);
       setCurrentTest(firstReady?.name ?? '');
     } catch (e) {
+      invalidateTest(old);
       console.error('test list refresh failed:', e);
     }
   };
 
   const xLabel = xAxis ? `${xAxis} (TP mean)` : '';
   const yLabel = yAxis ? `${yAxis} (TP mean)` : '';
+
+  // Rendered from two places: the normal tab switch and the no-tests screen
+  // (the Uploads page must work before the first test exists).
+  const uploadView = (
+    <UploadView
+      tests={tests}
+      uploads={uploads}
+      onUploadFiles={handleUploadFiles}
+      onDismissUpload={dismissUpload}
+      onOpenTest={handleOpenTest}
+      onTestDeleted={handleTestDeleted}
+      onTestsChanged={handleTestsChanged}
+    />
+  );
 
   const dropOverlay = isDragging && (
     <div
@@ -552,8 +677,10 @@ function App() {
     </div>
   );
 
-  // Loading state (before the active test's meta is available)
-  if ((loading || (currentTest && !meta)) && !error) {
+  // Loading state (before the active test's meta is available). The Uploads
+  // page never needs meta — blanking it during a refetch would hide live
+  // status exactly when the user is watching it.
+  if ((loading || (currentTest && !meta)) && !error && tab !== 'uploads') {
     if (!currentTest && !loading) {
       // fall through to the no-tests screen below
     } else {
@@ -630,16 +757,22 @@ function App() {
           tab={tab}
           onTabChange={handleTabChange}
           onUploadFiles={handleUploadFiles}
+          uploads={uploads}
+          onDismissUpload={dismissUpload}
           notice={notice}
         />
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ textAlign: 'center', maxWidth: 500 }}>
-            <div style={{ marginBottom: 12, fontSize: 16 }}>No test data available</div>
-            <div style={{ color: '#909090', fontSize: 12 }}>
-              Upload a test CSV with the button above, or drop a .csv file anywhere in this window.
+        {tab === 'uploads' ? (
+          uploadView
+        ) : (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ textAlign: 'center', maxWidth: 500 }}>
+              <div style={{ marginBottom: 12, fontSize: 16 }}>No test data available</div>
+              <div style={{ color: '#909090', fontSize: 12 }}>
+                Upload a test CSV with the button above, or drop a .csv file anywhere in this window.
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     );
   }
@@ -664,10 +797,14 @@ function App() {
         tab={tab}
         onTabChange={handleTabChange}
         onUploadFiles={handleUploadFiles}
+        uploads={uploads}
+        onDismissUpload={dismissUpload}
         notice={notice}
       />
 
-      {tab === 'split' && meta ? (
+      {tab === 'uploads' ? (
+        uploadView
+      ) : tab === 'split' && meta ? (
         <SplitView
           test={currentTest}
           meta={meta}
@@ -729,7 +866,7 @@ function App() {
             />
             <div style={{ fontSize: 11, color: '#909090', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
               <span>Click to select/deselect • Scroll to zoom • Drag to pan</span>
-              {rawScatterData.length > 500 && (
+              {rawScatterData.length >= 2 && (
                 <button
                   onClick={() => setClusteringEnabled(!clusteringEnabled)}
                   style={{
@@ -793,9 +930,6 @@ function App() {
             onSpecModeChange={setSpecMode}
             specLogY={specLogY}
             onSpecLogYChange={setSpecLogY}
-            columns={unionColumns}
-            xCol={xCol}
-            onXColChange={setXCol}
             tests={tests}
             currentTest={currentTest}
             onTestChange={handleTestChange}
@@ -807,7 +941,6 @@ function App() {
           <TimeSeriesGrid
             viewMode={viewMode}
             test={currentTest}
-            fs={meta?.fs_hz ?? null}
             columns={dataColumns}
             selectedTPs={selectedTPs}
             hiddenTPs={hiddenTPs}
@@ -819,8 +952,25 @@ function App() {
             specMode={specMode}
             specLogY={specLogY}
             specSource={specSource}
+            fs={meta?.fs_hz ?? null}
+            plotFilters={plotFilters}
+            plotFilterSpecs={plotFilterSpecs}
+            onPlotFilterChange={(i, patch) =>
+              setPlotFilters((prev) => {
+                const next = [...prev];
+                next[i] = { ...(next[i] ?? DEFAULT_FILTER_UI), ...patch };
+                return next;
+              })
+            }
             xySource={xySource}
-            xCol={xCol}
+            xyXCols={xyXCols}
+            onXYXColChange={(i, c) =>
+              setXYXCols((prev) => {
+                const next = [...prev];
+                next[i] = c;
+                return next;
+              })
+            }
             columnsByTest={columnsByTest}
             isEditMode={isEditMode}
             plotConfigs={plotConfigs}

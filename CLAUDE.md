@@ -141,6 +141,40 @@ gotchas), not human onboarding.
       (rebuild/rename/delete/split-save paths). SplitPlot data trace is
       colorFor(i+1) (orange first) so it can't melt into the blue TP
       region overlays.
+- [x] Upload overhaul (2026-07-16, user bug report: "upload silently does
+      nothing / ingest starts minutes later") — root causes: (a) multipart
+      spooling hid the whole transfer from UI and logs, (b) the 6 s notice
+      auto-clear erased "uploading…" mid-flight, (c) Node requestTimeout
+      killed >5 min uploads. Now: raw-body streaming endpoint writes
+      status 'receiving' the moment headers arrive and logs
+      receive/ingest start+finish; client disconnect / truncation
+      discards the partial test dir (retry-safe); delete/rename/restart-
+      recovery treat 'receiving' like 'ingesting'. Frontend: XHR upload
+      with per-file header chips (live %, sticky dismissible error chips
+      — error text truncates but the ✕ never clips), duplicate names
+      pre-checked before sending bytes, names sanitized to the backend
+      charset, poller runs during uploads so the 'receiving' row shows
+      up. Vite dev/preview requestTimeout=0. Verified end-to-end in
+      headless Edge (98 MB button upload + synthetic drag-drop) plus
+      slow-chunked and mid-transfer-abort probes against uvicorn; 24/24
+      pytest. Playwright drop gotcha: dispatch DragEvent on a node INSIDE
+      #root — body is the root's parent, React never sees events
+      dispatched there.
+- [x] Overlap clustering revived (2026-07-16, user request: "can't see if two
+      points are on top of each other") — the forked FMS cluster machinery
+      (pointClustering.ts, ClusterDot, cluster->PointSelectionMenu) was wired
+      but dormant: shouldEnableClustering required >500 points (FMS perf
+      thresholds; PTT scatters are ~tens of TPs). Now it's overlap
+      disambiguation: always on for >=2 points (no zoom cutoff — coincident
+      points never separate by zooming), radius 30->14 px (dot r=6, so 14 =
+      "visually touching"), minPointsForCluster 3->2, zero-range guard in
+      clusterPoints (constant column => all stack => must still cluster),
+      calculateZoomLevel deleted. Cluster hover tooltip says "N overlapping
+      points"; toggle button shows at >=2 points (was >500). Verified in
+      headless Edge: 6x "2"-badges among 104 TPs, cluster click lists both
+      TPs (cross-test pair at same condition), zoom-in splits near-neighbors.
+      Playwright gotcha: query [data-menu-container] with count(), not
+      isVisible() (strict-mode).
 - [x] Mode-bar test picker + panel sources (2026-07-16, user request) —
       the header test dropdown is gone; a 'test:' picker appears in the
       right-panel mode bar only when a single-test view needs it (Full
@@ -151,6 +185,156 @@ gotchas), not human onboarding.
       TP's own range in its own test (cross-test), drawn in TP colors.
       SelectedTestPoint carries endS (open-ended TPs resolved to next TP /
       data end at selection time) because those fetches need a real range.
+- [x] Grid minimize broken with TPs selected (2026-07-16, user bug report)
+      — TWO stacked causes, both selection-dependent:
+      (1) CSS grid track lock (the real "won't minimize"): 1fr tracks are
+      minmax(auto, 1fr), and unlike FMS's Recharts (ResponsiveContainer,
+      no intrinsic size) uPlot canvases have hard pixel sizes. After
+      minimizing, the ex-expanded plot's ~950px canvas became its track's
+      auto minimum -> its row/col stayed expanded-sized, the other 6 cells
+      crushed to <40px where plots refuse to render (blank). Stable
+      feedback loop (canvas keeps cell big, cell keeps canvas big), so the
+      grid NEVER recovered; with nothing selected there are no canvases,
+      which is why minimize worked then. Fix: min-width/height: 0 +
+      overflow hidden on .plotWrapper (TimeSeriesGrid.module.css) — keep
+      those lines or the bug returns in every uPlot grid mode.
+      (2) PointSelectionMenu's invisible full-screen backdrop ate the
+      first click anywhere after a menu selection (menu deliberately stays
+      open for multi-select; latent since FMS, surfaced by always-on
+      clustering opening the menu on nearly every dot click). Fix:
+      backdrop deleted; menu closes on document-level mousedown/wheel
+      outside the panel WITHOUT consuming the event. Panel keeps
+      [data-menu-container] (MainScatterPlot.handleMouseDown pan guard).
+      Verified in headless Edge: expand->minimize returns to uniform 3x3
+      (9 canvases) in ALL four view modes, twice in a row; menu still
+      multi-selects, closes via X/outside-click. Separate PRE-EXISTING
+      find while sweeping modes: uPlot numAxisSplits throws RangeError
+      'Invalid array length' for constant-column plots in Spectrum/XY
+      (degenerate y-range -> tick incr underflow); logged in
+      possible_bugs.md, not fixed.
+- [x] Grid zoom styling + pan/wheel-zoom (2026-07-16, user report: "zoom
+      with mouse selection does not have proper styling; also drag etc") —
+      uPlot ships light-theme CSS: .u-select defaults to rgba(0,0,0,.07),
+      invisible on #1e1e1e, so the drag-zoom rectangle looked broken.
+      Global override in App.css, scoped `.uplot .u-select` so specificity
+      beats uPlot.min.css regardless of bundle CSS order (accent-tinted
+      fill + inset box-shadow edge lines — NOT borders: uPlot hides the
+      select by zeroing its size and borders still paint a 2px ghost on a
+      zero-width box; also neutral crosshair color). Cursor sync mirrors
+      the drag rectangle live on all 9 linked plots — that's uPlot sync,
+      not a bug. New utils/uplotPanZoom.ts xPanZoomPlugin:
+      wheel = x-zoom around cursor (0.85/notch), shift-drag or middle-drag
+      = x-pan; plain drag stays select-zoom. Pan gestures are kept away
+      from uPlot's select machinery via cursor.bind.mousedown (the
+      supported hook — capture-phase listeners DON'T work: at the event
+      target, capture/bubble fire in registration order and uPlot binds
+      first). setScale gives instant local feedback (uPlot setScales
+      assigns explicit min/max directly, bypassing a fixed range array —
+      verified in source, so it works on TimePlot's pinned x scale);
+      commits go upstream trailing-debounced 120 ms for wheel / on mouseup
+      for pan — NEVER per mousemove (a commit re-renders all 9 linked
+      plots and TimePlot rebuilds its uPlot per zoomDomain change).
+      destroy hook FLUSHES (not drops) a pending wheel commit: plots are
+      rebuilt whenever data lands, dropping would lose the last ticks.
+      Wired into TimePlot + FullTestPlot (commit = shared time zoom) and
+      SpectrumPlot (no commit — freq zoom is client-side); XYPlot left
+      alone (2D auto-scaled point cloud). Backend already clamps
+      out-of-range windows (store.read_window), so panning past the data
+      edges self-heals on refetch.
+
+- [x] XY overhaul (2026-07-17, user request: "crashes due to memory even with
+      single test point; want a different X variable per plot") — the OOM was
+      NOT data volume: uPlot mode-2 x auto-range is [dataMin, dataMax] with
+      ZERO padding (snapNumX), so a constant X column over the plotted range
+      (common inside one TP — tp_id, setpoints) collapses the scale to zero
+      width and numAxisSplits' tick loop (`val += incr` until val > scaleMax)
+      never advances past scaleMax → pushes ticks until the tab dies (bug
+      1.15b's RangeError = same loop dying earlier). Fix: safeRange in
+      constants/uplotTheme.ts — pads flat/near-flat auto-ranges (span <=
+      mag*1e-9 → ±mag*1e-3, else ±5%) — wired into BOTH scales of XYPlot and
+      SpectrumPlot. Only auto-ranging calls scale.range fns; explicit
+      setScale min/max (drag-zoom/pan) bypasses them, so zoom semantics are
+      untouched. Second half: per-plot X columns — App state xyXCols[9]
+      (index-aligned with plotConfigs, validated/defaulted alongside it),
+      shared "X:" picker removed from SelectedPointsPanel; in Edit Plots
+      mode each XY cell shows "[Y] vs [X]" selects (X changes only that
+      plot).
+
+- [x] DSP controls discoverable (2026-07-17, user request: "fft/welch as
+      dropdown — can't tell which is selected; also I don't see moving
+      average, high-pass, low-pass") — the FFT/Welch toggle button showed
+      only the CURRENT mode, and the Butterworth/moving-avg/detrend row
+      existed but only on EXPANDED full-test plots. Now: Spectrum bar has a
+      labeled <select> (FFT magnitude / Welch PSD); Full-test bar has the
+      whole filter row (none/LP/HP/BP/BS/moving avg/detrend + order/f1/f2/
+      window + Nyquist hint) SHARED across all 9 plots. Shared state:
+      App.filterUi (raw strings) -> buildFilterSpec (constants/filters.ts)
+      -> FullTestPlot.filterSpec prop; each plot still fetches its own
+      column's /filter overlay. Per-plot status: collapsed cells get a
+      'filt'/'filt!' header badge (tooltip = error text), expanded plots
+      keep the badge/warning/error text row (inputs removed). Side effect:
+      SelectedPointsPanel is now auto-height (minHeight 42, was fixed 42 +
+      overflow hidden) so wrapped controls/chips are visible — fixes
+      possible_bugs 1.13.
+
+- [x] TP filtering + per-plot filters (2026-07-17, user request: "filter test
+      points as well. also plots individually"; refined same day: "move the
+      filtering down to the 3x3 grid with a button near maximize/minimize")
+      — filter state is per-plot ONLY: App.plotFilters (FilterUi[9],
+      index-aligned with plotConfigs) -> buildFilterSpec ->
+      plotFilterSpecs; there is NO shared/broadcast filter control (a
+      mode-bar broadcast row existed for a few hours and was removed at
+      user request). Each TimePlot/FullTestPlot cell header has a ≈ button
+      next to the expand button: toggles that cell's FilterRow
+      (components/controls/FilterRow.tsx, the shared kind+params
+      fragment); row is also always visible when expanded. ≈ icon color =
+      FILTER_COLOR when a filter is active, red on error (tooltip = error
+      text). TimePlot TP filtering: per visible TP, /filter over the TP's
+      own absolute range in its OWN test ([tp.start_s, endS] — cross-test
+      correct, backend uses each test's fs), t shifted to relative, drawn
+      as dashed segments in the TP's color (envelope -> min+max pair,
+      raw -> one); fetched once per (spec, TP set, column) — zoom stays
+      client-side like the raw traces. Verified headless: ≈ on 9/9 cells
+      in both modes, opening one row + setting low-pass fetched ONLY that
+      plot (TP-ranged t0/t1), closing the row keeps the filter active
+      (yellow ≈), detrend on another cell -> 1 request; 0 pageerrors.
+      Nyquist hint uses the ACTIVE test's fs (informational only —
+      cross-test TPs still filter with their own test's fs server-side).
+      Collapsed-cell filter row is a FLOATING overlay (user: "should
+      appear left of the button so it doesnt squeeze the plots"):
+      position absolute in the header, left:0 right:58 (keeps ≈/expand
+      clickable), zIndex 6, elevated bg + shadow; wrapped param lines
+      float OVER the canvas top instead of pushing it down (canvas bbox
+      verified identical open/closed, even with band-pass's 4 inputs).
+      Expanded plots keep the normal in-flow row below the header.
+
+- [x] Uploads page (2026-07-17, TODO item: "upload page with upload history,
+      upload status etc.") — 4th header tab 'Uploads'
+      (components/upload/UploadView.tsx): dashed drop-zone/picker panel,
+      history table of every test newest-first (status chip, uploaded date,
+      original source file, size on disk, duration/rows/cols/fs, ingest
+      time), per-row Analyze→ (jumps to Analyze with that test active) and
+      Delete with an undo strip (restore from data/trash; restoreTest added
+      to api.ts). Backend list_tests() gained source_file/created_at/
+      edited_at/ingest_seconds/size_bytes — created_at falls back to dir
+      birthtime for receiving/error tests without meta.json (same UTC ISO
+      format, so lexicographic sort stays chronological), size_bytes grows
+      live during 'receiving' (shown as "N MB received"). Upload endpoint
+      takes ?source= (original client file name — raw-body uploads land in
+      raw.csv, which would otherwise be recorded as the source); uploadTest
+      sends it. UploadItem gained testName so the page merges a local
+      in-flight transfer (progress bar row) with the server's 'receiving'
+      row instead of showing both. App: poller also runs while the Uploads
+      tab is open (live status is the page's point); tab renders without
+      meta AND on the no-tests screen; loading early-return skips
+      tab==='uploads'. RACE FIX (found in headless verify, also applied to
+      EditView's handleTestGone): after delete/rename, refresh the test
+      list BEFORE invalidateTest, batched in one render — pruning
+      metaByTest while `tests` still holds the vanished name makes the
+      meta-loader effect refetch it and 404-spam the console. Verified
+      headless (Edge): upload→receiving→ready in-table, original filename
+      shown, Analyze nav, delete→undo→restore→delete, 0 console errors;
+      26/26 pytest.
 
 ## Windows gotchas (hard-won)
 
@@ -168,6 +352,24 @@ gotchas), not human onboarding.
 
 ## API gotchas (learned during Phase 0 verification)
 
+- POST /api/tests/upload takes the CSV as the RAW request body (`?name=`
+  required) — NOT multipart. Multipart made starlette spool the whole body
+  to a temp file before the endpoint ran: minutes of dead air for GB files
+  (no status.json, no log, and the 6 s notice auto-clear made the UI look
+  idle — the original "upload does nothing" bug). Status lifecycle:
+  receiving -> ingesting -> ready|error; aborted/truncated transfers
+  self-discard so a retry never 409s. Gotcha: an early 4xx (duplicate/bad
+  name) closes the connection before the body is read, which XHR reports
+  as an opaque network error — that's why App.handleUploadFiles pre-checks
+  duplicates against /api/tests BEFORE sending any bytes.
+- Node's HTTP server kills request bodies slower than 5 min
+  (requestTimeout=300 s default) — the vite plugin 'ptt:unlimited-upload-
+  time' (vite.config.ts) sets it to 0 on dev+preview servers or multi-GB
+  uploads through the proxy die mid-transfer with no trace anywhere.
+- kiha.* loggers only print because run.py calls logging.basicConfig —
+  uvicorn's dictConfig wires only its own uvicorn.* loggers, and bare
+  INFO records are otherwise dropped silently (logging.lastResort is
+  WARNING+). Don't remove that basicConfig.
 - POST /split/auto returns a BARE LIST proposal (does not persist); client
   must wrap it in the TestPointsFile shape {version, test, source_file,
   fs_hz, test_points} and PUT /testpoints.

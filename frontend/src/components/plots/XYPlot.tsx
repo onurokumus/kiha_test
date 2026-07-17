@@ -4,7 +4,7 @@ import 'uplot/dist/uPlot.min.css';
 import { fetchXY, isAbortError } from '../../services/api';
 import { SelectedTestPoint, TimePlotConfig } from '../../types';
 import { noSelect } from '../../constants/styles';
-import { ACCENT, AXIS_STYLE } from '../../constants/uplotTheme';
+import { ACCENT, AXIS_STYLE, safeRange } from '../../constants/uplotTheme';
 import styles from './TimePlot.module.css';
 import type { PanelSource } from './SpectrumPlot';
 
@@ -24,7 +24,22 @@ interface XYPlotProps {
   isEditMode?: boolean;
   allConfigs?: TimePlotConfig[];
   onConfigChange?: (newKey: string) => void;
+  /** Change this plot's own X column (per-plot, not shared). */
+  onXColChange?: (newX: string) => void;
 }
+
+const editSelectStyle: React.CSSProperties = {
+  background: '#1e1e1e',
+  color: '#e0e0e0',
+  border: '1px solid #3c3c3c',
+  borderRadius: 3,
+  padding: '2px 6px',
+  fontSize: 11,
+  cursor: 'pointer',
+  outline: 'none',
+  fontFamily: 'Segoe UI, sans-serif',
+  minWidth: 0,
+};
 
 interface XYTrace {
   label: string;
@@ -34,10 +49,11 @@ interface XYTrace {
   stride: number;
 }
 
-/** Variable-vs-variable scatter (x = shared column, y = this cell's column):
- *  either the active test over its zoom range, or one point cloud per
- *  selected test point (each over its own time range, in TP colors).
- *  Rendered as points via uPlot mode 2 — trajectories are not x-sorted. */
+/** Variable-vs-variable scatter (this cell's own x and y columns, both
+ *  pickable in Edit Plots mode): either the active test over its zoom range,
+ *  or one point cloud per selected test point (each over its own time range,
+ *  in TP colors). Rendered as points via uPlot mode 2 — trajectories are not
+ *  x-sorted. */
 export const XYPlot: React.FC<XYPlotProps> = ({
   test,
   xCol,
@@ -52,6 +68,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   isEditMode = false,
   allConfigs = [],
   onConfigChange,
+  onXColChange,
 }) => {
   const chartRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -166,7 +183,10 @@ export const XYPlot: React.FC<XYPlotProps> = ({
       mode: 2,
       width: box.w,
       height: box.h,
-      scales: { x: { time: false }, y: {} },
+      scales: {
+        x: { time: false, range: safeRange as uPlot.Scale.Range },
+        y: { range: safeRange as uPlot.Scale.Range },
+      },
       axes: [{ ...AXIS_STYLE }, { ...AXIS_STYLE }],
       legend: { show: isExpanded, live: true },
       cursor: { drag: { x: false, y: false } },
@@ -252,31 +272,44 @@ export const XYPlot: React.FC<XYPlotProps> = ({
           </button>
         </div>
         {isEditMode && !isExpanded && allConfigs.length > 0 && (
-          <select
-            value={cfg.key}
-            onChange={(e) => onConfigChange?.(e.target.value)}
+          <div
             style={{
               position: 'absolute',
               left: 0,
               top: -2,
-              background: '#1e1e1e',
-              color: '#e0e0e0',
-              border: '1px solid #3c3c3c',
-              borderRadius: 3,
-              padding: '2px 6px',
-              fontSize: 11,
-              cursor: 'pointer',
-              outline: 'none',
-              fontFamily: 'Segoe UI, sans-serif',
+              right: 60,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
               zIndex: 5,
             }}
           >
-            {allConfigs.map((config) => (
-              <option key={config.key} value={config.key}>
-                {config.label}
-              </option>
-            ))}
-          </select>
+            <select
+              value={cfg.key}
+              onChange={(e) => onConfigChange?.(e.target.value)}
+              style={editSelectStyle}
+              title="Y column"
+            >
+              {allConfigs.map((config) => (
+                <option key={config.key} value={config.key}>
+                  {config.label}
+                </option>
+              ))}
+            </select>
+            <span style={{ fontSize: 10, color: '#909090', flexShrink: 0 }}>vs</span>
+            <select
+              value={xCol}
+              onChange={(e) => onXColChange?.(e.target.value)}
+              style={editSelectStyle}
+              title="X column (this plot only)"
+            >
+              {allConfigs.map((config) => (
+                <option key={config.key} value={config.key}>
+                  {config.label}
+                </option>
+              ))}
+            </select>
+          </div>
         )}
       </div>
       <div ref={chartRef} style={{ flex: 1, minHeight: 0, overflow: 'hidden' }} title={emptyHint}>

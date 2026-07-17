@@ -2,19 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { fetchFiltered, fetchWindow, isAbortError } from '../../services/api';
-import { DataWindow, FilteredWindow, FilterKind, FilterSpec, TimePlotConfig } from '../../types';
+import { DataWindow, FilteredWindow, FilterSpec, TimePlotConfig } from '../../types';
 import { noSelect } from '../../constants/styles';
+import { FilterUi } from '../../constants/filters';
+import { FilterRow } from '../controls/FilterRow';
 import { ACCENT, AXIS_STYLE, FULL_SYNC_KEY } from '../../constants/uplotTheme';
+import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
 import styles from './TimePlot.module.css';
-
-const FILTER_LABELS: Record<FilterKind, string> = {
-  lowpass: 'low-pass',
-  highpass: 'high-pass',
-  bandpass: 'band-pass',
-  bandstop: 'band-stop',
-  moving_avg: 'moving avg',
-  detrend: 'detrend',
-};
 
 const FILTER_COLOR = '#dcdcaa';
 
@@ -24,7 +18,13 @@ interface FullTestPlotProps {
   range: [number, number] | null;
   onRangeChange: (range: [number, number]) => void;
   onZoomReset?: () => void;
-  /** Sample rate, for the Nyquist hint in the filter row. */
+  /** THIS plot's DSP filter (null = none/incomplete params); drawn as a
+   *  dashed overlay. The mode bar broadcasts to all plots; the expanded
+   *  row edits just this plot's slot. */
+  filterSpec?: FilterSpec | null;
+  filterUi?: FilterUi;
+  onFilterUiChange?: (patch: Partial<FilterUi>) => void;
+  /** Sample rate, for the Nyquist hint in the expanded filter row. */
   fs?: number | null;
   isExpanded: boolean;
   onToggleExpand: () => void;
@@ -43,7 +43,10 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
   range,
   onRangeChange,
   onZoomReset,
-  fs,
+  filterSpec = null,
+  filterUi,
+  onFilterUiChange,
+  fs = null,
   isExpanded,
   onToggleExpand,
   isEditMode = false,
@@ -58,31 +61,12 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // filter overlay state (controls shown when expanded)
-  const [fkind, setFkind] = useState<'' | FilterKind>('');
-  const [order, setOrder] = useState('4');
-  const [f1, setF1] = useState('');
-  const [f2, setF2] = useState('');
-  const [winS, setWinS] = useState('1');
+  // filter overlay state (spec comes from this plot's own filter row)
   const [fwin, setFwin] = useState<FilteredWindow | null>(null);
   const [ferror, setFerror] = useState('');
   const [fbusy, setFbusy] = useState(false);
-
-  const spec: FilterSpec | null = (() => {
-    if (!fkind) return null;
-    if (fkind === 'detrend') return { kind: fkind };
-    if (fkind === 'moving_avg') {
-      const w = Number(winS);
-      return w > 0 ? { kind: fkind, windowS: w } : null;
-    }
-    const o = Math.min(Math.max(Math.round(Number(order) || 4), 1), 10);
-    const a = Number(f1);
-    if (!(a > 0)) return null;
-    if (fkind === 'lowpass' || fkind === 'highpass')
-      return { kind: fkind, order: o, f1: a };
-    const b = Number(f2);
-    return b > a ? { kind: fkind, order: o, f1: a, f2: b } : null;
-  })();
+  // per-cell filter row visibility, toggled by the ≈ header button
+  const [showFilter, setShowFilter] = useState(false);
 
   useEffect(() => {
     const el = chartRef.current;
@@ -124,7 +108,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
 
   // fetch the filtered overlay; keyed on win so it reuses the same px + range
   useEffect(() => {
-    if (!spec || !win) {
+    if (!filterSpec || !win) {
       setFwin(null);
       setFerror('');
       return;
@@ -133,7 +117,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       setFbusy(true);
-      fetchFiltered(test, [cfg.key], spec, range?.[0] ?? null, range?.[1] ?? null,
+      fetchFiltered(test, [cfg.key], filterSpec, range?.[0] ?? null, range?.[1] ?? null,
         pxRef.current, controller.signal)
         .then((w) => {
           if (!dead) {
@@ -155,7 +139,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [win, fkind, order, f1, f2, winS]);
+  }, [win, filterSpec]);
 
   // overlay only when the server produced the identical time axis
   const overlay =
@@ -223,6 +207,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
         points: { size: 6 },
         sync: { key: FULL_SYNC_KEY, scales: ['x', null] },
       },
+      plugins: [xPanZoomPlugin(onRangeChange)],
       hooks: {
         setSelect: [
           (u) => {
@@ -278,13 +263,59 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
         <div style={{ fontSize: 12, color: '#c0c0c0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {cfg.label}
         </div>
+        {showFilter && !isExpanded && filterUi && onFilterUiChange && (
+          <div
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 58,
+              top: -4,
+              zIndex: 6,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              flexWrap: 'wrap',
+              background: '#2d2d2d',
+              border: '1px solid #3c3c3c',
+              borderRadius: 3,
+              padding: '2px 4px',
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.5)',
+            }}
+          >
+            <FilterRow
+              ui={filterUi}
+              onChange={onFilterUiChange}
+              fs={fs}
+              title="filter for THIS plot only"
+            />
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
           {win && (
             <span style={{ fontSize: 10, color: '#909090' }}>
               {win.mode === 'raw' ? 'raw' : `env 1:${win.level}`}
             </span>
           )}
-          {loading && <span style={{ fontSize: 10, color: '#569cd6' }}>⟳</span>}
+          {(loading || fbusy) && <span style={{ fontSize: 10, color: '#569cd6' }}>⟳</span>}
+          {filterUi && onFilterUiChange && (
+            <button
+              onClick={() => setShowFilter((v) => !v)}
+              className={buttonClass}
+              title={
+                ferror ||
+                (filterSpec ? 'filter active — click to edit' : 'filter this plot')
+              }
+            >
+              <span
+                className={styles.expandButtonIcon}
+                style={{
+                  color: ferror ? '#f48771' : filterSpec ? FILTER_COLOR : undefined,
+                }}
+              >
+                ≈
+              </span>
+            </button>
+          )}
           <button onClick={onToggleExpand} className={buttonClass}>
             <span className={styles.expandButtonIcon}>{isExpanded ? '▪' : '▣'}</span>
           </button>
@@ -319,41 +350,15 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
       </div>
       {isExpanded && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
-          <span style={{ fontSize: 11, color: '#909090' }}>filter:</span>
-          <select
-            className="input"
-            style={{ width: 110 }}
-            value={fkind}
-            onChange={(e) => setFkind(e.target.value as '' | FilterKind)}
-          >
-            <option value="">— none —</option>
-            {(Object.keys(FILTER_LABELS) as FilterKind[]).map((k) => (
-              <option key={k} value={k}>
-                {FILTER_LABELS[k]}
-              </option>
-            ))}
-          </select>
-          {(fkind === 'lowpass' || fkind === 'highpass' || fkind === 'bandpass' || fkind === 'bandstop') && (
+          {filterUi && onFilterUiChange && (
             <>
-              <span style={{ fontSize: 11, color: '#909090' }}>order</span>
-              <input className="input" style={{ width: 40 }} value={order}
-                     onChange={(e) => setOrder(e.target.value)} />
-              <input className="input" style={{ width: 65 }} placeholder="f1 Hz"
-                     value={f1} onChange={(e) => setF1(e.target.value)} />
-              {(fkind === 'bandpass' || fkind === 'bandstop') && (
-                <input className="input" style={{ width: 65 }} placeholder="f2 Hz"
-                       value={f2} onChange={(e) => setF2(e.target.value)} />
-              )}
-              {fs && (
-                <span style={{ fontSize: 10, color: '#909090' }}>Nyquist {fs / 2} Hz</span>
-              )}
-            </>
-          )}
-          {fkind === 'moving_avg' && (
-            <>
-              <input className="input" style={{ width: 50 }} value={winS}
-                     onChange={(e) => setWinS(e.target.value)} />
-              <span style={{ fontSize: 11, color: '#909090' }}>s window</span>
+              <span style={{ fontSize: 11, color: '#909090' }}>filter:</span>
+              <FilterRow
+                ui={filterUi}
+                onChange={onFilterUiChange}
+                fs={fs}
+                title="filter for THIS plot only"
+              />
             </>
           )}
           {fbusy && <span style={{ fontSize: 10, color: '#569cd6' }}>⟳</span>}

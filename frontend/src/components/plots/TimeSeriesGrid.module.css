@@ -19,6 +19,15 @@
 .plotWrapper {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   opacity: 1;
+  /* 1fr grid tracks are minmax(auto, 1fr): without these the uPlot canvas's
+     intrinsic pixel size becomes the track minimum, so after minimizing an
+     expanded plot its huge canvas locks its row/column at the expanded size
+     and starves the other cells (<40px -> uPlot refuses to render: blank
+     grid). min-size 0 keeps track sizing independent of canvas size; the
+     ResizeObserver in each plot then shrinks the canvas to fit. */
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .plotWrapperHidden {

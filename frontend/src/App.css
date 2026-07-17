@@ -107,3 +107,30 @@ input[type='checkbox'] {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
+
+/* Uploads page: live-status chips and indeterminate progress bars */
+.upload-pulse {
+  animation: upload-pulse 1.6s ease-in-out infinite;
+}
+@keyframes upload-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* uPlot dark-theme overrides (uPlot.min.css ships light-theme defaults).
+   .u-select's default is rgba(0,0,0,.07) — invisible on #1e1e1e.
+   Scoped under .uplot for specificity: uPlot.min.css's own single-class
+   rules must lose regardless of CSS import order in the bundle.
+   Edge lines are inset box-shadows, NOT borders: uPlot "hides" the select
+   by zeroing its size, and borders still paint (2px ghost) on a zero-width
+   box while shadows need a nonzero paint area. */
+.uplot .u-select {
+  background: rgba(86, 156, 214, 0.18);
+  box-shadow:
+    inset 1px 0 0 rgba(86, 156, 214, 0.9),
+    inset -1px 0 0 rgba(86, 156, 214, 0.9);
+}
+.uplot .u-cursor-x,
+.uplot .u-cursor-y {
+  border-color: #6a6a6a;
+}

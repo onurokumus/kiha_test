@@ -4,7 +4,8 @@ import 'uplot/dist/uPlot.min.css';
 import { fetchSpectrum, isAbortError } from '../../services/api';
 import { SelectedTestPoint, SpectrumData, TimePlotConfig } from '../../types';
 import { noSelect } from '../../constants/styles';
-import { ACCENT, AXIS_STYLE } from '../../constants/uplotTheme';
+import { ACCENT, AXIS_STYLE, safeRange } from '../../constants/uplotTheme';
+import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
 import styles from './TimePlot.module.css';
 
 export type PanelSource = 'tp' | 'full';
@@ -158,11 +159,16 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
       mode: 2,
       width: box.w,
       height: box.h,
-      scales: { x: { time: false }, y: {} },
+      scales: {
+        x: { time: false, range: safeRange as uPlot.Scale.Range },
+        y: { range: safeRange as uPlot.Scale.Range },
+      },
       axes: [{ ...AXIS_STYLE }, { ...AXIS_STYLE }],
       legend: { show: isExpanded, live: true },
-      // uPlot default drag = client-side x zoom; dblclick resets it
+      // uPlot default drag = client-side x zoom; dblclick resets it.
+      // Wheel-zoom / shift-drag pan are client-side too (no commit target).
       cursor: { drag: { x: true, y: false } },
+      plugins: [xPanZoomPlugin()],
       series: [
         {},
         ...traces.map(

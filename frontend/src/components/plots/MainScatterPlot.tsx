@@ -15,7 +15,7 @@ import { ClusterDot } from './ClusterDot';
 import { formatValue } from '../../utils/formatters';
 import { PointSelectionMenu } from './PointSelectionMenu';
 import { CustomScatterTooltip } from './CustomScatterTooltip';
-import { clusterPoints, shouldEnableClustering, calculateZoomLevel } from '../../utils/pointClustering';
+import { clusterPoints, shouldEnableClustering } from '../../utils/pointClustering';
 
 interface MainScatterPlotProps {
   scatterData: ScatterDataPoint[];
@@ -170,21 +170,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
     mainZoomRef.current = mainZoom;
   }, [mainZoom]);
 
-  // Calculate zoom level and determine if clustering should be enabled
-  const zoomLevel = useMemo(() => {
-    return calculateZoomLevel(
-      bounds.currentXMin,
-      bounds.currentXMax,
-      bounds.currentYMin,
-      bounds.currentYMax,
-      bounds.initialXMin,
-      bounds.initialXMax,
-      bounds.initialYMin,
-      bounds.initialYMax
-    );
-  }, [bounds]);
-
-  const enableClustering = clusteringEnabled && shouldEnableClustering(rawDataCount, zoomLevel);
+  const enableClustering = clusteringEnabled && shouldEnableClustering(rawDataCount);
 
   // Compute clusters
   const clusteredData = useMemo(() => {
@@ -209,8 +195,10 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       bounds.currentYMax,
       chartWidth,
       chartHeight,
-      30, // cluster radius in pixels
-      3 // minimum points for cluster
+      // Overlap scale, not FMS's 30px decluttering scale: dots are r=6, so
+      // centers <14px apart render as visually touching/stacked circles.
+      14,
+      2 // even a pair of stacked points must show a count badge
     );
 
     // Add selected points back as individual points
@@ -259,7 +247,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       }
 
       // Only create cluster if we still have enough points
-      if (clusterPoints.length >= 3) {
+      if (clusterPoints.length >= 2) {
         clusterData.push({
           x: cluster.centerX,
           y: cluster.centerY,

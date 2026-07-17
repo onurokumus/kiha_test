@@ -12,6 +12,27 @@ export const CustomScatterTooltip: React.FC<TooltipProps<number, string>> = ({
 
   const data = payload[0].payload;
 
+  // Cluster dots carry no TP identity — show the count instead of an empty header
+  if (data.isCluster) {
+    return (
+      <div
+        style={{
+          background: '#252526',
+          border: '1px solid #3c3c3c',
+          borderRadius: 4,
+          padding: '8px 12px',
+          fontSize: 12,
+          color: '#e0e0e0',
+        }}
+      >
+        <div style={{ color: '#569cd6', fontWeight: 'bold', fontSize: 14 }}>
+          {data.clusterCount} overlapping points
+        </div>
+        <div style={{ color: '#a0a0a0', marginTop: 4 }}>Click to list them</div>
+      </div>
+    );
+  }
+
   return (
     <div
       style={{

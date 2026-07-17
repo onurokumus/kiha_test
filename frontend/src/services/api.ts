@@ -118,15 +118,44 @@ async function sendJson<T>(path: string, init: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-/** Upload a test CSV; ingest continues server-side (poll test status). */
-export async function uploadTest(
+/** Upload a test CSV as a raw streamed request body (NOT multipart — the
+ *  backend streams it straight to raw.csv; `?name=` is required). Uses XHR
+ *  because fetch cannot report upload progress. Ingest continues
+ *  server-side: status 'receiving' -> 'ingesting' -> 'ready'|'error'. */
+export function uploadTest(
   file: File,
-  name = ''
+  name: string,
+  onProgress?: (fraction: number | null) => void
 ): Promise<{ name: string; status: string }> {
-  const fd = new FormData();
-  fd.append('file', file);
-  const query = name ? `?name=${encodeURIComponent(name)}` : '';
-  return sendJson(`/tests/upload${query}`, { method: 'POST', body: fd });
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    // ?source= records the original file name in meta.source_file — the
+    // raw body lands in raw.csv, so it would otherwise be lost.
+    xhr.open(
+      'POST',
+      `${API_BASE}/tests/upload?name=${encodeURIComponent(name)}` +
+        `&source=${encodeURIComponent(file.name)}`
+    );
+    xhr.responseType = 'json';
+    xhr.upload.onprogress = (e) => {
+      onProgress?.(e.lengthComputable ? e.loaded / e.total : null);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(xhr.response as { name: string; status: string });
+      } else {
+        const detail = (xhr.response as { detail?: string } | null)?.detail;
+        reject(new Error(detail ?? `${xhr.status} ${xhr.statusText}`));
+      }
+    };
+    xhr.onerror = () =>
+      reject(new Error(
+        'connection lost during upload — backend unreachable, or the ' +
+        'request was rejected mid-transfer'
+      ));
+    xhr.onabort = () => reject(new Error('upload aborted'));
+    xhr.send(file);
+  });
 }
 
 export async function fetchSplitCandidates(name: string): Promise<IdCandidate[]> {
@@ -248,6 +277,15 @@ export async function editTest(
 /** Soft delete: the test moves to data/trash (restorable server-side). */
 export async function deleteTest(name: string): Promise<unknown> {
   return sendJson(`/tests/${encodeURIComponent(name)}`, { method: 'DELETE' });
+}
+
+/** Undo a soft delete. 404s once the trash copy has been purged (~1 h). */
+export async function restoreTest(
+  name: string
+): Promise<{ ok: boolean; restored: string }> {
+  return sendJson(`/tests/${encodeURIComponent(name)}/restore`, {
+    method: 'POST',
+  });
 }
 
 export async function renameTest(
