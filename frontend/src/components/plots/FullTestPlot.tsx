@@ -8,6 +8,7 @@ import { FilterUi } from '../../constants/filters';
 import { FilterRow } from '../controls/FilterRow';
 import { ACCENT, AXIS_STYLE, FULL_SYNC_KEY } from '../../constants/uplotTheme';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
+import { syncPlot, clearPlot } from '../../utils/uplotSync';
 import styles from './TimePlot.module.css';
 
 const FILTER_COLOR = '#dcdcaa';
@@ -19,8 +20,8 @@ interface FullTestPlotProps {
   onRangeChange: (range: [number, number]) => void;
   onZoomReset?: () => void;
   /** THIS plot's DSP filter (null = none/incomplete params); drawn as a
-   *  dashed overlay. The mode bar broadcasts to all plots; the expanded
-   *  row edits just this plot's slot. */
+   *  dashed overlay. Per-plot only (toggled by the ≈ header button; also
+   *  shown when the cell is expanded). */
   filterSpec?: FilterSpec | null;
   filterUi?: FilterUi;
   onFilterUiChange?: (patch: Partial<FilterUi>) => void;
@@ -55,6 +56,11 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
 }) => {
   const chartRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const structKeyRef = useRef('');
+  // Latest range-commit callback (the reused uPlot instance keeps the closures
+  // from its build, so pan/zoom + setSelect must read through this ref).
+  const onRangeChangeRef = useRef(onRangeChange);
+  onRangeChangeRef.current = onRangeChange;
   const pxRef = useRef(1200);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [win, setWin] = useState<DataWindow | null>(null);
@@ -141,25 +147,39 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [win, filterSpec]);
 
-  // overlay only when the server produced the identical time axis
+  // Overlay only when the filtered window is for the CURRENT raw window: same
+  // mode and length (arrays must align 1:1 for uPlot bands) AND the same
+  // [i0, i1) range. Without the range check a pan at constant zoom keeps the
+  // same mode+length, so the OLD range's filtered curve would be drawn over the
+  // new window until the 300 ms-debounced refetch lands (1.18).
   const overlay =
-    fwin && win && fwin.mode === win.mode && fwin.t.length === win.t.length
+    fwin &&
+    win &&
+    fwin.mode === win.mode &&
+    fwin.i0 === win.i0 &&
+    fwin.i1 === win.i1 &&
+    fwin.t.length === win.t.length
       ? fwin
       : null;
 
+  // Destroy the uPlot instance only on unmount; data/structure changes reuse or
+  // rebuild it in place via syncPlot (perf 2.4), so there is no per-run cleanup.
+  useEffect(() => () => clearPlot(plotRef, structKeyRef), []);
+
   useEffect(() => {
     const el = chartRef.current;
-    plotRef.current?.destroy();
-    plotRef.current = null;
-    if (!el || !win || box.w < 40 || box.h < 40) return;
+    const base = win?.series[cfg.key];
+    if (!el || !win || !base || box.w < 40 || box.h < 40) {
+      clearPlot(plotRef, structKeyRef);
+      return;
+    }
 
     const series: uPlot.Series[] = [{}];
     const bands: uPlot.Band[] = [];
     const data: (number | null)[][] = [win.t];
 
     if (win.mode === 'envelope') {
-      const s = win.series[cfg.key];
-      if (!s) return;
+      const s = base as { min: (number | null)[]; max: (number | null)[] };
       series.push(
         { label: `${cfg.key} max`, stroke: ACCENT, width: 1, spanGaps: false },
         { label: `${cfg.key} min`, stroke: ACCENT, width: 1, spanGaps: false }
@@ -167,10 +187,8 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
       bands.push({ series: [1, 2], fill: ACCENT + '40' });
       data.push(s.max, s.min);
     } else {
-      const s = win.series[cfg.key];
-      if (!s) return;
       series.push({ label: cfg.key, stroke: ACCENT, width: 1.5, spanGaps: false });
-      data.push(s);
+      data.push(base as (number | null)[]);
     }
 
     if (overlay) {
@@ -194,7 +212,17 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
       }
     }
 
-    const opts: uPlot.Options = {
+    // A NaN in the time column serializes as null in win.t; uPlot's x array
+    // must be ascending numbers, so a single null corrupts the whole window.
+    // Drop those samples across every parallel array (t + each series/overlay
+    // column, all the same length). TimePlot filters null t the same way (1.19).
+    if (win.t.some((v) => v == null)) {
+      const keep: number[] = [];
+      for (let i = 0; i < win.t.length; i++) if (win.t[i] != null) keep.push(i);
+      for (let c = 0; c < data.length; c++) data[c] = keep.map((i) => data[c][i]);
+    }
+
+    const makeOpts = (): uPlot.Options => ({
       width: box.w,
       height: box.h,
       series,
@@ -207,7 +235,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
         points: { size: 6 },
         sync: { key: FULL_SYNC_KEY, scales: ['x', null] },
       },
-      plugins: [xPanZoomPlugin(onRangeChange)],
+      plugins: [xPanZoomPlugin((r) => onRangeChangeRef.current(r))],
       hooks: {
         setSelect: [
           (u) => {
@@ -215,28 +243,36 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
               const t0 = u.posToVal(u.select.left, 'x');
               const t1 = u.posToVal(u.select.left + u.select.width, 'x');
               u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
-              onRangeChange([t0, t1]);
+              onRangeChangeRef.current([t0, t1]);
             }
           },
         ],
       },
-    };
+    });
 
-    const u = new uPlot(opts, data as uPlot.AlignedData, el);
-    plotRef.current = u;
-
-    if (isExpanded) {
-      const legend = u.root.querySelector('.u-legend') as HTMLElement | null;
-      const legendH = legend?.offsetHeight ?? 0;
-      if (legendH > 0) {
-        u.setSize({ width: box.w, height: Math.max(60, box.h - legendH) });
-      }
-    }
-
-    return () => {
-      plotRef.current?.destroy();
-      plotRef.current = null;
-    };
+    // Rebuild only when the series structure or size changes; a same-structure
+    // refetch (the common zoom/pan case) re-ranges x to the new window via
+    // setData's default resetScales — exactly what a fresh build did.
+    const structKey = [
+      win.mode, overlay ? overlay.mode : 'none', cfg.key, box.w, box.h, isExpanded,
+    ].join('|');
+    syncPlot({
+      plotRef,
+      structKeyRef,
+      el,
+      structKey,
+      makeOpts,
+      data: data as uPlot.AlignedData,
+      onCreate: (u) => {
+        if (isExpanded) {
+          const legend = u.root.querySelector('.u-legend') as HTMLElement | null;
+          const legendH = legend?.offsetHeight ?? 0;
+          if (legendH > 0) {
+            u.setSize({ width: box.w, height: Math.max(60, box.h - legendH) });
+          }
+        }
+      },
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [win, overlay, box, isExpanded]);
 

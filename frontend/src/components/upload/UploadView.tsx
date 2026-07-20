@@ -1,6 +1,12 @@
 import { useMemo, useRef, useState } from 'react';
-import { deleteTest, restoreTest } from '../../services/api';
+import {
+  deleteTest,
+  rawCsvUrl,
+  rebuildTpStats,
+  restoreTest,
+} from '../../services/api';
 import { TestInfo, UploadItem } from '../../types';
+import { isBusyStatus } from '../../constants/status';
 
 interface Props {
   tests: TestInfo[];
@@ -13,6 +19,8 @@ interface Props {
   onTestDeleted: (name: string) => void;
   /** Server-side list changed (restore) — parent refreshes the list. */
   onTestsChanged: () => void;
+  /** A test's TP averages were recomputed — parent drops its stats cache. */
+  onStatsRebuilt: (name: string) => void;
 }
 
 const fmtBytes = (n?: number | null): string => {
@@ -62,7 +70,7 @@ const StatusChip: React.FC<{ status: string }> = ({ status }) => {
     rebuilding: { color: '#569cd6', bg: '#1e3a52' },
   };
   const { color, bg } = palette[status] ?? { color: '#909090', bg: '#3c3c3c' };
-  const active = status === 'receiving' || status === 'ingesting' || status === 'rebuilding';
+  const active = isBusyStatus(status);
   return (
     <span
       className={active ? 'upload-pulse' : undefined}
@@ -117,12 +125,14 @@ export default function UploadView({
   onOpenTest,
   onTestDeleted,
   onTestsChanged,
+  onStatsRebuilt,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   // Names deleted from this page and still restorable (session-local undo).
   const [restorable, setRestorable] = useState<string[]>([]);
   const [busyRow, setBusyRow] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
+  const [actionNote, setActionNote] = useState('');
 
   const activeUploads = uploads.filter((u) => !u.error);
   const failedUploads = uploads.filter((u) => u.error);
@@ -149,6 +159,23 @@ export default function UploadView({
       onTestDeleted(name);
     } catch (e) {
       setActionError(`delete '${name}' failed: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setBusyRow(null);
+    }
+  };
+
+  const handleRebuildStats = async (name: string) => {
+    setBusyRow(name);
+    setActionError('');
+    setActionNote('');
+    try {
+      const res = await rebuildTpStats(name);
+      onStatsRebuilt(name);
+      setActionNote(
+        `${name}: test-point averages recomputed (${res.columns_recomputed} column${res.columns_recomputed === 1 ? '' : 's'})`
+      );
+    } catch (e) {
+      setActionError(`rebuild stats for '${name}' failed: ${e instanceof Error ? e.message : e}`);
     } finally {
       setBusyRow(null);
     }
@@ -311,6 +338,9 @@ export default function UploadView({
         {actionError && (
           <div style={{ color: '#f48771', fontSize: 12 }}>{actionError}</div>
         )}
+        {actionNote && (
+          <div style={{ color: '#4ec9b0', fontSize: 12 }}>{actionNote}</div>
+        )}
 
         {/* History table */}
         <div className="panel" style={{ padding: 0, overflow: 'auto' }}>
@@ -365,8 +395,7 @@ export default function UploadView({
                   ))}
                 {rows.map((t) => {
                   const upload = uploadByTestName.get(t.name);
-                  const busy =
-                    t.status === 'receiving' || t.status === 'ingesting' || t.status === 'rebuilding';
+                  const busy = isBusyStatus(t.status);
                   return (
                     <tr key={t.name}>
                       <td style={{ ...tdStyle, fontWeight: 600 }}>{t.name}</td>
@@ -428,6 +457,27 @@ export default function UploadView({
                           {t.status === 'ready' && (
                             <button className="btn" onClick={() => onOpenTest(t.name)}>
                               Analyze →
+                            </button>
+                          )}
+                          {(t.status === 'ready' || t.status === 'error') && (
+                            <a
+                              className="btn"
+                              href={rawCsvUrl(t.name)}
+                              download
+                              title="download the original uploaded CSV"
+                              style={{ textDecoration: 'none' }}
+                            >
+                              ⬇ CSV
+                            </a>
+                          )}
+                          {t.status === 'ready' && (
+                            <button
+                              className="btn"
+                              disabled={busyRow === t.name}
+                              onClick={() => handleRebuildStats(t.name)}
+                              title="recompute this test's test-point averages (rarely changes anything; old values keep serving until it finishes)"
+                            >
+                              {busyRow === t.name ? '⟳ stats…' : '↻ stats'}
                             </button>
                           )}
                           {!busy && !upload && (

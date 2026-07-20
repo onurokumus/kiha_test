@@ -72,8 +72,10 @@ Target: 1-hour CSV ingested in ≲ 2 minutes, server RAM stays < ~2 GB throughou
 - Choose test → choose test point(s).
 - Filter test points by variable range: user picks variable, range [x, y], and an
   aggregation mode — **mean / min / max / any-sample** (any-sample = keep TP if any
-  sample falls in range). All four available; per-TP aggregates come from the pyramid,
-  so this is cheap.
+  sample falls in range). All four available. Per-TP aggregates are computed **exactly**
+  from the full-resolution column (accuracy over speed — not approximated from the
+  pyramid) and cached in a `tp_stats.json` sidecar (invalidated on any test-point or data
+  change), so repeat use is instant.
 - Plot variables vs time.
 - Plot variable vs another variable (XY plot).
 - Signal processing (server-side, applied per selected series on the current test point / range):
@@ -83,9 +85,13 @@ Target: 1-hour CSV ingested in ≲ 2 minutes, server RAM stays < ~2 GB throughou
   - FFT magnitude spectrum and Welch PSD — plotted against frequency (0 – 1024 Hz Nyquist).
     Runs on a single variable over a test point (~123k points for 60 s) — cheap, no full-file FFT.
   - Filtered series can be overlaid on the raw series.
-- Multiple series in a single plot (multi-line, shared time axis, per-series y-axis scaling if units differ).
+- Multiple series in a single plot (multi-line, shared time axis, per-series y-axis
+  scaling if units differ). *Not implemented in MVP*: each grid cell plots one column
+  (SplitPlot supports multiple columns internally but is always called with one); the
+  3×3 grid with per-plot column pickers covers the use case instead.
 - Multiple plots simultaneously (grid layout).
-- **X-axis link toggle**: button to group plots so zoom/pan is synchronized across them.
+- **X-axis link**: zoom/pan is synchronized across all grid plots. *Implemented as
+  always-on* in MVP (no toggle).
 
 ## 5. Downsampling Strategy (vibration-safe)
 
@@ -97,10 +103,15 @@ for vibration data. Instead:
 - **Precomputed pyramid**: levels at ÷16, ÷256, ÷4096 stored as Parquet at ingest.
   Each level stores per-bucket min/max per column.
 - **Serving rule** per plot request (viewport time range + pixel width):
-  - If raw points in viewport ≤ ~5,000 → serve **raw full-resolution 2048 Hz data**.
-    (This is how the "we need 2 kHz" teams get true samples: zoom in.)
-  - Otherwise → serve from the coarsest pyramid level that still gives ≥ ~2 points/pixel,
-    rendered as min/max envelope.
+  - If raw points in viewport ≤ max(~6,000, the plot's point budget) → serve **raw
+    full-resolution 2048 Hz data**. (This is how the "we need 2 kHz" teams get true
+    samples: zoom in.) `MAX_POINTS_RAW = 6000` in `config.py`.
+  - Otherwise → serve the **finest** pyramid level whose bucket count fits the plot's
+    point budget (≈2 points/pixel, floored at 1000, capped at 8000), rendered as a
+    min/max envelope; if even the coarsest level exceeds the budget, adjacent buckets
+    are merged (min-of-mins / max-of-maxes) so a spike still survives. The budget is
+    per-plot (`store.plot_budget(px)`), so a small grid cell gets a proportionally
+    smaller payload.
 - Zoom/pan triggers a new windowed request; target < 300 ms round trip.
 - XY plots (var vs var): naive stride decimation is acceptable for MVP; revisit later.
 
@@ -142,11 +153,12 @@ A **test point** is a named segment of a test:
 ## 7. NaN / Missing Data Policy
 
 - Never crash. On ingest, scan and report per-column NaN/missing counts and locations.
-- User chooses handling (per column or globally):
+- User chooses handling, applied **globally** at ingest/edit (per-column policy is
+  not implemented, and "drop rows" is deliberately excluded — dropping rows breaks
+  the uniform-sample-rate assumption the whole windowed reader relies on):
   1. Keep as gaps (plot lines break at NaN) — default
-  2. Drop rows containing NaN
-  3. Zero-fill
-  4. Linear interpolate
+  2. Zero-fill
+  3. Linear interpolate
 - Chosen policy recorded in `meta.json`. Filters/FFT warn if the input range contains NaN.
 
 ## 8. Dummy Data
@@ -192,9 +204,12 @@ python generate_dummy_data.py --duration 3600 --name perf_1h
 
 ## 12. Open Problems / Known Risks
 
-- **Non-uniform time / jitter**: idx↔time mapping assumes uniform 2048 Hz. Real rig data may
-  have jitter or gaps in the time column. Mitigation: derive time from the time column, not
-  from row index; ingest warns if Δt deviates > 1% from nominal.
+- **Non-uniform time / jitter**: the windowed readers convert idx↔time via the assumed
+  uniform `fs` (NOT per-sample from the time column). Mitigation: ingest derives `fs` from
+  the full time-column span and scans the WHOLE file (quantization-aware) for jitter/gaps,
+  recording `jitter_warning` in `meta.json`; when the time column is unusable it generates
+  a perfect uniform axis and marks `time_source = "generated"`. A per-sample time-accurate
+  reader (using the time column directly for idx↔time) is future work.
 - **NaN policy change after ingest**: switching policy (e.g. gaps → interpolate) requires
   rebuilding `data.parquet` + pyramid. Acceptable (re-run pipeline), but UI must warn it takes time.
 - **XY plot downsampling**: naive stride decimation can alias/mislead (e.g. hide hysteresis

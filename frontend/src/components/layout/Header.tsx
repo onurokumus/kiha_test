@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { TestInfo, UploadItem } from '../../types';
 
-export type AppTab = 'analyze' | 'split' | 'edit' | 'uploads';
+export type AppTab = 'analyze' | 'split' | 'edit' | 'uploads' | 'settings';
 
 interface HeaderProps {
   tests: TestInfo[];
@@ -122,6 +122,7 @@ export const Header: React.FC<HeaderProps> = ({
       {tabButton('split', 'Split')}
       {tabButton('edit', 'Edit')}
       {tabButton('uploads', 'Uploads')}
+      {tabButton('settings', 'Settings')}
       <button className="btn" onClick={() => fileRef.current?.click()}>
         ⬆ Upload CSV
       </button>

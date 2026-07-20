@@ -6,6 +6,7 @@ import { FilterSpec, SelectedTestPoint, TimePlotConfig } from '../../types';
 import { noSelect } from '../../constants/styles';
 import { AXIS_STYLE, TP_SYNC_KEY } from '../../constants/uplotTheme';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
+import { syncPlot, clearPlot } from '../../utils/uplotSync';
 import { FilterUi } from '../../constants/filters';
 import { FilterRow } from '../controls/FilterRow';
 import styles from './TimePlot.module.css';
@@ -16,13 +17,18 @@ interface TimePlotProps {
   cfg: TimePlotConfig;
   selectedTPs: SelectedTestPoint[];
   hiddenTPs: Set<string>;
+  /** Per-test plottable columns — filter overlays are only fetched for TPs
+   *  whose OWN test has this plot's column (cross-test selections would
+   *  otherwise 400 with 'unknown columns'; same rule as SpectrumPlot). */
+  columnsByTest: Record<string, string[]>;
   isExpanded: boolean;
   onToggleExpand: () => void;
   zoomDomain: [number, number] | null;
   onZoomChange: (domain: [number, number]) => void;
   onZoomReset?: () => void;
   /** THIS plot's DSP filter — dashed overlay per TP, computed over each TP's
-   *  own range in its own test. Mode bar broadcasts; expanded row edits one. */
+   *  own range in its own test. Per-plot only (toggled by the ≈ header button;
+   *  also shown when expanded). */
   filterSpec?: FilterSpec | null;
   filterUi?: FilterUi;
   onFilterUiChange?: (patch: Partial<FilterUi>) => void;
@@ -54,6 +60,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
   cfg,
   selectedTPs,
   hiddenTPs,
+  columnsByTest,
   isExpanded,
   onToggleExpand,
   zoomDomain,
@@ -69,6 +76,10 @@ export const TimePlot: React.FC<TimePlotProps> = ({
 }) => {
   const chartRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const structKeyRef = useRef('');
+  // Latest zoom-commit callback — a reused uPlot keeps its build-time closures.
+  const onZoomChangeRef = useRef(onZoomChange);
+  onZoomChangeRef.current = onZoomChange;
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [fovers, setFovers] = useState<FilteredTpOverlay[]>([]);
   const [ferror, setFerror] = useState('');
@@ -115,7 +126,12 @@ export const TimePlot: React.FC<TimePlotProps> = ({
   // range in its own test, shifted to relative time. Fetched once per
   // (spec, TP set, column) — zoom stays client-side like the raw traces.
   useEffect(() => {
-    if (!filterSpec || visibleTPs.length === 0) {
+    // Only TPs whose own test has this column can be filtered — the raw
+    // traces are already restricted the same way by App's trace fetcher.
+    const eligible = visibleTPs.filter((s) =>
+      (columnsByTest[s.test] ?? []).includes(cfg.key)
+    );
+    if (!filterSpec || eligible.length === 0) {
       setFovers([]);
       setFerror('');
       return;
@@ -126,7 +142,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
     const timer = window.setTimeout(() => {
       setFbusy(true);
       Promise.all(
-        visibleTPs.map(async (s): Promise<FilteredTpOverlay | null> => {
+        eligible.map(async (s): Promise<FilteredTpOverlay | null> => {
           try {
             const w = await fetchFiltered(
               s.test, [cfg.key], filterSpec, s.tp.start_s, s.endS, px,
@@ -161,7 +177,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
           if (dead) return;
           const ok = res.filter((r): r is FilteredTpOverlay => r !== null);
           setFovers(ok);
-          if (ok.length === visibleTPs.length) setFerror('');
+          if (ok.length === eligible.length) setFerror('');
         })
         .catch((e) => {
           if (!dead && !isAbortError(e)) {
@@ -177,15 +193,52 @@ export const TimePlot: React.FC<TimePlotProps> = ({
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterSpec, tpFingerprint, cfg.key]);
+  }, [filterSpec, tpFingerprint, cfg.key, columnsByTest]);
+
+  // Destroy only on unmount; syncPlot reuses/rebuilds in place (perf 2.4).
+  useEffect(() => () => clearPlot(plotRef, structKeyRef), []);
 
   useEffect(() => {
     const el = chartRef.current;
-    plotRef.current?.destroy();
-    plotRef.current = null;
-    if (!el || traces.length === 0 || box.w < 40 || box.h < 40) return;
+    if (!el || traces.length === 0 || box.w < 40 || box.h < 40) {
+      clearPlot(plotRef, structKeyRef);
+      return;
+    }
 
-    const opts: uPlot.Options = {
+    const series: uPlot.Series[] = [
+      {},
+      ...traces.map(
+        (trace) =>
+          ({
+            label: trace.label,
+            stroke: trace.color,
+            width: 1.5,
+            spanGaps: false,
+            facets: [
+              { scale: 'x', auto: true },
+              { scale: 'y', auto: true },
+            ],
+          }) as uPlot.Series
+      ),
+      ...fovers.flatMap((f) =>
+        f.segs.map(
+          (_, i) =>
+            ({
+              label: `${f.name} filt${f.segs.length > 1 ? (i === 0 ? ' max' : ' min') : ''}`,
+              stroke: f.color,
+              width: 1.5,
+              dash: [6, 4],
+              spanGaps: false,
+              facets: [
+                { scale: 'x', auto: true },
+                { scale: 'y', auto: true },
+              ],
+            }) as uPlot.Series
+        )
+      ),
+    ];
+
+    const makeOpts = (): uPlot.Options => ({
       mode: 2,
       width: box.w,
       height: box.h,
@@ -202,39 +255,8 @@ export const TimePlot: React.FC<TimePlotProps> = ({
         drag: { x: true, y: false },
         sync: { key: TP_SYNC_KEY, scales: ['x', null] },
       },
-      plugins: [xPanZoomPlugin(onZoomChange)],
-      series: [
-        {},
-        ...traces.map(
-          (trace) =>
-            ({
-              label: trace.label,
-              stroke: trace.color,
-              width: 1.5,
-              spanGaps: false,
-              facets: [
-                { scale: 'x', auto: true },
-                { scale: 'y', auto: true },
-              ],
-            }) as uPlot.Series
-        ),
-        ...fovers.flatMap((f) =>
-          f.segs.map(
-            (_, i) =>
-              ({
-                label: `${f.name} filt${f.segs.length > 1 ? (i === 0 ? ' max' : ' min') : ''}`,
-                stroke: f.color,
-                width: 1.5,
-                dash: [6, 4],
-                spanGaps: false,
-                facets: [
-                  { scale: 'x', auto: true },
-                  { scale: 'y', auto: true },
-                ],
-              }) as uPlot.Series
-          )
-        ),
-      ],
+      plugins: [xPanZoomPlugin((r) => onZoomChangeRef.current(r))],
+      series,
       hooks: {
         setSelect: [
           (u) => {
@@ -242,34 +264,49 @@ export const TimePlot: React.FC<TimePlotProps> = ({
               const t0 = u.posToVal(u.select.left, 'x');
               const t1 = u.posToVal(u.select.left + u.select.width, 'x');
               u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
-              onZoomChange([t0, t1]);
+              onZoomChangeRef.current([t0, t1]);
             }
           },
         ],
       },
-    };
+    });
 
     const data = [
       null,
       ...traces.map((tr) => [tr.t, tr.y]),
       ...fovers.flatMap((f) => f.segs.map((seg) => [seg.t, seg.y])),
     ] as unknown as uPlot.AlignedData;
-    const u = new uPlot(opts, data, el);
-    plotRef.current = u;
 
-    // The legend renders inside the container and eats chart height.
-    if (isExpanded) {
-      const legend = u.root.querySelector('.u-legend') as HTMLElement | null;
-      const legendH = legend?.offsetHeight ?? 0;
-      if (legendH > 0) {
-        u.setSize({ width: box.w, height: Math.max(60, box.h - legendH) });
-      }
-    }
-
-    return () => {
-      plotRef.current?.destroy();
-      plotRef.current = null;
-    };
+    // TP zoom is a scale range (client-side), NOT part of the data, so it is
+    // kept OUT of the struct key: a zoom change reuses the instance. On reuse
+    // with an active zoom, don't let setData auto-range (it would flash the
+    // full extent) — swap data without resetting scales, then re-apply the
+    // zoom via setScale. With no zoom, auto-range is the reset-to-fit view.
+    const structKey = [
+      series.map((s) => s.label ?? '').join('~'), box.w, box.h, isExpanded,
+    ].join('|');
+    syncPlot({
+      plotRef,
+      structKeyRef,
+      el,
+      structKey,
+      makeOpts,
+      data,
+      resetScales: !zoomDomain,
+      onUpdate: (u) => {
+        if (zoomDomain) u.setScale('x', { min: zoomDomain[0], max: zoomDomain[1] });
+      },
+      onCreate: (u) => {
+        // The legend renders inside the container and eats chart height.
+        if (isExpanded) {
+          const legend = u.root.querySelector('.u-legend') as HTMLElement | null;
+          const legendH = legend?.offsetHeight ?? 0;
+          if (legendH > 0) {
+            u.setSize({ width: box.w, height: Math.max(60, box.h - legendH) });
+          }
+        }
+      },
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [traces, fovers, zoomDomain, box, isExpanded]);
 

@@ -108,10 +108,6 @@ export const useScatterFilter = (
     setFilterState(INITIAL_FILTER_STATE);
   }, []);
 
-  const resetOnTestChange = useCallback(() => {
-    setFilterState(INITIAL_FILTER_STATE);
-  }, []);
-
   const hasActiveFilters = useMemo(() => {
     const hasParameterFilters = filterState.parameterFilters.some(
       (filter) => filter.column && (filter.min !== null || filter.max !== null)
@@ -195,7 +191,6 @@ export const useScatterFilter = (
     updateParameterFilter,
     removeParameterFilter,
     clearFilters,
-    resetOnTestChange,
     hasActiveFilters,
     applyFilters,
   };

@@ -1,5 +1,4 @@
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -10,24 +9,15 @@ from fastapi import BackgroundTasks, HTTPException
 
 from app import edit, ingest, main, store
 from app.main import EditOps
+from ._base import DataDirTestCase
 
 FS = 64.0
 N = 640  # 10 s
 
 
-class EditTests(unittest.TestCase):
+class EditTests(DataDirTestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.tests = Path(self.temp.name) / "tests"
-        self.tests.mkdir()
-        self.patchers = [
-            patch.object(main, "TESTS_DIR", self.tests),
-            patch.object(store, "TESTS_DIR", self.tests),
-            patch.object(ingest, "TESTS_DIR", self.tests),
-            patch.object(edit, "TESTS_DIR", self.tests),
-        ]
-        for p in self.patchers:
-            p.start()
+        super().setUp()
 
         # small real test: 10 s at 64 Hz with a NaN block in 'a'
         t = np.arange(N) / FS
@@ -47,11 +37,6 @@ class EditTests(unittest.TestCase):
                  "end_s": 9.5, "start_idx": 544, "end_idx": 608, "notes": ""},
             ],
         })
-
-    def tearDown(self):
-        for p in reversed(self.patchers):
-            p.stop()
-        self.temp.cleanup()
 
     def meta(self):
         return store.get_meta("alpha")
@@ -110,6 +95,47 @@ class EditTests(unittest.TestCase):
         result = main.api_edit("alpha", EditOps(drop=["b"]), bt)
         self.assertEqual(result["status"], "rebuilding")
         self.assertEqual(len(bt.tasks), 1)
+
+    def test_failed_rebuild_leaves_the_original_test_intact(self):
+        # A crash while building the new pyramid must not touch the live
+        # data/meta/pyramid — everything expensive is staged first.
+        before_meta = self.meta()
+        before_parquet = (self.tests / "alpha" / "data.parquet").read_bytes()
+        with patch.object(edit, "build_pyramid",
+                          side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                edit._rebuild("alpha", {"drop": ["b"]})
+
+        self.assertEqual(store.get_status("alpha")["status"], "error")
+        self.assertEqual((self.tests / "alpha" / "data.parquet").read_bytes(),
+                         before_parquet)
+        self.assertEqual(self.meta()["columns"], before_meta["columns"])
+        # no staging leftovers
+        self.assertFalse((self.tests / "alpha" / "data.parquet.tmp").exists())
+        self.assertFalse((self.tests / "alpha" / "pyramid.tmp").exists())
+        self.assertFalse((self.tests / "alpha" / "pyramid.old").exists())
+        # the untouched test still serves end to end
+        win = store.read_window("alpha", ["a", "b"], None, None, px=100)
+        self.assertGreater(len(win["t"]), 0)
+
+    def test_edit_invalidates_tp_stats(self):
+        before = store.tp_stats("alpha", "a")  # 2 TPs -> populates sidecar
+        self.assertTrue((self.tests / "alpha" / "tp_stats.json").is_file())
+        edit._rebuild("alpha", {"trim_t0": 2.0, "trim_t1": 8.0})
+        # trim drops TP-02 (8.5-9.5); the stale sidecar must not survive
+        after = store.tp_stats("alpha", "a")
+        self.assertEqual(len(before), 2)
+        self.assertEqual(len(after), 1)
+
+    def test_second_edit_is_rejected_once_rebuilding(self):
+        # First /edit flips the status to 'rebuilding' before returning
+        # (background task not yet run); a second request must 409 instead
+        # of scheduling ops validated against the pre-rebuild schema.
+        main.api_edit("alpha", EditOps(drop=["b"]), BackgroundTasks())
+        self.assertEqual(store.get_status("alpha")["status"], "rebuilding")
+        with self.assertRaises(HTTPException) as caught:
+            main.api_edit("alpha", EditOps(drop=["b"]), BackgroundTasks())
+        self.assertEqual(caught.exception.status_code, 409)
 
     def test_patch_user_meta(self):
         out = main.api_patch_meta(

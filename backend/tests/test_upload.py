@@ -5,15 +5,14 @@ TestClient the BackgroundTasks ingest runs synchronously before .post()
 returns, so a 200 response means the test is already 'ready'.
 """
 
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app import ingest, main, store
+from ._base import DataDirTestCase
 
 
 def small_csv(rows: int = 64, fs: float = 10.0) -> bytes:
@@ -23,28 +22,10 @@ def small_csv(rows: int = 64, fs: float = 10.0) -> bytes:
     return ("\n".join(lines) + "\n").encode()
 
 
-class UploadTests(unittest.TestCase):
+class UploadTests(DataDirTestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
-        self.tests = self.root / "tests"
-        self.trash = self.root / "trash"
-        self.tests.mkdir()
-
-        self.patchers = [
-            patch.object(main, "TESTS_DIR", self.tests),
-            patch.object(main, "TRASH_DIR", self.trash),
-            patch.object(store, "TESTS_DIR", self.tests),
-            patch.object(ingest, "TESTS_DIR", self.tests),
-        ]
-        for patcher in self.patchers:
-            patcher.start()
+        super().setUp()
         self.client = TestClient(main.app)
-
-    def tearDown(self):
-        for patcher in reversed(self.patchers):
-            patcher.stop()
-        self.temp.cleanup()
 
     def test_upload_stores_raw_and_ingests(self):
         body = small_csv()
@@ -59,6 +40,22 @@ class UploadTests(unittest.TestCase):
         self.assertEqual(meta["n_rows"], 64)
         self.assertEqual(meta["time_column"], "time")
         self.assertEqual(meta["fs_hz"], 10.0)
+
+    def test_upload_rejects_oversize_by_content_length(self):
+        # A declared size over the cap is refused BEFORE the dir is reserved.
+        with patch.object(main, "MAX_UPLOAD_BYTES", 10):
+            r = self.client.post("/api/tests/upload?name=big",
+                                 content=small_csv())
+        self.assertEqual(r.status_code, 413)
+        self.assertFalse((self.tests / "big").exists())
+
+    def test_upload_rejects_binary_content(self):
+        # A NUL byte in the first chunk means this is not a text CSV; the
+        # reserved dir must be discarded so a retry does not 409.
+        body = b"\x00\x01\x02binary payload" + b"x" * 200
+        r = self.client.post("/api/tests/upload?name=bin", content=body)
+        self.assertEqual(r.status_code, 400)
+        self.assertFalse((self.tests / "bin").exists())
 
     def test_list_tests_reports_upload_history_fields(self):
         r = self.client.post(

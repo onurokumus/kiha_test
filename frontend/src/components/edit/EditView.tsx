@@ -6,6 +6,7 @@ import {
   renameTest,
 } from '../../services/api';
 import { EditOps, TestInfo, TestMeta } from '../../types';
+import { TestOptions } from '../controls/TestOptions';
 
 interface Props {
   test: string;
@@ -173,11 +174,7 @@ export default function EditView({ test, meta, tests, onTestChange, onRebuildSta
               className="input" style={{ width: 150 }}
               value={test} onChange={(e) => onTestChange(e.target.value)}
             >
-              {tests.map((t) => (
-                <option key={t.name} value={t.name} disabled={t.status !== 'ready'}>
-                  {t.name}{t.status !== 'ready' ? ` (${t.status})` : ''}
-                </option>
-              ))}
+              <TestOptions tests={tests} />
             </select>
           </div>
           <div style={{ fontSize: 11, color: '#909090' }}>

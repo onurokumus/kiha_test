@@ -13,6 +13,7 @@ one collects in RAM (fine for bench tests; a 1 h/112-col test needs ~7 GB).
 
 import json
 import os
+import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,8 +22,9 @@ import polars as pl
 import pyarrow.parquet as pq
 
 from .config import ROW_GROUP_SIZE, TESTS_DIR
-from .ingest import _write_status, build_pyramid
+from .ingest import build_pyramid
 from .locks import test_write
+from .status import write_status
 from .store import write_json_atomic
 
 NAN_POLICIES = ("keep_gaps", "zero_fill", "interpolate")
@@ -33,11 +35,43 @@ def rebuild_test(name: str, ops: dict) -> None:
         _rebuild(name, ops)
 
 
+def _discard(*paths: Path) -> None:
+    """Best-effort removal of staging leftovers (files or directories)."""
+    for p in paths:
+        try:
+            if p.is_dir():
+                shutil.rmtree(p)
+            else:
+                p.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _rebuild(name: str, ops: dict) -> None:
+    """Destructive edit, staged so the live files are never left inconsistent.
+
+    The expensive work (new data.parquet + new pyramid + fact recompute) all
+    lands in *.tmp staging paths while the originals stay untouched.  Only once
+    everything succeeded do the fast rename swaps run, back to back, and
+    meta.json/status is written LAST as the commit signal.  A crash during the
+    minutes-long build therefore leaves the original test fully intact; a crash
+    in the millisecond swap window leaves status 'rebuilding', which restart
+    recovery (main._recover_interrupted_ingests) flips to 'error'.  Either way
+    there is no persisted state of new-data-with-stale-pyramid-and-meta.
+    """
     test_dir = TESTS_DIR / name
-    _write_status(test_dir, "rebuilding")
+    parquet_path = test_dir / "data.parquet"
+    pyr_dir = test_dir / "pyramid"
+    tmp_parquet = test_dir / "data.parquet.tmp"
+    tmp_pyramid = test_dir / "pyramid.tmp"
+    old_pyramid = test_dir / "pyramid.old"
+
+    write_status(test_dir, "rebuilding")
     t_begin = time.time()
     try:
+        # Clear any staging leftovers from a previously interrupted rebuild.
+        _discard(tmp_parquet, tmp_pyramid, old_pyramid)
+
         meta = json.loads((test_dir / "meta.json").read_text())
         tcol: str = meta["time_column"]
         fs: float = meta["fs_hz"]
@@ -47,7 +81,6 @@ def _rebuild(name: str, ops: dict) -> None:
         trim_t1 = ops.get("trim_t1")
         policy = ops.get("nan_policy")
 
-        parquet_path = test_dir / "data.parquet"
         lf = pl.scan_parquet(parquet_path)
         schema = lf.collect_schema()
 
@@ -80,28 +113,38 @@ def _rebuild(name: str, ops: dict) -> None:
                      for c in float_cols])
                 needs_collect = True
 
-        tmp = test_dir / "data.parquet.tmp"
+        # 1) stage the new parquet
         if needs_collect:
             lf.collect().write_parquet(
-                tmp, row_group_size=ROW_GROUP_SIZE, statistics=True)
+                tmp_parquet, row_group_size=ROW_GROUP_SIZE, statistics=True)
         else:
-            lf.sink_parquet(tmp, row_group_size=ROW_GROUP_SIZE,
+            lf.sink_parquet(tmp_parquet, row_group_size=ROW_GROUP_SIZE,
                             statistics=True)
-        os.replace(tmp, parquet_path)
 
-        # refreshed facts
-        pf = pq.ParquetFile(parquet_path)
-        columns = [f.name for f in pf.schema_arrow]
-        n_rows = pf.metadata.num_rows
-        if n_rows < 2:
-            raise ValueError("edit would leave fewer than 2 samples")
+        # 2) recompute facts + stage the new pyramid, both from the staged
+        #    parquet (validation happens here, before anything is swapped).
+        #    The reader handle is closed before the swap: on Windows os.replace
+        #    cannot move a file that pyarrow still holds open.
         new_tcol = rename.get(tcol, tcol)
-        head = pl.read_parquet(parquet_path, columns=[new_tcol], n_rows=1)
-        t_start = float(head[new_tcol][0])
+        with pq.ParquetFile(tmp_parquet) as pf:
+            columns = [f.name for f in pf.schema_arrow]
+            n_rows = pf.metadata.num_rows
+            if n_rows < 2:
+                raise ValueError("edit would leave fewer than 2 samples")
+            first = next(pf.iter_batches(batch_size=1, columns=[new_tcol]))
+            t_start = float(first.column(0)[0].as_py())
         duration = round(n_rows / fs, 3)
+        nan_counts, level_rows = build_pyramid(tmp_parquet, tmp_pyramid,
+                                               new_tcol)
 
-        nan_counts, level_rows = build_pyramid(
-            parquet_path, test_dir / "pyramid", new_tcol)
+        # 3) COMMIT — fast rename swaps only past this point. Each os.replace
+        #    has a non-existent destination (plain atomic rename); no reader
+        #    can hold a file open because this runs under test_write.
+        os.replace(tmp_parquet, parquet_path)
+        if pyr_dir.exists():
+            os.replace(pyr_dir, old_pyramid)   # move the old pyramid aside
+        os.replace(tmp_pyramid, pyr_dir)        # swap the new one in
+        _discard(old_pyramid)
 
         meta.update({
             "columns": columns,
@@ -118,11 +161,15 @@ def _rebuild(name: str, ops: dict) -> None:
             "edit_seconds": round(time.time() - t_begin, 1),
         })
         write_json_atomic(test_dir / "meta.json", meta)
+        # the data changed: drop the tp_stats sidecar so nothing serves
+        # averages computed against the old columns/rows
+        _discard(test_dir / "tp_stats.json")
 
         _clip_testpoints(test_dir, name, fs, t_start, duration)
-        _write_status(test_dir, "ready")
+        write_status(test_dir, "ready")
     except Exception as e:  # status file is how the UI learns of failures
-        _write_status(test_dir, "error", repr(e))
+        _discard(tmp_parquet, tmp_pyramid, old_pyramid)
+        write_status(test_dir, "error", repr(e))
         raise
 
 

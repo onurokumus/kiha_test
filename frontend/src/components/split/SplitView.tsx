@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { CSSProperties, useEffect, useRef, useState } from 'react';
 import {
   autoSplit,
+  exportCsvUrl,
   fetchSplitCandidates,
   fetchTestPoints,
   putTestPoints,
   uploadTestPoints,
 } from '../../services/api';
 import { IdCandidate, TestInfo, TestMeta, TestPoint, TestPointsFile } from '../../types';
+import { round3 } from '../../utils/formatters';
+import { TestOptions } from '../controls/TestOptions';
 import SplitPlot, { effectiveEnd, TimeRange } from './SplitPlot';
 
 interface Props {
@@ -187,11 +190,7 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
           className="input" style={{ width: 150 }}
           value={test} onChange={(e) => onTestChange(e.target.value)}
         >
-          {tests.map((t) => (
-            <option key={t.name} value={t.name} disabled={t.status !== 'ready'}>
-              {t.name}{t.status !== 'ready' ? ` (${t.status})` : ''}
-            </option>
-          ))}
+          <TestOptions tests={tests} />
         </select>
         <span style={{ color: '#555' }}>|</span>
         <span className="section-title" style={{ margin: 0 }}>Auto-split</span>
@@ -281,7 +280,7 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
         <div className="section-title">
           Test points <span className="badge">{tps.length}</span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 90px 90px 60px 1fr 100px', gap: 4, fontSize: 11 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 90px 90px 60px 1fr 130px', gap: 4, fontSize: 11 }}>
           <span style={{ color: '#909090' }}>name</span>
           <span style={{ color: '#909090' }}>label</span>
           <span style={{ color: '#909090' }}>start (s)</span>
@@ -293,6 +292,10 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
             const sel = tp.id === selectedId;
             return (
               <FragmentRow key={tp.id} tp={tp} sel={sel}
+                exportHref={exportCsvUrl(test, {
+                  t0: tp.start_s,
+                  t1: effectiveEnd(tp, tps, dataEnd),
+                })}
                 onPatch={(p) => patchTp(tp.id, p)}
                 onZoom={() => zoomTo(tp)}
                 onRemove={() => removeTp(tp.id)}
@@ -310,9 +313,53 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
   );
 }
 
-function FragmentRow({ tp, sel, onPatch, onZoom, onRemove, onSelect }: {
+/** Numeric table cell that commits ONLY on blur. Editing start (s) live would
+ *  re-sort the row under the cursor on every keystroke, and clearing the field
+ *  (Number('') === 0) would teleport the row to the top mid-edit (bug 1.20).
+ *  Holding the edit locally until blur keeps the committed value — and thus the
+ *  sort order — stable while typing; an empty/invalid value reverts. */
+function NumberCell({ value, disabled, style, onFocus, onCommit }: {
+  value: number | null;
+  disabled?: boolean;
+  style?: CSSProperties;
+  onFocus?: () => void;
+  onCommit: (v: number) => void;
+}) {
+  const [text, setText] = useState(value === null ? '' : String(value));
+  const [editing, setEditing] = useState(false);
+  // resync from props whenever not actively editing (clamp/save/reset/switch TP)
+  useEffect(() => {
+    if (!editing) setText(value === null ? '' : String(value));
+  }, [value, editing]);
+  return (
+    <input
+      className="input"
+      style={style}
+      type="number"
+      step="0.01"
+      disabled={disabled}
+      value={text}
+      onFocus={() => {
+        setEditing(true);
+        onFocus?.();
+      }}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={() => {
+        setEditing(false);
+        const v = Number(text);
+        if (text.trim() !== '' && Number.isFinite(v)) onCommit(v);
+        else setText(value === null ? '' : String(value)); // revert empty/invalid
+      }}
+    />
+  );
+}
+
+function FragmentRow({ tp, sel, exportHref, onPatch, onZoom, onRemove, onSelect }: {
   tp: TestPoint;
   sel: boolean;
+  /** Window-export URL for the TP's CURRENT time range — unlike the saved-TP
+   *  endpoint this also works for unsaved/edited rows. */
+  exportHref: string;
   onPatch: (p: Partial<TestPoint>) => void;
   onZoom: () => void;
   onRemove: () => void;
@@ -330,29 +377,17 @@ function FragmentRow({ tp, sel, onPatch, onZoom, onRemove, onSelect }: {
       <input className="input" style={cellStyle} value={tp.label}
              onFocus={onSelect}
              onChange={(e) => onPatch({ label: e.target.value })} />
-      <input className="input" style={cellStyle} type="number" step="0.01"
-             value={tp.start_s}
+      <NumberCell style={cellStyle} value={tp.start_s} onFocus={onSelect}
+             onCommit={(v) =>
+               onPatch({
+                 start_s: tp.end_s !== null && v >= tp.end_s
+                   ? round3(tp.end_s - 0.01)
+                   : v,
+               })} />
+      <NumberCell style={cellStyle} value={tp.end_s} disabled={tp.end_s === null}
              onFocus={onSelect}
-             onChange={(e) => {
-               const v = Number(e.target.value);
-               if (Number.isFinite(v)) onPatch({ start_s: v });
-             }}
-             onBlur={() => {
-               if (tp.end_s !== null && tp.start_s >= tp.end_s)
-                 onPatch({ start_s: round3(tp.end_s - 0.01) });
-             }} />
-      <input className="input" style={cellStyle} type="number" step="0.01"
-             value={tp.end_s ?? ''}
-             disabled={tp.end_s === null}
-             onFocus={onSelect}
-             onChange={(e) => {
-               const v = Number(e.target.value);
-               if (Number.isFinite(v)) onPatch({ end_s: v });
-             }}
-             onBlur={() => {
-               if (tp.end_s !== null && tp.end_s <= tp.start_s)
-                 onPatch({ end_s: round3(tp.start_s + 0.01) });
-             }} />
+             onCommit={(v) =>
+               onPatch({ end_s: v <= tp.start_s ? round3(tp.start_s + 0.01) : v })} />
       <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <input type="checkbox" checked={tp.end_s === null}
                title="open end: TP runs until next TP or end of data"
@@ -364,10 +399,11 @@ function FragmentRow({ tp, sel, onPatch, onZoom, onRemove, onSelect }: {
              onChange={(e) => onPatch({ notes: e.target.value })} />
       <span style={{ display: 'flex', gap: 4 }}>
         <button className="btn" onClick={onZoom} title="zoom to test point">🔍</button>
+        <a className="btn" href={exportHref} download
+           style={{ textDecoration: 'none' }}
+           title="download CSV of this TP's current time range">⬇</a>
         <button className="btn" onClick={onRemove} title="delete">✕</button>
       </span>
     </>
   );
 }
-
-const round3 = (v: number) => Math.round(v * 1000) / 1000;

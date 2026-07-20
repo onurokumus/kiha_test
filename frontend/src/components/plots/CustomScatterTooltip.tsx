@@ -44,7 +44,7 @@ export const CustomScatterTooltip: React.FC<TooltipProps<number, string>> = ({
         color: '#e0e0e0',
       }}
     >
-      {/* Label with tail number, flight, test point, and maneuver */}
+      {/* Label: test name, test point, and label */}
       <div
         style={{
           color: '#569cd6',

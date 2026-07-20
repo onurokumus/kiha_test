@@ -1,6 +1,11 @@
 """FastAPI app: upload/ingest, windowed data serving, test points CRUD.
 
-Run:  uvicorn app.main:app --reload --port 8000   (from backend/)
+Run:  backend\\.venv\\Scripts\\python.exe backend\\run.py   (port 8000)
+
+Use run.py, NOT `uvicorn app.main:app` directly: run.py installs the
+SelectorEventLoop policy that avoids the Windows/py3.14 polars crash and wires
+logging.basicConfig so kiha.* log lines are emitted. Launching uvicorn straight
+skips both (see CLAUDE.md).
 """
 
 import json
@@ -10,6 +15,7 @@ import re
 import shutil
 import time
 import uuid
+from collections import Counter
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -18,25 +24,41 @@ from fastapi import (BackgroundTasks, FastAPI, HTTPException, Query, Request,
                      UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
 from . import dsp, edit, split, store
-from .config import (POINT_BUDGET_CAP, TESTS_DIR, TRASH_DIR,
-                     TRASH_MAX_AGE_S)
-from .ingest import _write_status, ingest_csv
-from .locks import (catalog_read, catalog_write, test_read, test_write,
-                    tests_write, with_test_read, with_test_write)
+from .config import (MAX_UPLOAD_BYTES, POINT_BUDGET_CAP, TESTS_DIR, TRASH_DIR,
+                     TRASH_MAX_AGE_S, UPLOAD_SNIFF_BYTES)
+from .ingest import ingest_csv
+from .locks import (catalog_read, catalog_write, data_read, drop_test_lock,
+                    test_read, test_write, tests_write, with_test_read)
+from .status import BUSY_STATUSES, INGEST_LIKE, write_status
 
 
 logger = logging.getLogger("kiha.api")
 
 
-# Statuses of an upload that has not yet become a ready test.  'receiving'
-# means the request body is still streaming in; 'ingesting' means the
-# background CSV->parquet job runs.  Both must block delete/rename.
-INGEST_LIKE = ("receiving", "ingesting")
+def _reject_if_busy(name: str) -> None:
+    status = store.get_status(name).get("status")
+    if status in BUSY_STATUSES:
+        raise HTTPException(
+            409, f"'{name}' is busy ({status}); retry once it is ready")
+
+
+def _reject_duplicate_ids(payload: "TestPointsFile") -> None:
+    """Reject a test-point list with repeated ids before it is persisted.
+
+    Nothing else enforces uniqueness (bug 4.4): read_testpoint_trace silently
+    picks the first match, exports resolve one id, and the frontend selection
+    key `${test}:${tpId}` would collide — so two points sharing an id are a
+    latent data corruption, not a valid file."""
+    counts = Counter(tp.id for tp in payload.test_points)
+    dupes = sorted(i for i, n in counts.items() if n > 1)
+    if dupes:
+        raise HTTPException(400, f"duplicate test-point ids: {dupes}")
 
 
 def _recover_interrupted_ingests() -> None:
@@ -47,12 +69,21 @@ def _recover_interrupted_ingests() -> None:
         for test_dir in TESTS_DIR.iterdir():
             if not test_dir.is_dir():
                 continue
-            if store.get_status(test_dir.name).get("status") in INGEST_LIKE:
-                _write_status(
+            status = store.get_status(test_dir.name).get("status")
+            if status in INGEST_LIKE:
+                write_status(
                     test_dir,
                     "error",
                     "upload/ingestion was interrupted by a backend restart; "
                     "delete this test and upload it again",
+                )
+            elif status == "rebuilding":
+                write_status(
+                    test_dir,
+                    "error",
+                    "an edit/rebuild was interrupted by a backend restart "
+                    "and the on-disk data may be inconsistent; delete this "
+                    "test and upload it again",
                 )
 
 
@@ -68,8 +99,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173",
-                   "http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -193,6 +223,9 @@ def api_delete_test(name: str):
                 409, f"could not delete '{name}' (files in use?): {e}")
         if not dst.is_dir():
             raise HTTPException(500, f"delete of '{name}' did not complete")
+    # The name is gone from tests/ — forget its RW lock (bug 4.8). A restore
+    # lazily recreates one.
+    drop_test_lock(name)
     return {"ok": True, "deleted": name, "restorable": True}
 
 
@@ -274,6 +307,9 @@ def api_rename_test(name: str, new_name: str = Query(...)):
                     pass
             raise HTTPException(
                 409, f"could not rename '{name}' (files in use?): {e}")
+    # The old name no longer exists — forget its RW lock (bug 4.8); the new
+    # name lazily gets its own on first use.
+    drop_test_lock(name)
     return {"ok": True, "name": new_name}
 
 
@@ -286,21 +322,44 @@ def _discard_partial_upload(name: str) -> None:
         except OSError:
             # Cannot remove (files in use?) — leave an inspectable error
             # state instead of a test stuck at 'receiving'.
-            _write_status(test_dir, "error",
+            write_status(test_dir, "error",
                           "upload did not complete; delete this test and "
                           "upload it again")
+
+
+def _reserve_upload_dir(test_name: str) -> None:
+    """Create the test dir and publish 'receiving' under catalog_write.
+
+    Called via run_in_threadpool from the async upload endpoint: acquiring the
+    catalog lock can block for as long as another writer holds it (a delete
+    purging a multi-GB trash entry runs an rmtree inside its lock), and doing
+    that ON the event loop would freeze every client. In a worker thread the
+    wait is harmless. Publishing 'receiving' before returning still lets
+    delete/rename see the reservation immediately (bug 1.5)."""
+    test_dir = TESTS_DIR / test_name
+    with catalog_write():
+        if test_dir.exists():
+            raise HTTPException(409, f"test '{test_name}' already exists")
+        test_dir.mkdir(parents=True)
+        # Publish the state before receiving so delete/rename cannot race
+        # the (possibly minutes-long) body transfer.
+        write_status(test_dir, "receiving")
 
 
 @app.post("/api/tests/upload")
 async def api_upload(request: Request, background: BackgroundTasks,
                      name: str = Query(default=""),
-                     source: str = Query(default="")):
+                     source: str = Query(default=""),
+                     fs: float | None = Query(default=None, gt=0)):
     """Upload a test CSV as the RAW request body (not multipart).
 
     ?name= is required (multipart carried the filename; a raw body cannot).
     ?source= is the optional original file name, recorded as
     meta.source_file for the upload history (the body lands in raw.csv,
     so the client's file name would otherwise be lost).
+    ?fs= is the sample rate to assume ONLY if the file's time column turns
+    out to be unusable (a uniform axis is then generated); it does not
+    override a good, measurable time column.
     Raw-body streaming is deliberate: with UploadFile, starlette spools the
     whole multipart body to a temp file BEFORE the endpoint runs, so a
     multi-GB transfer produced minutes of dead air — no status.json, no log
@@ -314,46 +373,80 @@ async def api_upload(request: Request, background: BackgroundTasks,
         raise HTTPException(
             400, "test name may only contain letters, digits, '.', '_', '-'")
     test_dir = TESTS_DIR / test_name
-    with catalog_write():
-        if test_dir.exists():
-            raise HTTPException(409, f"test '{test_name}' already exists")
-        test_dir.mkdir(parents=True)
-        # Publish the state before receiving so delete/rename cannot race
-        # the (possibly minutes-long) body transfer.
-        _write_status(test_dir, "receiving")
-    raw_path = test_dir / "raw.csv"
+    # Every synchronous, potentially-blocking step (catalog-lock acquisition,
+    # per-chunk disk writes, status writes whose atomic-replace retries can
+    # sleep on Windows, discard cleanup) runs in a worker thread. This handler
+    # is `async` only so it can consume request.stream(); nothing here may block
+    # the event loop, or one slow filesystem op would freeze all clients (1.5).
+    #
+    # The transfer no longer holds test_write across the stream (that would be a
+    # threading lock held for minutes over `await` points). The 'receiving'
+    # status published atomically under catalog_write below IS the guard: every
+    # mutating endpoint 409s on it before touching the lock (delete/rename via
+    # INGEST_LIKE, edit/patch/testpoints via _reject_if_busy), a duplicate name
+    # 409s on the dir already existing, and ingest is only scheduled once the
+    # transfer completes — so nothing else writes this test dir while it streams.
+    # Reject an over-cap upload from its declared size BEFORE reserving the dir
+    # or writing a byte (a mistaken multi-GB non-CSV must not fill the volume).
+    # content-length can be absent/wrong, so the stream is also capped below.
     expected = int(request.headers.get("content-length") or 0)
+    if expected and expected > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            413, f"upload is {expected / 1024**3:.1f} GB; the limit is "
+                 f"{MAX_UPLOAD_BYTES / 1024**3:.0f} GB")
+
+    await run_in_threadpool(_reserve_upload_dir, test_name)
+    raw_path = test_dir / "raw.csv"
     logger.info("upload '%s': receiving %s", test_name,
                 f"{expected / 1e6:,.1f} MB" if expected else "(unknown size)")
     t0 = time.time()
     received = 0
+    first_chunk = True
+    out = await run_in_threadpool(open, raw_path, "wb")
+
+    async def _reject(status: int, detail: str):
+        await run_in_threadpool(out.close)
+        await run_in_threadpool(_discard_partial_upload, test_name)
+        raise HTTPException(status, detail)
+
     try:
-        # Holding test_write across the transfer is safe: mutating endpoints
-        # 409 on the 'receiving' status before ever touching this lock.
-        with test_write(test_name), open(raw_path, "wb") as out:
-            async for chunk in request.stream():
-                out.write(chunk)
-                received += len(chunk)
+        async for chunk in request.stream():
+            if first_chunk:
+                first_chunk = False
+                if b"\x00" in chunk[:UPLOAD_SNIFF_BYTES]:
+                    # binary content (NUL byte) — a text CSV never contains one
+                    await _reject(400, "file does not look like a CSV "
+                                       "(binary content detected)")
+            await run_in_threadpool(out.write, chunk)
+            received += len(chunk)
+            if received > MAX_UPLOAD_BYTES:
+                await _reject(
+                    413, f"upload exceeds the {MAX_UPLOAD_BYTES / 1024**3:.0f} "
+                         "GB limit")
     except ClientDisconnect:
         logger.warning("upload '%s': client disconnected after %.1f of "
                        "%.1f MB — discarding", test_name, received / 1e6,
                        expected / 1e6)
-        _discard_partial_upload(test_name)
+        await run_in_threadpool(out.close)
+        await run_in_threadpool(_discard_partial_upload, test_name)
         raise HTTPException(400, "client disconnected during upload")
     except OSError as e:
         logger.exception("upload '%s': could not store body", test_name)
-        _discard_partial_upload(test_name)
+        await run_in_threadpool(out.close)
+        await run_in_threadpool(_discard_partial_upload, test_name)
         raise HTTPException(500, f"could not store upload: {e}")
+    else:
+        await run_in_threadpool(out.close)
     if expected and received != expected:
         logger.warning("upload '%s': truncated body (%d of %d bytes) — "
                        "discarding", test_name, received, expected)
-        _discard_partial_upload(test_name)
+        await run_in_threadpool(_discard_partial_upload, test_name)
         raise HTTPException(400, "upload was truncated; please retry")
     logger.info("upload '%s': %.1f MB stored in %.1f s, ingest scheduled",
                 test_name, received / 1e6, time.time() - t0)
-    _write_status(test_dir, "ingesting")
+    await run_in_threadpool(write_status, test_dir, "ingesting")
     background.add_task(ingest_csv, raw_path, test_name,
-                        source_name=source[:255] or None)
+                        source_name=source[:255] or None, assume_fs=fs)
     return {"name": test_name, "status": "ingesting"}
 
 
@@ -375,7 +468,10 @@ class EditOps(BaseModel):
 def api_patch_meta(name: str, payload: UserMetaPatch):
     """Replace the free-form user_meta block (prop/motor/ESC descriptors...).
     Nothing else in meta.json is writable from the API."""
+    _reject_if_busy(name)  # don't park on the lock during a rebuild/upload
     with test_write(name):
+        if store.get_status(name).get("status") in BUSY_STATUSES:
+            raise HTTPException(409, f"'{name}' became busy; retry")
         meta_path = TESTS_DIR / name / "meta.json"
         try:
             meta = json.loads(meta_path.read_text())
@@ -437,7 +533,12 @@ def api_edit(name: str, ops: EditOps, background: BackgroundTasks):
                  "('drop rows' would break the uniform sample rate)")
 
     with test_write(name):
-        _write_status(TESTS_DIR / name, "rebuilding")
+        # Re-check under the lock: two /edit requests racing through the
+        # validation above must not both schedule — the second would run ops
+        # validated against the schema the first is about to change.
+        if store.get_status(name).get("status") != "ready":
+            raise HTTPException(409, f"test '{name}' is not ready")
+        write_status(TESTS_DIR / name, "rebuilding")
     background.add_task(edit.rebuild_test, name, ops.model_dump())
     return {"name": name, "status": "rebuilding"}
 
@@ -453,13 +554,100 @@ def api_data(name: str,
     meta = store.get_meta(name)
     if meta is None:
         raise HTTPException(404, f"test '{name}' not found or not ready")
+    col_list = _data_columns(meta, cols)
+    return store.read_window(name, col_list, t0, t1, px)
+
+
+# ---------- csv export / raw download ----------
+
+def _data_columns(meta: dict, cols: str) -> list[str]:
+    """Validated, deduped data-column selection for /data and /filter.
+
+    Drops the time column (always returned separately as ``t``): requesting it
+    via ``cols`` would otherwise make a duplicate polars select in raw mode, or
+    look for a non-existent ``{tcol}__min`` pyramid column in envelope mode —
+    both 500s.  /xy dedupes the same way in store.read_xy."""
     col_list = [c.strip() for c in cols.split(",") if c.strip()]
     unknown = [c for c in col_list if c not in meta["columns"]]
     if unknown:
         raise HTTPException(400, f"unknown columns: {unknown}")
+    col_list = [c for c in dict.fromkeys(col_list) if c != meta["time_column"]]
     if not col_list:
-        raise HTTPException(400, "no columns requested")
-    return store.read_window(name, col_list, t0, t1, px)
+        raise HTTPException(400, "no data columns requested")
+    return col_list
+
+
+def _export_columns(meta: dict, cols: str) -> list[str]:
+    """Validated export column selection: time column always first, deduped
+    (so `cols` naming the time column cannot produce a duplicate select)."""
+    col_list = [c.strip() for c in cols.split(",") if c.strip()]
+    unknown = [c for c in col_list if c not in meta["columns"]]
+    if unknown:
+        raise HTTPException(400, f"unknown columns: {unknown}")
+    return list(dict.fromkeys(
+        [meta["time_column"], *(col_list or meta["columns"])]))
+
+
+def _csv_response(name: str, columns: list[str], i0: int, i1: int,
+                  filename: str) -> StreamingResponse:
+    """Stream rows [i0, i1) as a CSV download.
+
+    The generator acquires the read locks itself: a StreamingResponse body
+    runs after the endpoint returns, so a @with_test_read lock would already
+    be released while the parquet file is still being read (and a rebuild
+    could swap data.parquet mid-download)."""
+    def stream():
+        with data_read(name):
+            yield from store.stream_csv(name, columns, i0, i1)
+
+    return StreamingResponse(
+        stream(), media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.get("/api/tests/{name}/export")
+def api_export(name: str, cols: str = "",
+               t0: float | None = None, t1: float | None = None):
+    """Full-resolution CSV of the test, or of a [t0, t1] window of it.
+    `cols` empty = every column."""
+    meta = store.get_meta(name)
+    if meta is None:
+        raise HTTPException(404, f"test '{name}' not found or not ready")
+    columns = _export_columns(meta, cols)
+    i0, i1 = store.window_bounds(meta, t0, t1)
+    suffix = "" if t0 is None and t1 is None else f"_rows{i0}-{i1}"
+    return _csv_response(name, columns, i0, i1, f"{name}{suffix}.csv")
+
+
+@app.get("/api/tests/{name}/testpoints/{tp_id}/export")
+def api_export_testpoint(name: str, tp_id: int, cols: str = ""):
+    """Exact-boundary CSV of one saved test point."""
+    meta = store.get_meta(name)
+    if meta is None:
+        raise HTTPException(404, f"test '{name}' not found or not ready")
+    columns = _export_columns(meta, cols)
+    try:
+        i0, i1 = store.testpoint_range(name, tp_id)
+    except KeyError:
+        raise HTTPException(
+            404, f"test point {tp_id} not found in test '{name}'")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return _csv_response(name, columns, i0, i1, f"{name}_tp{tp_id}.csv")
+
+
+@app.get("/api/tests/{name}/raw")
+def api_download_raw(name: str):
+    """The original uploaded CSV (raw.csv), kept for provenance."""
+    tests_root = TESTS_DIR.resolve()
+    test_dir = (TESTS_DIR / name).resolve()
+    if test_dir.parent != tests_root or not test_dir.is_dir():
+        raise HTTPException(404, f"test '{name}' not found")
+    raw = test_dir / "raw.csv"
+    if not raw.is_file():
+        raise HTTPException(404, f"no raw.csv stored for '{name}'")
+    filename = (store.get_meta(name) or {}).get("source_file") or f"{name}.csv"
+    return FileResponse(raw, media_type="text/csv", filename=filename)
 
 
 # ---------- xy + tp stats ----------
@@ -468,7 +656,7 @@ def api_data(name: str,
 @with_test_read
 def api_xy(name: str, x: str = Query(...), y: str = Query(...),
            t0: float | None = None, t1: float | None = None,
-           max_pts: int = 3000):
+           max_pts: int = Query(3000, ge=4, le=20000)):
     meta = store.get_meta(name)
     if meta is None:
         raise HTTPException(404, f"test '{name}' not found or not ready")
@@ -478,7 +666,7 @@ def api_xy(name: str, x: str = Query(...), y: str = Query(...),
         raise HTTPException(400, f"unknown columns: {unknown}")
     if not y_cols:
         raise HTTPException(400, "no y columns requested")
-    return store.read_xy(name, x, y_cols, t0, t1, min(max_pts, 20000))
+    return store.read_xy(name, x, y_cols, t0, t1, max_pts)
 
 
 @app.get("/api/tests/{name}/tp_stats")
@@ -490,6 +678,20 @@ def api_tp_stats(name: str, col: str = Query(...)):
     if col not in meta["columns"]:
         raise HTTPException(400, f"unknown column: {col}")
     return store.tp_stats(name, col)
+
+
+@app.post("/api/tests/{name}/tp_stats/rebuild")
+@with_test_read
+def api_rebuild_tp_stats(name: str):
+    """Force a fresh recompute of the cached test-point averages.
+
+    Non-destructive: the sidecar already self-invalidates on any data/TP
+    change, so this normally reproduces the same numbers — it exists as a
+    manual override, and it swaps the result in atomically so the previous
+    averages keep serving until it finishes."""
+    if store.get_meta(name) is None:
+        raise HTTPException(404, f"test '{name}' not found or not ready")
+    return {"name": name, "columns_recomputed": store.rebuild_tp_stats(name)}
 
 
 # ---------- signal processing ----------
@@ -506,12 +708,7 @@ def api_filter(name: str,
     meta = store.get_meta(name)
     if meta is None:
         raise HTTPException(404, f"test '{name}' not found or not ready")
-    col_list = [c.strip() for c in cols.split(",") if c.strip()]
-    unknown = [c for c in col_list if c not in meta["columns"]]
-    if unknown:
-        raise HTTPException(400, f"unknown columns: {unknown}")
-    if not col_list:
-        raise HTTPException(400, "no columns requested")
+    col_list = _data_columns(meta, cols)
     try:
         return dsp.filtered_window(name, col_list, kind, t0, t1, px,
                                    order, f1, f2, window_s)
@@ -596,23 +793,32 @@ def api_get_testpoint_data(
 
 
 @app.put("/api/tests/{name}/testpoints")
-@with_test_write
 def api_put_testpoints(name: str, payload: TestPointsFile):
-    if store.get_meta(name) is None:
-        raise HTTPException(404, f"test '{name}' not found or not ready")
-    store.write_testpoints(name, payload.model_dump())
-    return {"ok": True, "n": len(payload.test_points)}
+    _reject_duplicate_ids(payload)
+    # Pre-check status before the lock so a rebuild in progress 409s instead of
+    # parking this request on test_write for the whole rebuild (bug 1.12).
+    _reject_if_busy(name)
+    with test_write(name):
+        if store.get_status(name).get("status") in BUSY_STATUSES:
+            raise HTTPException(409, f"'{name}' became busy; retry")
+        if store.get_meta(name) is None:
+            raise HTTPException(404, f"test '{name}' not found or not ready")
+        store.write_testpoints(name, payload.model_dump())
+        return {"ok": True, "n": len(payload.test_points)}
 
 
 @app.post("/api/tests/{name}/testpoints/upload")
-@with_test_write
 def api_upload_testpoints(name: str, file: UploadFile):
-    if store.get_meta(name) is None:
-        raise HTTPException(404, f"test '{name}' not found or not ready")
-    import json
     try:
         payload = TestPointsFile(**json.loads(file.file.read()))
     except Exception as e:
         raise HTTPException(400, f"invalid testpoints file: {e}")
-    store.write_testpoints(name, payload.model_dump())
-    return {"ok": True, "n": len(payload.test_points)}
+    _reject_duplicate_ids(payload)
+    _reject_if_busy(name)  # same rebuild-safety pre-check as PUT above
+    with test_write(name):
+        if store.get_status(name).get("status") in BUSY_STATUSES:
+            raise HTTPException(409, f"'{name}' became busy; retry")
+        if store.get_meta(name) is None:
+            raise HTTPException(404, f"test '{name}' not found or not ready")
+        store.write_testpoints(name, payload.model_dump())
+        return {"ok": True, "n": len(payload.test_points)}

@@ -166,7 +166,6 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
   const [testSearch, setTestSearch] = useState('');
   const [labelSearch, setLabelSearch] = useState('');
   const [expandedTests, setExpandedTests] = useState<Set<string>>(new Set());
-  const testCheckboxRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
   const selectedKeys = useMemo(() => new Set(filterState.tpKeys), [filterState.tpKeys]);
 
@@ -327,12 +326,7 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
                             onToggleTpKeys(node.tps.map((tp) => tp.key), checked)
                           }
                           checkboxRef={(el) => {
-                            if (el) {
-                              testCheckboxRefs.current.set(node.test, el);
-                              el.indeterminate = checkState.indeterminate;
-                            } else {
-                              testCheckboxRefs.current.delete(node.test);
-                            }
+                            if (el) el.indeterminate = checkState.indeterminate;
                           }}
                         />
                       </div>

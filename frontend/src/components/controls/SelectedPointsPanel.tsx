@@ -1,6 +1,8 @@
 import React from 'react';
+import { testPointCsvUrl } from '../../services/api';
 import { SelectedTestPoint, TestInfo } from '../../types';
 import { buttonStyle, SelectStyle } from '../../constants/styles';
+import { TestOptions } from './TestOptions';
 
 type PanelViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
 type PanelSource = 'tp' | 'full';
@@ -134,12 +136,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
             onChange={(e) => onTestChange(e.target.value)}
             style={{ ...SelectStyle, maxWidth: 160 }}
           >
-            {tests.map((t) => (
-              <option key={t.name} value={t.name} disabled={t.status !== 'ready'}>
-                {t.name}
-                {t.status !== 'ready' ? ` (${t.status})` : ''}
-              </option>
-            ))}
+            <TestOptions tests={tests} />
           </select>
         </>
       )}
@@ -212,6 +209,15 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
               ⟳
             </span>
           )}
+          <a
+            href={testPointCsvUrl(s.test, s.tpId)}
+            download
+            onClick={(e) => e.stopPropagation()}
+            title="download this test point as CSV (all columns)"
+            style={{ marginLeft: 4, color: '#a0a0a0', textDecoration: 'none', fontSize: 11 }}
+          >
+            ⬇
+          </a>
           <span
             onClick={(e) => {
               e.stopPropagation();
@@ -250,20 +256,3 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
     </div>
   );
 };
-
-// Add CSS animation for loading spinner
-const style = document.createElement('style');
-style.textContent = `
-  @keyframes spin {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
-  }
-`;
-if (!document.head.querySelector('style[data-spinner]')) {
-  style.setAttribute('data-spinner', 'true');
-  document.head.appendChild(style);
-}

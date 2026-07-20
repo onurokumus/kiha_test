@@ -12,25 +12,12 @@ import polars as pl
 from scipy import signal
 from scipy.ndimage import uniform_filter1d
 
-from .config import (MAX_FILTER_SAMPLES, MAX_POINTS_RAW, POINT_BUDGET_CAP,
-                     PYRAMID_LEVELS, TESTS_DIR)
-from .ingest import _bucket_minmax
-from .store import _nan_to_none, get_meta
+from .config import MAX_FILTER_SAMPLES, MAX_POINTS_RAW, TESTS_DIR
+from .store import (bucket_minmax, get_meta, merge_over_cap, pick_pyramid_level,
+                    plot_budget, to_json_list, window_bounds)
 
 FILTER_KINDS = {"lowpass", "highpass", "bandpass", "bandstop",
                 "moving_avg", "detrend"}
-
-
-def _window_bounds(meta: dict, t0: float | None, t1: float | None):
-    fs = meta["fs_hz"]
-    n_rows = meta["n_rows"]
-    t_start = meta.get("t_start") or 0.0
-    duration = n_rows / fs
-    lo = t_start if t0 is None else max(t0, t_start)
-    hi = t_start + duration if t1 is None else min(t1, t_start + duration)
-    i0 = max(0, int((lo - t_start) * fs))
-    i1 = min(n_rows, int(math.ceil((hi - t_start) * fs)) + 1)
-    return i0, i1
 
 
 def _interp_nan(v: np.ndarray):
@@ -95,7 +82,7 @@ def filtered_window(name: str, cols: list[str], kind: str,
     fs = meta["fs_hz"]
     n_rows = meta["n_rows"]
     tcol = meta["time_column"]
-    i0, i1 = _window_bounds(meta, t0, t1)
+    i0, i1 = window_bounds(meta, t0, t1)
     n_raw = max(0, i1 - i0)
     if n_raw > MAX_FILTER_SAMPLES:
         raise ValueError(
@@ -104,18 +91,14 @@ def filtered_window(name: str, cols: list[str], kind: str,
     if n_raw < 8:
         raise ValueError("range too short")
     boundary = i0 == 0 or i1 >= n_rows
-    budget = min(max(2 * px, 1000), POINT_BUDGET_CAP)
+    budget = plot_budget(px)
     test_dir = TESTS_DIR / name
     raw_mode = n_raw <= max(MAX_POINTS_RAW, budget)
 
     if raw_mode:
         s0, s1 = i0, i1
     else:
-        level = PYRAMID_LEVELS[-1]
-        for f in PYRAMID_LEVELS:
-            if n_raw / f <= POINT_BUDGET_CAP:
-                level = f
-                break
+        level = pick_pyramid_level(n_raw, budget)
         # bucket-aligned slice so envelope buckets match the pyramid's
         b0, b1 = i0 // level, -(-i1 // level)
         s0, s1 = b0 * level, min(b1 * level, n_rows)
@@ -142,33 +125,20 @@ def filtered_window(name: str, cols: list[str], kind: str,
 
     if raw_mode:
         return {"mode": "raw", "level": 1, "n_raw": n_raw, "i0": i0, "i1": i1,
-                "t": _nan_to_none(df[tcol].to_numpy()),
-                "series": {c: _nan_to_none(filt[c]) for c in cols},
+                "t": to_json_list(df[tcol].to_numpy()),
+                "series": {c: to_json_list(filt[c]) for c in cols},
                 **warn}
 
     t = (pl.scan_parquet(test_dir / "pyramid" / f"L{level}.parquet")
          .slice(b0, b1 - b0).select([tcol]).collect())[tcol].to_numpy()
-    series = {c: _bucket_minmax(filt[c], level) for c in cols}
+    series = {c: bucket_minmax(filt[c], level) for c in cols}
 
-    # same bucket-merge rule as store.read_window when over the cap
-    merge = max(1, math.ceil(len(t) / POINT_BUDGET_CAP))
-    if merge > 1:
-        nb = -(-len(t) // merge)
-        pad = nb * merge - len(t)
-
-        def _merged(arr, fn):
-            if pad:
-                arr = np.concatenate([arr, np.full(pad, np.nan)])
-            with np.errstate(invalid="ignore"):
-                return fn(arr.reshape(nb, merge), axis=1)
-
-        series = {c: (_merged(mn, np.nanmin), _merged(mx, np.nanmax))
-                  for c, (mn, mx) in series.items()}
-        t = t[::merge][:nb]
+    # same bucket-merge rule as store.read_window when over the budget
+    t, series, merge = merge_over_cap(t, series, budget)
 
     return {"mode": "envelope", "level": level * merge, "n_raw": n_raw,
-            "i0": i0, "i1": i1, "t": _nan_to_none(t),
-            "series": {c: {"min": _nan_to_none(mn), "max": _nan_to_none(mx)}
+            "i0": i0, "i1": i1, "t": to_json_list(t),
+            "series": {c: {"min": to_json_list(mn), "max": to_json_list(mx)}
                        for c, (mn, mx) in series.items()},
             **warn}
 
@@ -181,7 +151,7 @@ def spectrum(name: str, col: str, mode: str, t0: float | None,
     if meta is None:
         raise FileNotFoundError(name)
     fs = meta["fs_hz"]
-    i0, i1 = _window_bounds(meta, t0, t1)
+    i0, i1 = window_bounds(meta, t0, t1)
     n = max(0, i1 - i0)
     if n > MAX_FILTER_SAMPLES:
         raise ValueError(
@@ -213,7 +183,7 @@ def spectrum(name: str, col: str, mode: str, t0: float | None,
     # cap payload; max per bucket so spectral peaks survive
     factor = max(1, math.ceil(len(freqs) / max_bins))
     if factor > 1:
-        _, mag = _bucket_minmax(mag, factor)
+        _, mag = bucket_minmax(mag, factor)
         freqs = freqs[::factor][: len(mag)]
 
     return {"mode": mode, "col": col, "fs_hz": fs, "n_samples": n,

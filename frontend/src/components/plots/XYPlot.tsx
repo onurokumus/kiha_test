@@ -5,6 +5,7 @@ import { fetchXY, isAbortError } from '../../services/api';
 import { SelectedTestPoint, TimePlotConfig } from '../../types';
 import { noSelect } from '../../constants/styles';
 import { ACCENT, AXIS_STYLE, safeRange } from '../../constants/uplotTheme';
+import { syncPlot, clearPlot } from '../../utils/uplotSync';
 import styles from './TimePlot.module.css';
 import type { PanelSource } from './SpectrumPlot';
 
@@ -72,6 +73,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
 }) => {
   const chartRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const structKeyRef = useRef('');
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [traces, setTraces] = useState<XYTrace[]>([]);
   const [loading, setLoading] = useState(false);
@@ -172,14 +174,36 @@ export const XYPlot: React.FC<XYPlotProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [test, xCol, cfg.key, range, source, tpFingerprint, columnsByTest]);
 
+  // Destroy only on unmount; syncPlot reuses/rebuilds in place (perf 2.4).
+  useEffect(() => () => clearPlot(plotRef, structKeyRef), []);
+
   useEffect(() => {
     const el = chartRef.current;
-    plotRef.current?.destroy();
-    plotRef.current = null;
-    if (!el || traces.length === 0 || box.w < 40 || box.h < 40) return;
+    if (!el || traces.length === 0 || box.w < 40 || box.h < 40) {
+      clearPlot(plotRef, structKeyRef);
+      return;
+    }
 
     const pointsPaths = uPlot.paths.points!();
-    const opts: uPlot.Options = {
+    const series: uPlot.Series[] = [
+      {},
+      ...traces.map(
+        (tr) =>
+          ({
+            label: tr.label,
+            stroke: tr.color,
+            fill: tr.color + '80',
+            width: 1,
+            paths: pointsPaths,
+            facets: [
+              { scale: 'x', auto: true },
+              { scale: 'y', auto: true },
+            ],
+          }) as uPlot.Series
+      ),
+    ];
+
+    const makeOpts = (): uPlot.Options => ({
       mode: 2,
       width: box.w,
       height: box.h,
@@ -190,44 +214,34 @@ export const XYPlot: React.FC<XYPlotProps> = ({
       axes: [{ ...AXIS_STYLE }, { ...AXIS_STYLE }],
       legend: { show: isExpanded, live: true },
       cursor: { drag: { x: false, y: false } },
-      series: [
-        {},
-        ...traces.map(
-          (tr) =>
-            ({
-              label: tr.label,
-              stroke: tr.color,
-              fill: tr.color + '80',
-              width: 1,
-              paths: pointsPaths,
-              facets: [
-                { scale: 'x', auto: true },
-                { scale: 'y', auto: true },
-              ],
-            }) as uPlot.Series
-        ),
-      ],
-    };
+      series,
+    });
 
     const data = [
       null,
       ...traces.map((tr) => [tr.x, tr.y]),
     ] as unknown as uPlot.AlignedData;
-    const u = new uPlot(opts, data, el);
-    plotRef.current = u;
 
-    if (isExpanded) {
-      const legend = u.root.querySelector('.u-legend') as HTMLElement | null;
-      const legendH = legend?.offsetHeight ?? 0;
-      if (legendH > 0) {
-        u.setSize({ width: box.w, height: Math.max(60, box.h - legendH) });
-      }
-    }
-
-    return () => {
-      plotRef.current?.destroy();
-      plotRef.current = null;
-    };
+    const structKey = [
+      series.map((s) => s.label ?? '').join('~'), box.w, box.h, isExpanded,
+    ].join('|');
+    syncPlot({
+      plotRef,
+      structKeyRef,
+      el,
+      structKey,
+      makeOpts,
+      data,
+      onCreate: (u) => {
+        if (isExpanded) {
+          const legend = u.root.querySelector('.u-legend') as HTMLElement | null;
+          const legendH = legend?.offsetHeight ?? 0;
+          if (legendH > 0) {
+            u.setSize({ width: box.w, height: Math.max(60, box.h - legendH) });
+          }
+        }
+      },
+    });
   }, [traces, box, isExpanded]);
 
   const containerClass = `${styles.plotContainer} ${

@@ -34,11 +34,16 @@ gotchas), not human onboarding.
 
 - **Python 3.13 only** (backend/.venv). Polars on Windows + Python 3.14 produced
   reproducible native access violations (whole-process crash). locks.py gates
-  concurrent native reads to 1 on win32+py>=3.14; on 3.13 it allows 4.
-  Override: `KIHA_MAX_CONCURRENT_READS` (set in run_backend.bat).
+  concurrent native reads to 1 on win32+py>=3.14; on 3.13 it allows 4. The gate
+  is version-derived — run_backend.bat deliberately does NOT set
+  `KIHA_MAX_CONCURRENT_READS` (that would force the gate open on a 3.14 venv,
+  bug 1.4); set it by hand only to lower the limit for debugging.
 - Keep the prototype's safeguards (per-test RW locks, atomic JSON writes, crash
   recovery, auto-restart wrapper). They cost ~nothing and exist for real crashes.
-- Lock ordering (locks.py): process-wide read slot -> per-test lock. Never invert.
+- Lock ordering (locks.py): per-test read lock -> process-wide read slot
+  (data_read). Writers never take a slot, so a read blocked on a write-locked
+  test does NOT hold a slot and can't stall reads of other tests (bug 2.1).
+  The catalog lock is independent of both.
 - Recharts cannot render 2 kHz time series. Time plots must use windowed pyramid
   reads (backend serves raw when viewport <= ~6000 samples, min/max envelope
   otherwise). Recharts stays only for TP-level aggregate scatter (~100s of points,
@@ -336,11 +341,119 @@ gotchas), not human onboarding.
       shown, Analyze nav, delete→undo→restore→delete, 0 console errors;
       26/26 pytest.
 
+- [x] Quick wins (2026-07-17, from possible_bugs.md §7) — (1) CSV export:
+      GET /export (full test or ?t0&t1 window, optional ?cols; time column
+      always first + deduped), GET /testpoints/{id}/export (exact saved-TP
+      bounds), GET /raw (original upload via FileResponse, named from
+      meta.source_file). All three stream via store.stream_csv (pyarrow
+      write_csv per batch, header on the first only). The StreamingResponse
+      body acquires locks ITSELF (locks.data_read = read slot + per-test read
+      lock) because the endpoint has already returned — and released any
+      decorator lock — by the time the body streams, and a rebuild could swap
+      data.parquet mid-download. Frontend: per-TP ⬇ (SelectedPointsPanel chips
+      use the saved-TP endpoint; Split table uses /export?t0&t1 so UNSAVED/
+      edited rows export too) + Uploads-page ⬇ CSV (raw). Download URLs are
+      plain <a href download> (services/api.ts rawCsvUrl/exportCsvUrl/
+      testPointCsvUrl — no fetch). (2) tp_stats.json sidecar cache keyed on the
+      mtime_ns fingerprint of testpoints.json + data.parquet (both are replaced
+      atomically, so any TP save / upload / rebuild / hand-edit invalidates it);
+      written under the caller's per-test READ lock — safe because writers are
+      excluded and a racing reader at worst overwrites its own freshly added
+      column (recomputed next request, never wrong). (3) rebuild crash recovery:
+      _recover_interrupted_ingests now flips a crashed 'rebuilding' test to
+      'error' too (edit._rebuild's parquet-before-pyramid window is still not
+      transactional — see possible_bugs 1.3). (4) /edit re-checks status==ready
+      UNDER test_write before flipping to 'rebuilding' (two racing /edits can no
+      longer both schedule). (5) TimePlot filter overlays now skip TPs whose own
+      test lacks the column (cross-test 400 fix). (6) window-bounds math unified
+      into store.window_bounds (read_window/read_xy/dsp/export). 37/37 pytest,
+      npm run build green. NOT done: the pyramid/row-range tp_stats speedup
+      (cache miss still scans the full raw column) and a sortable TP-table view.
+
+- [x] Rebuild atomicity + manual stats refresh (2026-07-17, user follow-up to
+      the quick wins) — (1) edit._rebuild is now STAGED: new data.parquet ->
+      data.parquet.tmp and new pyramid -> pyramid.tmp are built while the live
+      files stay untouched, then swapped in with fast atomic renames (each
+      os.replace has a non-existent destination = plain rename; runs under
+      test_write so no reader holds a file open) and meta/status written LAST as
+      the commit signal. Crash during the build => original test fully intact;
+      crash in the ms swap window => status 'rebuilding' -> recovery flips to
+      'error'. WINDOWS GOTCHA baked in: build_pyramid and the fact-read now
+      close their pyarrow ParquetFile via `with` — os.replace on the STAGED file
+      fails with WinError 32 if pyarrow still holds it open (the original code
+      dodged this only because it built the pyramid AFTER swapping). _rebuild
+      also drops tp_stats.json. (2) Decision: tp_stats stays EXACT full-res (NOT
+      the pyramid approximation — accuracy over speed); the sidecar cache makes
+      repeats instant, an exact scan on a cache miss is accepted. MVP.md §4
+      corrected to say so. (3) POST /tests/{name}/tp_stats/rebuild (store.
+      rebuild_tp_stats): recomputes the columns the sidecar currently holds into
+      a fresh dict, then ONE atomic write — old averages keep serving until it
+      lands. Uploads page '↻ stats' button per ready test; App.handleStatsRebuilt
+      drops ONLY statsCache[name] (not selection/meta/TPs) so the scatter
+      refetches. 41/41 pytest, npm run build green.
+
+- [x] Column-model overhaul + Settings page (2026-07-19, user requests: "grid
+      messed up / only 2 plots", "join the column lists", "first selected TP's
+      columns prioritized", "settings page") — all frontend. (1) Grid refill
+      fix: App's plotConfigs seeding used to keep the shrunken intersection
+      after visiting a small-schema test (2-col test -> 111-col test showed 1
+      plot); it now always refills to min(9, available). (2) Grid columns are
+      SELECTION-driven: gridColumns = selected TPs' columns in selection order
+      (first-selected TP leads) + active-test filler, so the 3x3 stays full;
+      used by TP mode and tp-sourced Spectrum/XY (full-test views keep the
+      active test's columns only). plotsUserEdited flag: Edit Plots picks are
+      session-sticky (valid kept, new columns append); resets when selection
+      empties. TPs lacking a cell's column simply don't draw there (existing
+      per-test trace guard). (3) Scatter axis defaults = bestAxisPair (module
+      fn in App.tsx): X = column in the most tests, Y = column co-occurring
+      with X in the most tests — so a narrow, oddly-named test being active
+      can't blank every other dataset (a dot needs BOTH axes in its own test).
+      axesUserSet flag mirrors plotsUserEdited. (4) 5th header tab 'Settings'
+      (components/settings/SettingsView.tsx + constants/settings.ts):
+      localStorage 'ptt.settings.v1' (deliberately NOT backend — per-browser
+      UI prefs, no API). Preferred scatter X/Y, per-SLOT grid columns
+      (positional, 9 selects — the plotted/Y variable in every view mode),
+      per-SLOT XY pairs (see 5), default view mode / spectrum estimator /
+      logY / clustering, upload fallback fs (sent as ?fs=, only used for
+      unusable time columns; uploadTest gained the param). Edits accumulate
+      in a DRAFT (App.settingsDraft — hoisted so tab switches keep it;
+      "unsaved changes" badge) and take effect ONLY via Save:
+      App.handleSettingsSave persists then DIFFS old vs new and applies just
+      the changed fields (so re-saving can't yank the session's view mode);
+      Revert discards. Export downloads the on-screen settings as
+      ptt-settings.json; Import parses+normalizeSettings()s a file INTO THE
+      DRAFT for review (never auto-saves; bad files -> inline error).
+      normalizeSettings is the single loader/import coercer (unknown keys
+      dropped, legacy single xyXCol migrates to all-9 slots). Precedence
+      everywhere: auto < saved preference < in-session pick; saving a
+      changed column pref clears the matching session flag (axesUserSet /
+      plotsUserEdited / xyYCols=[] / xyXCols=[]). Preferences naming
+      not-loaded columns stay dormant, shown "(not loaded)" in the pickers.
+      Settings renders from BOTH App render paths (no-tests screen too) and
+      the loading gate skips it like Uploads. (5) XY mode is per-cell on
+      BOTH axes (user: "why don't we have Y columns for XY mode?"): runtime
+      xyYCols[9] ('' = follow the shared grid slot) + xyXCols[9];
+      TimeSeriesGrid overrides cfg/onConfigChange for the XY branch so Edit
+      Plots' "[Y] vs [X]" selects write xyYCols — editing an XY Y no longer
+      touches the time/spectrum grids. Verified headless (Edge): draft does
+      NOT apply pre-Save, survives tab switch, Save applies + persists,
+      Revert discards, export file round-trips, import lands as draft then
+      saves, legacy xyXCol migrates, XY cell pairs current_a vs torque_nm
+      while the TP grid keeps tp_id, selection prioritization + axis-default
+      rescue still green, 0 console errors; npm run build green.
+
 ## Windows gotchas (hard-won)
 
 - os.replace onto a file a reader holds open raises PermissionError
   (WinError 5). store.write_json_atomic retries briefly — do NOT remove
   that loop; status polling collides with background-job status writes.
+- os.replace of a STAGED parquet also needs the SOURCE closed: pyarrow
+  ParquetFile (and polars mmap reads) hold the file open, so os.replace of
+  data.parquet.tmp -> data.parquet raises WinError 32 while any pf handle on
+  the tmp file is alive. build_pyramid + edit._rebuild's fact-read wrap their
+  ParquetFile in `with` for exactly this. Directory swaps (pyramid.tmp) use
+  two renames with non-existent destinations, never os.replace onto a
+  populated dir (which fails on Windows regardless).
 - PowerShell 5.1 `-Encoding utf8` writes a BOM; json.loads then fails and
   _read_json returns None (test shows status 'unknown'). Write JSON files
   from Python, or use UTF8Encoding($false).
@@ -376,3 +489,8 @@ gotchas), not human onboarding.
 - /filter takes `cols` + `type`; /spectrum takes `col` + `mode` (fft|welch).
 - TP data responses nest time per series (series.<col>.t) with time_origin_s;
   full-test /data responses have a top-level t array.
+- CSV export/download endpoints (GET /export, /testpoints/{id}/export, /raw)
+  return a streamed text/csv attachment, NOT JSON — the frontend hits them as
+  <a href download>, never via getJson. The streaming body locks itself
+  (locks.data_read); do NOT wrap these with @with_test_read (the decorator lock
+  releases when the endpoint returns, before the body streams).

@@ -13,8 +13,8 @@ interface FilterRowProps {
 }
 
 /** DSP filter picker + its parameter inputs. Renders as inline flex items —
- *  the caller provides the flex-row container (mode bar or a plot's header
- *  row). Used both for the set-all-plots row and per-plot overrides. */
+ *  the caller provides the flex-row container (a plot's header row, or its
+ *  floating collapsed-cell overlay). One instance per plot (App.plotFilters). */
 export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title }) => (
   <>
     <select

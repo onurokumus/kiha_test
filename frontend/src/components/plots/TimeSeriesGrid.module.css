@@ -30,10 +30,6 @@
   overflow: hidden;
 }
 
-.plotWrapperHidden {
-  display: none;
-}
-
 .plotWrapperVisible {
   animation: fadeIn 0.3s ease-out;
 }

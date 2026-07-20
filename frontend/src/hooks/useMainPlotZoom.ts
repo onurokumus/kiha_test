@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import { ScatterDataPoint } from '../types';
+import { PLOT_INSET, PLOT_INSET_X, PLOT_INSET_Y } from '../constants/scatterGeometry';
 
 type ZoomDomain = [number, number, number, number] | null;
 
@@ -30,8 +31,8 @@ export const useMainPlotZoom = (scatterData: ScatterDataPoint[]) => {
   const handleMainWheel = useCallback(
     (e: React.WheelEvent<HTMLDivElement>) => {
       const rect = e.currentTarget.getBoundingClientRect();
-      const xRatio = (e.clientX - rect.left - 50) / (rect.width - 70);
-      const yRatio = 1 - (e.clientY - rect.top - 10) / (rect.height - 50);
+      const xRatio = (e.clientX - rect.left - PLOT_INSET.left) / (rect.width - PLOT_INSET_X);
+      const yRatio = 1 - (e.clientY - rect.top - PLOT_INSET.top) / (rect.height - PLOT_INSET_Y);
       const zoomFactor = e.deltaY > 0 ? 1.2 : 0.8;
 
       setMainZoom((prev) => {

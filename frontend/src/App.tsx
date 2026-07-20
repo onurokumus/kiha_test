@@ -8,6 +8,7 @@ import { TimeSeriesGrid } from './components/plots/TimeSeriesGrid';
 import SplitView from './components/split/SplitView';
 import EditView from './components/edit/EditView';
 import UploadView from './components/upload/UploadView';
+import SettingsView from './components/settings/SettingsView';
 import { useTestPointSelection } from './hooks/useTestPointSelection';
 import { useScatterFilter } from './hooks/useScatterFilter';
 import { useMainPlotZoom } from './hooks/useMainPlotZoom';
@@ -23,6 +24,13 @@ import {
 import { noSelect } from './constants/styles';
 import { DEFAULT_FILTER_UI, FilterUi, buildFilterSpec } from './constants/filters';
 import {
+  AppSettings,
+  loadSettings,
+  saveSettings,
+  parseUploadFs,
+} from './constants/settings';
+import { isBusyStatus } from './constants/status';
+import {
   ScatterDataPoint,
   StatsCache,
   TestInfo,
@@ -32,6 +40,42 @@ import {
   UploadItem,
 } from './types';
 import './App.css';
+
+/**
+ * Best default scatter axes across a multi-test library: pick the X/Y column
+ * pair that lets the MOST tests plot a point (a point needs BOTH columns), so
+ * loading a narrow, oddly-named test can't hide every other dataset by default.
+ * X = the column present in the most tests; Y = the column (≠X) co-occurring
+ * with X in the most tests. Ties break alphabetically for a stable pick. This
+ * favours cross-test visibility over guaranteeing the active test shows.
+ */
+function bestAxisPair(columnsByTest: Record<string, string[]>): [string, string] {
+  const testCols = Object.values(columnsByTest)
+    .map((c) => new Set(c))
+    .filter((s) => s.size > 0);
+  if (testCols.length === 0) return ['', ''];
+
+  const testCount = new Map<string, number>();
+  testCols.forEach((s) => s.forEach((c) => testCount.set(c, (testCount.get(c) ?? 0) + 1)));
+  const ranked = [...testCount.keys()].sort(
+    (a, b) => (testCount.get(b)! - testCount.get(a)!) || (a < b ? -1 : 1)
+  );
+
+  const x = ranked[0] ?? '';
+  let y = '';
+  let bestBoth = -1;
+  for (const c of ranked) {
+    // ranked is test-count-descending, so the first column reaching a given
+    // co-occurrence count is also the most common one — no explicit tie-break.
+    if (c === x) continue;
+    const both = testCols.reduce((n, s) => n + (s.has(x) && s.has(c) ? 1 : 0), 0);
+    if (both > bestBoth) {
+      bestBoth = both;
+      y = c;
+    }
+  }
+  return [x, y || x];
+}
 
 function App() {
   const [tests, setTests] = useState<TestInfo[]>([]);
@@ -44,19 +88,35 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [loadingTestPointIds, setLoadingTestPointIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  // Saved preferences (localStorage) — seed the defaults below and feed the
+  // Settings tab. Declared first: several states initialize from it.
+  const [settings, setSettings] = useState<AppSettings>(loadSettings);
+  // Unsaved Settings-page edits (null = none). Hoisted here so switching tabs
+  // doesn't silently discard them; nothing applies until Save.
+  const [settingsDraft, setSettingsDraft] = useState<AppSettings | null>(null);
   const [xAxis, setXAxis] = useState('');
   const [yAxis, setYAxis] = useState('');
+  // True once the user picks a scatter axis. While false, the axes auto-default
+  // to the preferred/most-shared pair (recomputed as tests load); once the
+  // user chooses, their pick is kept as long as it exists in any test.
+  const [axesUserSet, setAxesUserSet] = useState(false);
   const [expandedPlot, setExpandedPlot] = useState<number | null>(null);
-  const [clusteringEnabled, setClusteringEnabled] = useState(true);
+  const [clusteringEnabled, setClusteringEnabled] = useState(settings.clustering);
   const [isEditMode, setIsEditMode] = useState(false);
   const [plotConfigs, setPlotConfigs] = useState<string[]>([]);
+  // True once the user picks columns via Edit Plots. While false, the grid
+  // auto-(re)seeds from the selected test points (first-selected prioritized);
+  // once true, those picks are preserved and only NEW columns fill empty cells.
+  const [plotsUserEdited, setPlotsUserEdited] = useState(false);
   // Right-panel mode: 'tp' overlays selected TPs from t=0; 'full' browses the
   // active test with windowed pyramid reads; 'spectrum' FFT/Welch per column;
   // 'xy' scatters each column against that plot's own X column.
-  const [viewMode, setViewMode] = useState<'tp' | 'full' | 'spectrum' | 'xy'>('tp');
+  const [viewMode, setViewMode] = useState<'tp' | 'full' | 'spectrum' | 'xy'>(
+    settings.defaultViewMode
+  );
   const [fullRange, setFullRange] = useState<[number, number] | null>(null);
-  const [specMode, setSpecMode] = useState<'fft' | 'welch'>('fft');
-  const [specLogY, setSpecLogY] = useState(false);
+  const [specMode, setSpecMode] = useState<'fft' | 'welch'>(settings.specMode);
+  const [specLogY, setSpecLogY] = useState(settings.specLogY);
   // Spectrum/XY data source: selected test points, or the active test
   const [specSource, setSpecSource] = useState<'tp' | 'full'>('tp');
   // Per-plot DSP filters (TP + Full test modes), dashed overlays. Each grid
@@ -66,8 +126,11 @@ function App() {
     Array.from({ length: 9 }, () => DEFAULT_FILTER_UI)
   );
   const [xySource, setXYSource] = useState<'tp' | 'full'>('tp');
-  // Per-plot X columns for XY mode, index-aligned with plotConfigs (each XY
-  // cell picks its own X in Edit Plots mode — no shared X axis).
+  // XY mode is per-plot on BOTH axes, index-aligned with plotConfigs: its own
+  // plotted (Y) column ('' = follow the shared grid slot) and its own X. Each
+  // XY cell edits both in Edit Plots mode — editing an XY Y never disturbs the
+  // time/spectrum grids.
+  const [xyYCols, setXYYCols] = useState<string[]>([]);
   const [xyXCols, setXYXCols] = useState<string[]>([]);
   const [tab, setTab] = useState<AppTab>('analyze');
   const [notice, setNotice] = useState('');
@@ -84,6 +147,25 @@ function App() {
   const metaInFlight = useRef<Set<string>>(new Set());
   const statsInFlight = useRef<Set<string>>(new Set()); // `${test}|${col}`
   const tracesInFlight = useRef<Set<string>>(new Set()); // `${id}|${col}`
+
+  // Per-test generation, bumped by invalidateTest. A meta/tp_stats fetch that
+  // started before an invalidation (e.g. a rebuild landing) captures the gen at
+  // launch and drops its result if the gen has since changed — so a slow,
+  // pre-rebuild response can never repopulate the cache with stale schema/stats
+  // after invalidateTest cleared it (bug 1.11).
+  const testGen = useRef<Map<string, number>>(new Map());
+
+  // Bumped to re-run the meta loader after a transient fetch failure, so a
+  // dropped request cannot wedge the app on the loading screen forever (1.9).
+  const [metaRetry, setMetaRetry] = useState(0);
+  const metaRetryTimer = useRef<number | null>(null);
+  const scheduleMetaRetry = useCallback(() => {
+    if (metaRetryTimer.current != null) return; // one pending retry at a time
+    metaRetryTimer.current = window.setTimeout(() => {
+      metaRetryTimer.current = null;
+      setMetaRetry((n) => n + 1);
+    }, 2500);
+  }, []);
 
   const MAX_SELECTED_POINTS = 6;
 
@@ -123,9 +205,49 @@ function App() {
     return out;
   }, [metaByTest]);
 
+  /** Columns across the selected test points, ordered by selection (the
+   *  first-selected TP's columns come first), deduped. Drives the grid's
+   *  column priority so the right panel follows what you picked on the scatter. */
+  const selectionColumns = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    selectedTPs.forEach((s) => {
+      (columnsByTest[s.test] ?? []).forEach((c) => {
+        if (!seen.has(c)) {
+          seen.add(c);
+          out.push(c);
+        }
+      });
+    });
+    return out;
+  }, [selectedTPs, columnsByTest]);
+
+  /** Views whose grid reads the SELECTED test points (rather than the single
+   *  active test). Full-test / full-sourced spectrum+xy browse one test, so
+   *  they keep using the active test's columns. */
+  const selectionDriven =
+    viewMode === 'tp' ||
+    (viewMode === 'spectrum' && specSource === 'tp') ||
+    (viewMode === 'xy' && xySource === 'tp');
+
+  /** Ordered column universe for the 3x3 grid + its Edit Plots options.
+   *  Selection-first (first selected TP leads), then the active test's columns
+   *  as filler so the grid stays a full 3x3 whenever enough columns exist.
+   *  Falls back to the active test alone when nothing is selected, or in the
+   *  active-test views — so a cross-test selection can never inject a column the
+   *  browsed test lacks. */
+  const gridColumns = useMemo(() => {
+    if (!selectionDriven || selectionColumns.length === 0) return dataColumns;
+    const seen = new Set(selectionColumns);
+    return [...selectionColumns, ...dataColumns.filter((c) => !seen.has(c))];
+  }, [selectionDriven, selectionColumns, dataColumns]);
+
   /** Drop every cache for one test (after rebuild/rename/delete/split-save). */
   const invalidateTest = useCallback(
     (name: string) => {
+      // Bump the generation first so any in-flight fetch for this test drops
+      // its result instead of writing pre-invalidation data back (1.11).
+      testGen.current.set(name, (testGen.current.get(name) ?? 0) + 1);
       setMetaByTest((prev) => {
         const next = { ...prev };
         delete next[name];
@@ -142,6 +264,9 @@ function App() {
         return next;
       });
       setSelectedTPs((prev) => prev.filter((s) => s.test !== name));
+      // Clear the in-flight guards so the loaders can immediately start a FRESH
+      // fetch (the stale one, now a lower generation, will be discarded).
+      metaInFlight.current.delete(name);
       Array.from(statsInFlight.current)
         .filter((k) => k.startsWith(`${name}|`))
         .forEach((k) => statsInFlight.current.delete(k));
@@ -173,16 +298,22 @@ function App() {
   // Load meta + test points for every ready test; prune tests that are gone.
   useEffect(() => {
     const readyNames = new Set(tests.filter((t) => t.status === 'ready').map((t) => t.name));
+    // Prune only tests that are GONE from the list (deleted/renamed). A test
+    // that is merely non-ready (rebuilding/error) keeps its cached meta: the
+    // live data is unchanged until the rebuild's atomic swap, so blanking the
+    // whole UI to the loading screen mid-rebuild is wrong — rebuild-complete
+    // calls invalidateTest to refetch the new schema (1.9).
+    const knownNames = new Set(tests.map((t) => t.name));
 
     setMetaByTest((prev) => {
-      const stale = Object.keys(prev).filter((n) => !readyNames.has(n));
+      const stale = Object.keys(prev).filter((n) => !knownNames.has(n));
       if (!stale.length) return prev;
       const next = { ...prev };
       stale.forEach((n) => delete next[n]);
       return next;
     });
     setTpsByTest((prev) => {
-      const stale = Object.keys(prev).filter((n) => !readyNames.has(n));
+      const stale = Object.keys(prev).filter((n) => !knownNames.has(n));
       if (!stale.length) return prev;
       const next = { ...prev };
       stale.forEach((n) => delete next[n]);
@@ -192,33 +323,109 @@ function App() {
     readyNames.forEach((name) => {
       if (metaByTest[name] || metaInFlight.current.has(name)) return;
       metaInFlight.current.add(name);
+      const gen = testGen.current.get(name) ?? 0;
       Promise.all([fetchMeta(name), fetchTestPoints(name)])
         .then(([m, tps]) => {
+          if ((testGen.current.get(name) ?? 0) !== gen) return; // invalidated mid-flight
           setMetaByTest((prev) => ({ ...prev, [name]: m }));
           setTpsByTest((prev) => ({ ...prev, [name]: tps.test_points }));
         })
-        .catch((e) => console.error(`load failed for ${name}:`, e))
+        .catch((e) => {
+          console.error(`load failed for ${name}:`, e);
+          // Retry transient failures: without this the effect never re-runs
+          // (tests/metaByTest unchanged) and the app stays on the loading
+          // screen forever with no error and no way to reach Uploads (1.9).
+          scheduleMetaRetry();
+        })
         .finally(() => metaInFlight.current.delete(name));
     });
-  }, [tests, metaByTest]);
+  }, [tests, metaByTest, metaRetry, scheduleMetaRetry]);
 
-  // Defaults driven by the active test's schema (once its meta arrives)
+  // If the active test vanishes (deleted/renamed from another window), fall
+  // back to a ready test instead of wedging on the loading screen with a
+  // dangling currentTest whose meta was just pruned (1.9). A rebuild keeps the
+  // test in the list, so this only fires on a true delete/rename.
   useEffect(() => {
-    if (!meta) return;
-    const cols = meta.columns.filter((c) => c !== meta.time_column);
-    setXAxis((prev) => (unionColumns.includes(prev) ? prev : cols[0] || ''));
-    setYAxis((prev) => (unionColumns.includes(prev) ? prev : cols[1] || cols[0] || ''));
-    setXYXCols((prev) =>
-      Array.from({ length: 9 }, (_, i) =>
-        prev[i] && cols.includes(prev[i]) ? prev[i] : cols[0] || ''
-      )
-    );
+    if (!currentTest || !tests.length) return;
+    if (tests.some((t) => t.name === currentTest)) return;
+    const firstReady = tests.find((t) => t.status === 'ready');
+    setCurrentTest(firstReady ? firstReady.name : '');
+  }, [tests, currentTest]);
+
+  /** X/Y pair that maximizes how many tests can plot a point (see bestAxisPair).
+   *  Drives the scatter defaults so a narrow test can't hide the rest. */
+  const [defaultXAxis, defaultYAxis] = useMemo(
+    () => bestAxisPair(columnsByTest),
+    [columnsByTest]
+  );
+
+  // Scatter axis defaults across the WHOLE library (not just the active test).
+  // Precedence: in-session pick (axesUserSet) > saved preference (while its
+  // column is loaded) > most-shared pair. Recomputed as tests load.
+  useEffect(() => {
+    if (!defaultXAxis) return;
+    const prefX =
+      settings.scatterX && unionColumns.includes(settings.scatterX) ? settings.scatterX : '';
+    const prefY =
+      settings.scatterY && unionColumns.includes(settings.scatterY) ? settings.scatterY : '';
+    if (!axesUserSet) {
+      setXAxis(prefX || defaultXAxis);
+      setYAxis(prefY || defaultYAxis);
+      return;
+    }
+    setXAxis((prev) => (unionColumns.includes(prev) ? prev : prefX || defaultXAxis));
+    setYAxis((prev) => (unionColumns.includes(prev) ? prev : prefY || defaultYAxis));
+  }, [defaultXAxis, defaultYAxis, axesUserSet, unionColumns, settings.scatterX, settings.scatterY]);
+
+  // Seed the 3x3 grid from the ordered gridColumns universe (selection-first).
+  // Precedence per slot: in-session Edit Plots pick (plotsUserEdited) > saved
+  // slot preference (while its column is loaded) > auto fill from gridColumns
+  // (first selected TP's columns lead, then the active test). Never collapses
+  // below the columns actually available.
+  useEffect(() => {
+    if (gridColumns.length === 0) return;
     setPlotConfigs((prev) => {
-      const valid = prev.filter((c) => cols.includes(c));
-      return valid.length > 0 ? valid : cols.slice(0, 9);
+      if (plotsUserEdited) {
+        const valid = prev.filter((c) => gridColumns.includes(c));
+        const filler = gridColumns.filter((c) => !valid.includes(c));
+        return [...valid, ...filler].slice(0, 9);
+      }
+      // Slot preferences are positional: cell i shows its preferred column when
+      // loaded; unset/unavailable slots fill from gridColumns in order.
+      const slots = Array.from({ length: 9 }, (_, i) => {
+        const c = settings.gridColumns[i] ?? '';
+        return c && gridColumns.includes(c) ? c : '';
+      });
+      const used = new Set(slots.filter(Boolean));
+      const filler = gridColumns.filter((c) => !used.has(c));
+      let fi = 0;
+      return slots
+        .map((c) => c || (fi < filler.length ? filler[fi++] : ''))
+        .filter(Boolean);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meta]);
+    // XY Y/X columns are per-slot too; a session pick (still-valid prev) wins.
+    // Y falls back to '' = follow the shared grid slot for that cell.
+    setXYYCols((prev) =>
+      Array.from({ length: 9 }, (_, i) => {
+        if (prev[i] && gridColumns.includes(prev[i])) return prev[i];
+        const pref = settings.xyYCols[i] ?? '';
+        return pref && gridColumns.includes(pref) ? pref : '';
+      })
+    );
+    setXYXCols((prev) =>
+      Array.from({ length: 9 }, (_, i) => {
+        if (prev[i] && gridColumns.includes(prev[i])) return prev[i];
+        const pref = settings.xyXCols[i] ?? '';
+        return pref && gridColumns.includes(pref) ? pref : gridColumns[0] || '';
+      })
+    );
+  }, [gridColumns, plotsUserEdited, settings.gridColumns, settings.xyYCols, settings.xyXCols]);
+
+  // A fresh selection session starts un-edited, so it re-prioritizes to its
+  // first test point's columns instead of clinging to the previous picks.
+  useEffect(() => {
+    if (selectedTPs.length === 0) setPlotsUserEdited(false);
+  }, [selectedTPs.length]);
 
   // Poll the test list while any ingest or rebuild runs, or while the
   // Uploads page is open (its whole point is live status); auto-select the
@@ -226,9 +433,7 @@ function App() {
   // its rebuild completes.
   const uploadsActive = uploads.some((u) => !u.error);
   useEffect(() => {
-    const busy = tests.some(
-      (t) => t.status === 'receiving' || t.status === 'ingesting' || t.status === 'rebuilding'
-    );
+    const busy = tests.some((t) => isBusyStatus(t.status));
     // uploadsActive: while a body is still streaming up, the new test only
     // exists server-side as status 'receiving' — poll so it appears in the
     // list without waiting for the POST to resolve.
@@ -257,7 +462,9 @@ function App() {
       }
     }, 2000);
     return () => window.clearInterval(id);
-  }, [tests, uploadsActive, currentTest, invalidateTest]);
+    // `tab` is read in the bail-out above: without it here, opening the Uploads
+    // tab would not (re)start polling unless some other dep also changed (1.17).
+  }, [tests, uploadsActive, currentTest, invalidateTest, tab]);
 
   // Auto-clear transient notices
   useEffect(() => {
@@ -304,10 +511,14 @@ function App() {
       existing.add(testName);
       setUploads((prev) => [...prev, { id, fileName: f.name, testName, progress: 0 }]);
       try {
-        const res = await uploadTest(f, testName, (fraction) =>
-          setUploads((prev) =>
-            prev.map((u) => (u.id === id ? { ...u, progress: fraction } : u))
-          )
+        const res = await uploadTest(
+          f,
+          testName,
+          (fraction) =>
+            setUploads((prev) =>
+              prev.map((u) => (u.id === id ? { ...u, progress: fraction } : u))
+            ),
+          parseUploadFs(settings) // fallback rate, only used for bad time columns
         );
         setUploads((prev) => prev.filter((u) => u.id !== id));
         setNotice(`${res.name}: upload complete, ingesting…`);
@@ -324,11 +535,42 @@ function App() {
         // list refresh failure is non-fatal; polling will catch up
       }
     }
-  }, [tests]);
+  }, [tests, settings]);
 
   const dismissUpload = useCallback((id: number) => {
     setUploads((prev) => prev.filter((u) => u.id !== id));
   }, []);
+
+  // Settings page SAVE: persist the draft and apply exactly the fields that
+  // changed (an untouched field must not disturb the session — e.g. re-saving
+  // must not yank the user back to the default view mode). Column-preference
+  // changes clear the matching in-session override flag so the seeding effects
+  // re-run with the new preference; mode/toggle defaults apply directly.
+  const handleSettingsSave = useCallback(
+    (next: AppSettings) => {
+      const prev = settings;
+      saveSettings(next);
+      setSettings(next);
+      setSettingsDraft(null);
+      if (next.scatterX !== prev.scatterX || next.scatterY !== prev.scatterY) {
+        setAxesUserSet(false);
+      }
+      if (next.gridColumns.join('\0') !== prev.gridColumns.join('\0')) {
+        setPlotsUserEdited(false);
+      }
+      if (next.xyYCols.join('\0') !== prev.xyYCols.join('\0')) {
+        setXYYCols([]); // reseed all 9 from the new per-slot prefs
+      }
+      if (next.xyXCols.join('\0') !== prev.xyXCols.join('\0')) {
+        setXYXCols([]);
+      }
+      if (next.defaultViewMode !== prev.defaultViewMode) setViewMode(next.defaultViewMode);
+      if (next.specMode !== prev.specMode) setSpecMode(next.specMode);
+      if (next.specLogY !== prev.specLogY) setSpecLogY(next.specLogY);
+      if (next.clustering !== prev.clustering) setClusteringEnabled(next.clustering);
+    },
+    [settings]
+  );
 
   // Switching back from the split editor: the active test's TP definitions
   // may have changed — refetch it (and its stats).
@@ -374,6 +616,21 @@ function App() {
       // poller will catch up
     }
   };
+
+  // Uploads page recomputed a test's TP averages: drop only the stats cache
+  // for that test (NOT selection/meta/TPs) so the scatter refetches the fresh
+  // numbers on its next render.
+  const handleStatsRebuilt = useCallback((name: string) => {
+    setStatsCache((prev) => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+    Array.from(statsInFlight.current)
+      .filter((k) => k.startsWith(`${name}|`))
+      .forEach((k) => statsInFlight.current.delete(k));
+  }, []);
 
   // Whole-window drag-and-drop CSV upload
   const dragHandlers = {
@@ -474,8 +731,10 @@ function App() {
         if (!testCols.includes(col)) return;
         if (statsCache[test]?.[col] || statsInFlight.current.has(key)) return;
         statsInFlight.current.add(key);
+        const gen = testGen.current.get(test) ?? 0;
         fetchTpStats(test, col)
           .then((stats) => {
+            if ((testGen.current.get(test) ?? 0) !== gen) return; // invalidated mid-flight
             const byId: Record<number, TpStat> = {};
             stats.forEach((s) => {
               byId[s.id] = s;
@@ -563,11 +822,13 @@ function App() {
   };
 
   const handleXAxisChange = (axis: string) => {
+    setAxesUserSet(true);
     setXAxis(axis);
     resetZoom();
   };
 
   const handleYAxisChange = (axis: string) => {
+    setAxesUserSet(true);
     setYAxis(axis);
     resetZoom();
   };
@@ -654,6 +915,19 @@ function App() {
       onOpenTest={handleOpenTest}
       onTestDeleted={handleTestDeleted}
       onTestsChanged={handleTestsChanged}
+      onStatsRebuilt={handleStatsRebuilt}
+    />
+  );
+
+  // Also reachable from the no-tests screen (preferences may name columns of
+  // tests that aren't uploaded yet — they're kept and shown "(not loaded)").
+  const settingsView = (
+    <SettingsView
+      settings={settings}
+      draft={settingsDraft}
+      onDraftChange={setSettingsDraft}
+      onSave={handleSettingsSave}
+      columns={unionColumns}
     />
   );
 
@@ -680,7 +954,7 @@ function App() {
   // Loading state (before the active test's meta is available). The Uploads
   // page never needs meta — blanking it during a refetch would hide live
   // status exactly when the user is watching it.
-  if ((loading || (currentTest && !meta)) && !error && tab !== 'uploads') {
+  if ((loading || (currentTest && !meta)) && !error && tab !== 'uploads' && tab !== 'settings') {
     if (!currentTest && !loading) {
       // fall through to the no-tests screen below
     } else {
@@ -763,6 +1037,8 @@ function App() {
         />
         {tab === 'uploads' ? (
           uploadView
+        ) : tab === 'settings' ? (
+          settingsView
         ) : (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ textAlign: 'center', maxWidth: 500 }}>
@@ -804,6 +1080,8 @@ function App() {
 
       {tab === 'uploads' ? (
         uploadView
+      ) : tab === 'settings' ? (
+        settingsView
       ) : tab === 'split' && meta ? (
         <SplitView
           test={currentTest}
@@ -941,7 +1219,7 @@ function App() {
           <TimeSeriesGrid
             viewMode={viewMode}
             test={currentTest}
-            columns={dataColumns}
+            columns={gridColumns}
             selectedTPs={selectedTPs}
             hiddenTPs={hiddenTPs}
             expandedPlot={expandedPlot}
@@ -963,6 +1241,14 @@ function App() {
               })
             }
             xySource={xySource}
+            xyYCols={xyYCols}
+            onXYYColChange={(i, c) =>
+              setXYYCols((prev) => {
+                const next = [...prev];
+                next[i] = c;
+                return next;
+              })
+            }
             xyXCols={xyXCols}
             onXYXColChange={(i, c) =>
               setXYXCols((prev) => {
@@ -974,7 +1260,10 @@ function App() {
             columnsByTest={columnsByTest}
             isEditMode={isEditMode}
             plotConfigs={plotConfigs}
-            onPlotConfigChange={setPlotConfigs}
+            onPlotConfigChange={(configs) => {
+              setPlotConfigs(configs);
+              setPlotsUserEdited(true);
+            }}
           />
         </div>
       </div>

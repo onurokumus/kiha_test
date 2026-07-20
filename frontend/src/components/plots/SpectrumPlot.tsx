@@ -6,6 +6,7 @@ import { SelectedTestPoint, SpectrumData, TimePlotConfig } from '../../types';
 import { noSelect } from '../../constants/styles';
 import { ACCENT, AXIS_STYLE, safeRange } from '../../constants/uplotTheme';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
+import { syncPlot, clearPlot } from '../../utils/uplotSync';
 import styles from './TimePlot.module.css';
 
 export type PanelSource = 'tp' | 'full';
@@ -58,6 +59,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
 }) => {
   const chartRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const structKeyRef = useRef('');
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [traces, setTraces] = useState<SpectrumTrace[]>([]);
   const [meta, setMeta] = useState<{ mode: string; n: number; nan: number } | null>(null);
@@ -146,16 +148,37 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [test, cfg.key, specMode, range, source, tpFingerprint, columnsByTest]);
 
+  // Destroy only on unmount; syncPlot reuses/rebuilds in place (perf 2.4).
+  useEffect(() => () => clearPlot(plotRef, structKeyRef), []);
+
   useEffect(() => {
     const el = chartRef.current;
-    plotRef.current?.destroy();
-    plotRef.current = null;
-    if (!el || traces.length === 0 || box.w < 40 || box.h < 40) return;
+    if (!el || traces.length === 0 || box.w < 40 || box.h < 40) {
+      clearPlot(plotRef, structKeyRef);
+      return;
+    }
 
     const transform = (mag: (number | null)[]) =>
       logY ? mag.map((v) => (v !== null && v > 0 ? Math.log10(v) : null)) : mag;
 
-    const opts: uPlot.Options = {
+    const series: uPlot.Series[] = [
+      {},
+      ...traces.map(
+        (tr) =>
+          ({
+            label: tr.label,
+            stroke: tr.color,
+            width: 1,
+            spanGaps: false,
+            facets: [
+              { scale: 'x', auto: true },
+              { scale: 'y', auto: true },
+            ],
+          }) as uPlot.Series
+      ),
+    ];
+
+    const makeOpts = (): uPlot.Options => ({
       mode: 2,
       width: box.w,
       height: box.h,
@@ -169,43 +192,36 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
       // Wheel-zoom / shift-drag pan are client-side too (no commit target).
       cursor: { drag: { x: true, y: false } },
       plugins: [xPanZoomPlugin()],
-      series: [
-        {},
-        ...traces.map(
-          (tr) =>
-            ({
-              label: tr.label,
-              stroke: tr.color,
-              width: 1,
-              spanGaps: false,
-              facets: [
-                { scale: 'x', auto: true },
-                { scale: 'y', auto: true },
-              ],
-            }) as uPlot.Series
-        ),
-      ],
-    };
+      series,
+    });
 
     const data = [
       null,
       ...traces.map((tr) => [tr.freqs, transform(tr.mag)]),
     ] as unknown as uPlot.AlignedData;
-    const u = new uPlot(opts, data, el);
-    plotRef.current = u;
 
-    if (isExpanded) {
-      const legend = u.root.querySelector('.u-legend') as HTMLElement | null;
-      const legendH = legend?.offsetHeight ?? 0;
-      if (legendH > 0) {
-        u.setSize({ width: box.w, height: Math.max(60, box.h - legendH) });
-      }
-    }
-
-    return () => {
-      plotRef.current?.destroy();
-      plotRef.current = null;
-    };
+    // logY is a data transform, not a structure change → excluded from the key,
+    // so toggling it re-ranges (setData) instead of rebuilding.
+    const structKey = [
+      series.map((s) => s.label ?? '').join('~'), box.w, box.h, isExpanded,
+    ].join('|');
+    syncPlot({
+      plotRef,
+      structKeyRef,
+      el,
+      structKey,
+      makeOpts,
+      data,
+      onCreate: (u) => {
+        if (isExpanded) {
+          const legend = u.root.querySelector('.u-legend') as HTMLElement | null;
+          const legendH = legend?.offsetHeight ?? 0;
+          if (legendH > 0) {
+            u.setSize({ width: box.w, height: Math.max(60, box.h - legendH) });
+          }
+        }
+      },
+    });
   }, [traces, logY, box, isExpanded]);
 
   const containerClass = `${styles.plotContainer} ${

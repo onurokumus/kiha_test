@@ -25,9 +25,15 @@ def id_candidates(name: str, max_unique: int = 500) -> list[dict]:
         vals = df[c].drop_nulls().to_numpy()
         if len(vals) == 0:
             continue
-        if not np.allclose(vals, np.round(vals), atol=1e-9):
+        # Ingest keeps only numeric data columns, but stay defensive: a single
+        # column that cannot be rounded/compared must skip, never 500 the whole
+        # candidate list.
+        try:
+            if not np.allclose(vals, np.round(vals), atol=1e-9):
+                continue
+            n_unique = len(np.unique(vals))
+        except (TypeError, ValueError):
             continue
-        n_unique = len(np.unique(vals))
         if 2 <= n_unique <= max_unique:
             out.append({"col": c, "n_unique": int(n_unique)})
     out.sort(key=lambda x: x["n_unique"])
@@ -42,6 +48,7 @@ def autosplit(name: str, col: str, ignore_zero: bool = True,
     if meta is None:
         raise FileNotFoundError(name)
     tcol = meta["time_column"]
+    fs = float(meta["fs_hz"])
     df = (pl.scan_parquet(TESTS_DIR / name / "data.parquet")
           .select([tcol, col]).collect())
     t = df[tcol].to_numpy()
@@ -62,12 +69,18 @@ def autosplit(name: str, col: str, ignore_zero: bool = True,
             continue
         if t[en - 1] - t[st] < min_len_s:
             continue
+        # end_idx is EXCLUSIVE (range is [st, en)); end_s must be the matching
+        # exclusive-boundary TIME, i.e. the next run's first sample (or one
+        # sample step past the last sample for the final run). Otherwise the
+        # frontend's save round-trip round((end_s - t_start)*fs) maps back to
+        # en-1 and every saved test point loses its last sample (bug 1.10).
+        end_s = float(t[en]) if en < len(t) else float(t[en - 1]) + 1.0 / fs
         tps.append({
             "id": len(tps) + 1,
             "name": f"TP-{len(tps) + 1:02d}",
             "label": f"{col}={val:g}",
             "start_s": round(float(t[st]), 6),
-            "end_s": round(float(t[en - 1]), 6),
+            "end_s": round(end_s, 6),
             "start_idx": int(st),
             "end_idx": int(en),
             "notes": "",

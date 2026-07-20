@@ -134,6 +134,9 @@ export interface TpTraceResponse {
   mode: 'raw' | 'envelope';
   level: number;
   n_raw: number;
+  i0: number;
+  i1: number;
+  point_budget: number;
   time_origin_s: number;
   duration_s: number;
   test: string;
@@ -166,11 +169,6 @@ export interface ScatterDataPoint {
   tp: TestPoint;
   color: string;
   isSelected: boolean;
-}
-
-export interface ZoomRefArea {
-  left: number | null;
-  right: number | null;
 }
 
 /** Aggregation mode for test-point range filters.

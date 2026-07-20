@@ -1,6 +1,7 @@
-// Shared DSP-filter UI state + spec builder. The filter controls live in the
-// mode bar (SelectedPointsPanel) and apply to ALL full-test plots at once;
-// each FullTestPlot fetches its own column's overlay from the shared spec.
+// Shared DSP-filter UI state + spec builder. Filter state is PER-PLOT
+// (App.plotFilters, one FilterUi per grid cell): each TimePlot/FullTestPlot
+// toggles its own filter row via the ≈ header button and fetches its column's
+// overlay from its own spec. There is no shared/broadcast filter control.
 
 import { FilterKind, FilterSpec } from '../types';
 
@@ -13,7 +14,7 @@ export const FILTER_LABELS: Record<FilterKind, string> = {
   detrend: 'detrend',
 };
 
-/** Raw text of the filter inputs in the mode bar (App state). */
+/** Raw text of one plot's filter inputs (an entry of App.plotFilters). */
 export interface FilterUi {
   kind: '' | FilterKind;
   order: string;

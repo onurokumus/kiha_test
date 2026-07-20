@@ -28,19 +28,10 @@ export function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === 'AbortError';
 }
 
-async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, { signal });
-  if (!response.ok) {
-    let detail = `${response.status} ${response.statusText}`;
-    try {
-      const body = await response.json();
-      if (typeof body?.detail === 'string') detail = body.detail;
-    } catch {
-      // non-JSON error body; keep the status text
-    }
-    throw new Error(detail);
-  }
-  return (await response.json()) as T;
+// A GET is just a sendJson with no method/body — delegate so the error-detail
+// extraction lives in one place (sendJson is hoisted, defined below).
+function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return sendJson<T>(path, { signal });
 }
 
 export async function fetchTests(): Promise<TestInfo[]> {
@@ -64,6 +55,17 @@ export async function fetchTpStats(
   return getJson<TpStat[]>(
     `/tests/${encodeURIComponent(name)}/tp_stats?col=${encodeURIComponent(col)}`
   );
+}
+
+/** Force a fresh recompute of a test's cached test-point averages. The
+ *  backend swaps the result in atomically, so this never leaves the stats
+ *  unavailable; returns how many cached columns were recomputed. */
+export async function rebuildTpStats(
+  name: string
+): Promise<{ name: string; columns_recomputed: number }> {
+  return sendJson(`/tests/${encodeURIComponent(name)}/tp_stats/rebuild`, {
+    method: 'POST',
+  });
 }
 
 /** One test point's traces for several columns, relative time from TP start.
@@ -125,16 +127,20 @@ async function sendJson<T>(path: string, init: RequestInit): Promise<T> {
 export function uploadTest(
   file: File,
   name: string,
-  onProgress?: (fraction: number | null) => void
+  onProgress?: (fraction: number | null) => void,
+  fsHz?: number
 ): Promise<{ name: string; status: string }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     // ?source= records the original file name in meta.source_file — the
     // raw body lands in raw.csv, so it would otherwise be lost.
+    // ?fs= (optional, Settings) is the assumed rate the backend uses ONLY
+    // when the CSV's time column can't yield a valid axis.
     xhr.open(
       'POST',
       `${API_BASE}/tests/upload?name=${encodeURIComponent(name)}` +
-        `&source=${encodeURIComponent(file.name)}`
+        `&source=${encodeURIComponent(file.name)}` +
+        (fsHz && fsHz > 0 ? `&fs=${encodeURIComponent(fsHz)}` : '')
     );
     xhr.responseType = 'json';
     xhr.upload.onprogress = (e) => {
@@ -317,6 +323,29 @@ export async function fetchXY(
   );
 }
 
-export async function healthCheck(): Promise<{ ok: boolean }> {
-  return getJson<{ ok: boolean }>('/health');
+// -- CSV downloads (streamed by the backend; use as plain <a href> targets) --
+
+/** The original uploaded CSV (raw.csv), kept for provenance. */
+export function rawCsvUrl(name: string): string {
+  return `${API_BASE}/tests/${encodeURIComponent(name)}/raw`;
+}
+
+/** Full-resolution CSV export of a test, optionally a [t0, t1] window
+ *  and/or a column subset (time column is always included first). */
+export function exportCsvUrl(
+  name: string,
+  opts: { cols?: string[]; t0?: number | null; t1?: number | null } = {}
+): string {
+  const params = new URLSearchParams();
+  if (opts.cols?.length) params.set('cols', opts.cols.join(','));
+  if (opts.t0 !== undefined && opts.t0 !== null) params.set('t0', String(opts.t0));
+  if (opts.t1 !== undefined && opts.t1 !== null) params.set('t1', String(opts.t1));
+  const q = params.toString();
+  return `${API_BASE}/tests/${encodeURIComponent(name)}/export${q ? `?${q}` : ''}`;
+}
+
+/** CSV of one SAVED test point (exact index boundaries, server-side). */
+export function testPointCsvUrl(name: string, tpId: number, cols?: string[]): string {
+  const q = cols?.length ? `?cols=${encodeURIComponent(cols.join(','))}` : '';
+  return `${API_BASE}/tests/${encodeURIComponent(name)}/testpoints/${tpId}/export${q}`;
 }

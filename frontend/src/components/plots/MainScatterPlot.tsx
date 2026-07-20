@@ -13,6 +13,7 @@ import { ScatterDataPoint, TestPoint } from '../../types';
 import { AnimatedDot } from './AnimatedDot';
 import { ClusterDot } from './ClusterDot';
 import { formatValue } from '../../utils/formatters';
+import { SCATTER_MARGIN, PLOT_INSET_X, PLOT_INSET_Y } from '../../constants/scatterGeometry';
 import { PointSelectionMenu } from './PointSelectionMenu';
 import { CustomScatterTooltip } from './CustomScatterTooltip';
 import { clusterPoints, shouldEnableClustering } from '../../utils/pointClustering';
@@ -93,7 +94,6 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   const panStart = useRef<{ x: number; y: number; clientX: number; clientY: number } | null>(null);
   const hasDragged = useRef(false);
   const rafIdRef = useRef<number | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const latestMouseEvent = useRef<{ clientX: number; clientY: number } | null>(null);
   const boundsRef = useRef<{
     initialXMin: number;
@@ -183,8 +183,8 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
     const nonSelectedPoints = scatterData.filter((p) => !p.isSelected);
 
     const rect = chartRef.current.getBoundingClientRect();
-    const chartWidth = rect.width - 70; // Account for margins
-    const chartHeight = rect.height - 50;
+    const chartWidth = rect.width - PLOT_INSET_X; // plot area inside the margins + y-axis
+    const chartHeight = rect.height - PLOT_INSET_Y;
 
     // Only cluster non-selected points
     const result = clusterPoints(
@@ -279,6 +279,19 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       clusterPoints?: ScatterDataPoint[];
     })[];
   }, [scatterData, clusteredData, enableClustering, highlightedPointId]);
+
+  // The 15px "nearby points" click test reads dot pixel positions accumulated
+  // by the shape renderer. Recharts overwrites the entry for each dot it still
+  // draws, but points that dropped out of renderData (filtered away, clustered,
+  // or off-screen after zoom/pan/axis change) would otherwise linger with stale
+  // coordinates and get falsely counted as "nearby". Drop the whole map the
+  // moment renderData changes reference — the shape renderer repopulates it with
+  // exactly the currently-drawn dots on this same render (bug 1.16).
+  const renderedDataRef = useRef(renderData);
+  if (renderedDataRef.current !== renderData) {
+    renderedDataRef.current = renderData;
+    pointPositions.current.clear();
+  }
 
   const handlePointClick = useCallback(
     (
@@ -506,7 +519,6 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   }, [suppressTooltip]);
 
   // Memoize the shape renderer to prevent recreating on every render
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const shapeRenderer = useCallback((props: unknown) => {
     const shapeProps = props as {
       cx: number;
@@ -623,7 +635,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       onMouseLeave={handleMouseLeave}
     >
       <ResponsiveContainer width="100%" height="100%">
-        <ScatterChart margin={{ top: 10, right: 20, bottom: 40, left: 35 }}>
+        <ScatterChart margin={SCATTER_MARGIN}>
           <CartesianGrid strokeDasharray="3 3" stroke="#3c3c3c" />
           <XAxis
             dataKey="x"

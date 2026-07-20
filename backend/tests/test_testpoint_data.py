@@ -1,7 +1,4 @@
-import tempfile
 import unittest
-from pathlib import Path
-from unittest.mock import patch
 
 import numpy as np
 import polars as pl
@@ -9,20 +6,12 @@ from fastapi import HTTPException
 
 from app import main, store
 from app.config import POINT_BUDGET_CAP
+from ._base import DataDirTestCase
 
 
-class TestPointDataTests(unittest.TestCase):
+class TestPointDataTests(DataDirTestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.tests = Path(self.temp.name) / "tests"
-        self.tests.mkdir()
-        self.patchers = [
-            patch.object(main, "TESTS_DIR", self.tests),
-            patch.object(store, "TESTS_DIR", self.tests),
-        ]
-        for patcher in self.patchers:
-            patcher.start()
-
+        super().setUp()
         directory = self.tests / "alpha"
         directory.mkdir()
         time = 100.0 + np.arange(14, dtype=np.float64) * 0.01
@@ -57,11 +46,6 @@ class TestPointDataTests(unittest.TestCase):
                 "notes": "",
             }],
         })
-
-    def tearDown(self):
-        for patcher in reversed(self.patchers):
-            patcher.stop()
-        self.temp.cleanup()
 
     def test_raw_trace_uses_exact_half_open_bounds_and_relative_time(self):
         result = store.read_testpoint_trace(
@@ -113,6 +97,91 @@ class TestPointDataTests(unittest.TestCase):
             main.api_get_testpoint_data(
                 "alpha", 7, "missing", max_points=8)
         self.assertEqual(unknown_column.exception.status_code, 400)
+
+    def test_vectorized_envelope_matches_brute_force_across_row_groups(self):
+        """The reduceat-vectorized envelope (perf 2.6) must be byte-identical
+        to a straightforward Python reference — including buckets that straddle
+        parquet row-group / batch seams and buckets that are entirely NaN."""
+        rng = np.random.default_rng(20260719)
+        for trial, row_group in enumerate((7, 50, 4096)):
+            n = 5000 + trial
+            time = np.arange(n, dtype=np.float64) * 0.001 + 10.0
+            values = rng.normal(size=n) * 25.0
+            # constant runs + NaN patches to stress run-detection and empty
+            # (all-NaN) buckets that must fall back to a bucket_t / NaN sample.
+            values[1000:1200] = 3.0
+            values[2000:2400] = np.nan
+            values[123] = np.inf              # treated as non-finite, like NaN
+            name = f"stress{trial}"
+            directory = self.tests / name
+            directory.mkdir()
+            pl.DataFrame({"time": time, "v": values}).write_parquet(
+                directory / "data.parquet", row_group_size=row_group)
+            store.write_json_atomic(directory / "meta.json", {
+                "name": name, "fs_hz": 1000.0, "n_rows": n,
+                "columns": ["time", "v"], "time_column": "time",
+                "t_start": 10.0})
+            i0, i1 = 37, n - 11
+            store.write_json_atomic(directory / "testpoints.json", {
+                "version": 1, "test": name, "test_points": [{
+                    "id": 1, "name": "r", "label": "", "notes": "",
+                    "start_s": round(float(time[i0]), 6),
+                    "end_s": round(float(time[i1]), 6),
+                    "start_idx": i0, "end_idx": i1}]})
+
+            result = store.read_testpoint_trace(
+                name, 1, ["v"], max_points=600)
+            self.assertEqual(result["mode"], "envelope")
+            exp_t, exp_y = _brute_force_trace(time, values, i0, i1, 600)
+            got = result["series"]["v"]
+            self.assertEqual(len(got["t"]), len(exp_t))
+            for a, b in zip(got["t"], exp_t):
+                self.assertAlmostEqual(a, b, places=9)
+            for a, b in zip(got["y"], exp_y):
+                if b is None:
+                    self.assertIsNone(a)
+                else:
+                    self.assertAlmostEqual(a, b, places=6)
+
+
+def _brute_force_trace(t, y, i0, i1, max_points):
+    """Reference envelope reduction — the semantics store.read_testpoint_trace
+    must preserve: first/last samples kept, interior split into equal buckets,
+    each bucket contributing its finite min & max at their sample times in
+    sample order (ties → earliest), all-NaN buckets → one NaN at the bucket's
+    first sample time."""
+    import math
+    n_raw = i1 - i0
+    interior_n = n_raw - 2
+    bucket_count = min(interior_n, (max_points - 2) // 2)
+    edges = 1 + (np.arange(bucket_count + 1, dtype=np.int64)
+                 * interior_n // bucket_count)
+    origin = float(t[i0])
+    trace_t = [origin]
+    trace_y = [float(y[i0])]
+    for b in range(bucket_count):
+        a0, a1 = i0 + int(edges[b]), i0 + int(edges[b + 1])
+        seg_y, seg_t = y[a0:a1], t[a0:a1]
+        finite = np.flatnonzero(np.isfinite(seg_y))
+        if not len(finite):
+            trace_t.append(float(t[a0]))
+            trace_y.append(math.nan)
+            continue
+        fv = seg_y[finite]
+        lo, hi = int(finite[np.argmin(fv)]), int(finite[np.argmax(fv)])
+        extrema = [(lo, float(seg_t[lo]), float(seg_y[lo]))]
+        if hi != lo:
+            extrema.append((hi, float(seg_t[hi]), float(seg_y[hi])))
+        extrema.sort(key=lambda it: it[0])
+        for _, st, v in extrema:
+            trace_t.append(st)
+            trace_y.append(v)
+    trace_t.append(float(t[i0 + n_raw - 1]))
+    trace_y.append(float(y[i0 + n_raw - 1]))
+    rel = list(np.round(np.asarray(trace_t) - origin, 6))
+    out_y = [(None if not math.isfinite(v) else round(float(v), 6))
+             for v in trace_y]
+    return rel, out_y
 
 
 if __name__ == "__main__":

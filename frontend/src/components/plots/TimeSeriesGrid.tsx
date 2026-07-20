@@ -30,7 +30,10 @@ interface TimeSeriesGridProps {
   plotFilterSpecs: (FilterSpec | null)[];
   onPlotFilterChange?: (index: number, patch: Partial<FilterUi>) => void;
   xySource: 'tp' | 'full';
-  /** Per-plot X columns for XY mode, index-aligned with plotConfigs. */
+  /** XY mode per-plot columns, index-aligned with plotConfigs. Y '' = follow
+   *  the shared grid slot; editing an XY Y never touches plotConfigs. */
+  xyYCols: string[];
+  onXYYColChange?: (index: number, col: string) => void;
   xyXCols: string[];
   onXYXColChange?: (index: number, col: string) => void;
   columnsByTest: Record<string, string[]>;
@@ -58,6 +61,8 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   plotFilterSpecs,
   onPlotFilterChange,
   xySource,
+  xyYCols,
+  onXYYColChange,
   xyXCols,
   onXYXColChange,
   columnsByTest,
@@ -112,6 +117,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
                 {...filterProps}
                 selectedTPs={selectedTPs}
                 hiddenTPs={hiddenTPs}
+                columnsByTest={columnsByTest}
                 zoomDomain={timeZoom}
                 onZoomChange={onTimeZoomChange}
                 onZoomReset={onTimeZoomReset}
@@ -143,6 +149,12 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
             {viewMode === 'xy' && (
               <XYPlot
                 {...shared}
+                cfg={
+                  xyYCols[idx]
+                    ? { key: xyYCols[idx], label: xyYCols[idx] }
+                    : cfg
+                }
+                onConfigChange={(newKey: string) => onXYYColChange?.(idx, newKey)}
                 test={test}
                 xCol={xyXCols[idx] ?? ''}
                 onXColChange={(c) => onXYXColChange?.(idx, c)}

@@ -97,6 +97,21 @@ def test_write(name: str):
     return _test_lock(name).write()
 
 
+def drop_test_lock(*names: str) -> None:
+    """Forget the per-test RW lock(s) for tests that no longer exist under their
+    old name (deleted or renamed), so the registry does not grow without bound
+    for the life of the process (bug 4.8).
+
+    Safe: a thread already holding — or mid-acquire on — the lock keeps its own
+    reference to the object, and a later request for the same name simply lazily
+    creates a fresh lock. Call only after the directory is gone/renamed under
+    catalog_write, where delete/rename/restore are already serialized, so there
+    is no live structural operation on the old name to protect."""
+    with _registry_guard:
+        for name in names:
+            _test_locks.pop(_test_key(name), None)
+
+
 @contextmanager
 def tests_write(*names: str) -> Iterator[None]:
     """Lock several names in stable order so rename cannot deadlock."""
@@ -114,15 +129,33 @@ def catalog_write():
     return _catalog_lock.write()
 
 
+@contextmanager
+def data_read(name: str) -> Iterator[None]:
+    """Per-test read lock + process-wide read slot as one context manager, for
+    code that cannot use the with_test_read decorator (e.g. a StreamingResponse
+    body, which runs after its endpoint returned and released decorator-held
+    locks).
+
+    Ordering is the per-test read lock FIRST, then the global slot. A read of a
+    test whose writer is active (a rebuild/ingest holding test_write) therefore
+    blocks on test_read WITHOUT holding a slot, so it can no longer starve reads
+    of every OTHER test by parking on the semaphore while blocked (bug 2.1).
+    This cannot deadlock: writers never take a slot, so no thread ever holds a
+    slot while waiting for a per-test lock — there is no cycle. The slot still
+    bounds concurrent NATIVE reads (it wraps the yield where the caller collects)
+    which is its only job (the Windows py3.14 crash gate).
+    """
+    with test_read(name):
+        with _data_read_slots:
+            yield
+
+
 def with_test_read(function: Callable[P, R]) -> Callable[P, R]:
     """Wrap a FastAPI endpoint whose first argument is the test name."""
     @wraps(function)
     def wrapped(name: str, *args, **kwargs):
-        # The process-wide slot protects native dataframe readers. Acquire it
-        # before the per-test lock so every request uses one stable ordering.
-        with _data_read_slots:
-            with test_read(name):
-                return function(name, *args, **kwargs)
+        with data_read(name):
+            return function(name, *args, **kwargs)
 
     return wrapped
 

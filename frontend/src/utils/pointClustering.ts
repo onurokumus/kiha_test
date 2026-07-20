@@ -61,6 +61,26 @@ export const clusterPoints = (
     py: chartHeight - ((point.y - yMin) / yRange) * chartHeight,
   }));
 
+  // Uniform-grid spatial index so neighbor lookup is O(n) instead of O(n²)
+  // (perf 2.5): bucket every point into a `clusterRadius`-sized cell keyed
+  // "col,row". Two points within `clusterRadius` (Euclidean) differ by at most
+  // one cell on each axis, so a point's neighbors can only live in its own cell
+  // or the 8 around it — the exact same radius test below still decides
+  // membership, so the greedy output is byte-for-byte identical to the old
+  // full O(n²) scan (NaN pixels floor to a "NaN,NaN" cell and their distance
+  // test is NaN <= r === false, exactly as before → they stay individual).
+  const cellSize = clusterRadius > 0 ? clusterRadius : 1;
+  const grid = new Map<string, number[]>();
+  const cellKey = (px: number, py: number) =>
+    `${Math.floor(px / cellSize)},${Math.floor(py / cellSize)}`;
+  for (let i = 0; i < pointsWithPixels.length; i++) {
+    const { px, py } = pointsWithPixels[i];
+    const key = cellKey(px, py);
+    const bucket = grid.get(key);
+    if (bucket) bucket.push(i);
+    else grid.set(key, [i]);
+  }
+
   // Track which points have been clustered
   const clustered = new Set<number>();
   const clusters: ClusterPoint[] = [];
@@ -72,8 +92,22 @@ export const clusterPoints = (
     const current = pointsWithPixels[i];
     const nearbyIndices: number[] = [i];
 
-    // Find all points within cluster radius
-    for (let j = i + 1; j < pointsWithPixels.length; j++) {
+    // Candidate neighbors from the 3×3 cell neighborhood only. Collect then
+    // sort ascending so membership is visited in the same index order the old
+    // linear `j = i + 1 …` scan used (cluster center is an order-independent
+    // average, but keeping the order makes the two implementations identical).
+    const cellX = Math.floor(current.px / cellSize);
+    const cellY = Math.floor(current.py / cellSize);
+    const candidates: number[] = [];
+    for (let cx = cellX - 1; cx <= cellX + 1; cx++) {
+      for (let cy = cellY - 1; cy <= cellY + 1; cy++) {
+        const bucket = grid.get(`${cx},${cy}`);
+        if (bucket) for (const j of bucket) if (j > i) candidates.push(j);
+      }
+    }
+    candidates.sort((a, b) => a - b);
+
+    for (const j of candidates) {
       if (clustered.has(j)) continue;
 
       const other = pointsWithPixels[j];

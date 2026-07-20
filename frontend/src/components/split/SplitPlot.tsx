@@ -4,6 +4,7 @@ import 'uplot/dist/uPlot.min.css';
 import { fetchWindow, isAbortError } from '../../services/api';
 import { DataWindow, TestPoint } from '../../types';
 import { AXIS_STYLE, colorFor } from '../../constants/uplotTheme';
+import { round3 } from '../../utils/formatters';
 
 export type TimeRange = [number, number] | null;
 
@@ -115,6 +116,15 @@ export default function SplitPlot(props: Props) {
         data.push(win.series[c] as (number | null)[]);
       }
     });
+
+    // A NaN in the time column serializes as null in win.t; uPlot's x array
+    // must be ascending numbers, so drop those samples across every parallel
+    // array (t + each series column). Matches TimePlot / FullTestPlot (1.19).
+    if (win.t.some((v) => v == null)) {
+      const keep: number[] = [];
+      for (let i = 0; i < win.t.length; i++) if (win.t[i] != null) keep.push(i);
+      for (let c = 0; c < data.length; c++) data[c] = keep.map((i) => data[c][i]);
+    }
 
     const u = new uPlot(
       {
@@ -311,5 +321,3 @@ export default function SplitPlot(props: Props) {
     </div>
   );
 }
-
-const round3 = (v: number) => Math.round(v * 1000) / 1000;
