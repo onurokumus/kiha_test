@@ -1,8 +1,10 @@
 # PTT — Linux Deployment Guide (systemd + nginx, Python 3.11)
 
-Production layout: **one** uvicorn process (via systemd) on `127.0.0.1:8000`, nginx
-serving the built frontend from `frontend/dist/` and proxying `/api` to the backend.
-Same-origin, so no CORS involved. Node is only needed at **build** time.
+Production layout: **one** uvicorn process (via systemd) on `127.0.0.1:8000`,
+with nginx serving the built frontend at `http://heliweb/ptt/` and proxying
+`/ptt/api/` to the backend's `/api/` routes. This is same-origin, so browser
+CORS is not involved in normal production traffic. Node is only needed at
+**build** time.
 
 > **Never scale to multiple workers** (no `gunicorn -w N`, no `uvicorn --workers`).
 > All concurrency safety (per-test RW locks, the native-read gate) is in-process;
@@ -24,7 +26,7 @@ cd /opt/ptt/backend
 sudo -u ptt python3.11 -m venv .venv
 sudo -u ptt .venv/bin/pip install -r requirements.txt
 
-# one-time sanity check (78 tests)
+# one-time sanity check (81 tests)
 sudo -u ptt .venv/bin/pip install -r requirements-dev.txt
 sudo -u ptt .venv/bin/python -m pytest tests
 
@@ -32,6 +34,11 @@ sudo -u ptt .venv/bin/python -m pytest tests
 cd /opt/ptt/frontend
 sudo -u ptt npm ci
 sudo -u ptt npm run build
+
+# Expose that build under the existing heliweb document root. If heliweb uses
+# another root, substitute it here and in the nginx `root` directive below.
+sudo install -d /var/www/heliweb
+sudo ln -s /opt/ptt/frontend/dist /var/www/heliweb/ptt
 ```
 
 Test data lands in `/opt/ptt/data/` by default (`KIHA_DATA_DIR` overrides — put it
@@ -55,6 +62,9 @@ Environment=KIHA_HOST=127.0.0.1
 Environment=KIHA_PORT=8000
 # native-crash tracebacks in the journal (same as run_backend.bat on Windows)
 Environment=PYTHONFAULTHANDLER=1
+# Optional: complete comma-separated CORS allowlist for direct backend access.
+# /ptt is a URL path, not part of an Origin; change these if the host/scheme does.
+Environment=KIHA_CORS_ORIGINS=http://heliweb,https://heliweb
 # Environment=KIHA_DATA_DIR=/srv/ptt-data
 # Environment=KIHA_MAX_UPLOAD_BYTES=21474836480
 
@@ -72,47 +82,59 @@ curl http://127.0.0.1:8000/api/health        # -> {"ok":true}
 journalctl -u ptt-backend -f                 # logs (kiha.* + uvicorn)
 ```
 
-## 3. nginx — `/etc/nginx/sites-available/ptt`
+## 3. nginx — existing `heliweb` server
+
+Add these three `location` blocks inside the existing `server` block whose
+`server_name` is `heliweb`. Do not create a second `server_name heliweb` block;
+that server may already host other tools at other paths.
 
 ```nginx
-server {
-    listen 80;
-    server_name _;                      # or your hostname
+# Canonical trailing slash: Vite's production base is /ptt/.
+location = /ptt {
+    return 308 /ptt/;
+}
 
-    root /opt/ptt/frontend/dist;
-    index index.html;
+# The trailing /api/ on proxy_pass rewrites:
+# /ptt/api/tests -> http://127.0.0.1:8000/api/tests
+location ^~ /ptt/api/ {
+    proxy_pass http://127.0.0.1:8000/api/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
 
-    location / {
-        try_files $uri /index.html;     # SPA fallback
-    }
+    # --- load-bearing: multi-GB CSV uploads/exports ---
+    client_max_body_size 20g;       # nginx default is 1 MB -> every upload 413s
+    proxy_request_buffering off;    # stream the body to the backend as it arrives;
+                                    # buffering would spool the whole upload first and
+                                    # break the live 'receiving' status/progress
+    proxy_buffering off;            # stream CSV exports back without disk spooling
+    proxy_read_timeout 1h;          # long exports/uploads are legitimate
+    proxy_send_timeout 1h;
+}
 
-    location /api/ {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-
-        # --- load-bearing: multi-GB CSV uploads/exports ---
-        client_max_body_size 20g;       # nginx default is 1 MB -> every upload 413s
-        proxy_request_buffering off;    # stream the body to the backend as it arrives;
-                                        # buffering would spool the whole upload first and
-                                        # break the live 'receiving' status/progress
-        proxy_buffering off;            # stream CSV exports back without disk spooling
-        proxy_read_timeout 1h;          # long exports/uploads are legitimate
-        proxy_send_timeout 1h;
-    }
+# Vite builds asset references with the /ptt/ prefix. The fallback keeps
+# direct browser loads under that prefix working if client routes are added.
+location ^~ /ptt/ {
+    root /var/www/heliweb;
+    try_files $uri $uri/ /ptt/index.html;
 }
 ```
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/ptt /etc/nginx/sites-enabled/ptt
-sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 # firewall, if enabled:
 sudo ufw allow 80/tcp
+
+# Both should succeed through nginx:
+curl --fail http://heliweb/ptt/
+curl --fail http://heliweb/ptt/api/health
 ```
 
-Open `http://<server>/` — drag a CSV in; the Uploads tab should show live progress
-and the status chain receiving → ingesting → ready.
+Open `http://heliweb/ptt/` — drag a CSV in; the Uploads tab should show live
+progress and the status chain receiving → ingesting → ready.
 
 ## 4. Updating
 
@@ -135,6 +157,14 @@ sudo systemctl restart ptt-backend        # nginx reload only if its config chan
 - Backend binds `127.0.0.1` on purpose — only nginx is exposed. Don't set
   `KIHA_HOST=0.0.0.0` unless you intend to bypass nginx (you'd lose the upload
   buffering/timeout handling and serve no frontend).
+- The production frontend base defaults to `/ptt/`. To deploy a build at a
+  different path, set `VITE_BASE_PATH=/other-path/` for `npm run build` and
+  change both nginx locations to the same prefix. `VITE_API_BASE` can point the
+  frontend at a deliberately separate API URL, but then that URL's exact
+  scheme/host/port must be included in `KIHA_CORS_ORIGINS`.
+- A CORS origin contains only scheme, host, and optional port. For
+  `http://heliweb/ptt/`, the origin is `http://heliweb`, never
+  `http://heliweb/ptt`.
 - Deleted tests move to `data/trash/` and purge ~1 h after the next delete; disk
   usage is roughly 2× the retained tests (raw.csv + parquet + pyramid).
 - Known multi-user caveat (possible_bugs2.md §1.1): a very slow client downloading a

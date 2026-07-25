@@ -30,8 +30,9 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
 from . import dsp, edit, split, store
-from .config import (MAX_UPLOAD_BYTES, POINT_BUDGET_CAP, TESTS_DIR, TRASH_DIR,
-                     TRASH_MAX_AGE_S, UPLOAD_SNIFF_BYTES)
+from .config import (CORS_ORIGINS, MAX_UPLOAD_BYTES, POINT_BUDGET_CAP,
+                     TESTS_DIR, TRASH_DIR, TRASH_MAX_AGE_S,
+                     UPLOAD_SNIFF_BYTES)
 from .ingest import ingest_csv
 from .locks import (catalog_read, catalog_write, data_read, drop_test_lock,
                     test_read, test_write, tests_write, with_test_read)
@@ -99,7 +100,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -1,6 +1,35 @@
 import os
 from pathlib import Path
 
+
+def _cors_origins() -> tuple[str, ...]:
+    """Return the exact browser origins allowed to call the API directly.
+
+    The nginx deployment uses a same-origin /ptt/api proxy and therefore does
+    not need CORS. These entries cover local development and direct API access
+    from the heliweb UI. Override the complete list with a comma-separated
+    KIHA_CORS_ORIGINS value when the server name, scheme, or port differs.
+    """
+    defaults = (
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://heliweb",
+        "https://heliweb",
+    )
+    configured = os.environ.get("KIHA_CORS_ORIGINS")
+    values = configured.split(",") if configured is not None else defaults
+
+    # An Origin never contains a URL path. Strip trailing slashes so common
+    # values such as "https://ptt.example/" still match the browser header.
+    return tuple(dict.fromkeys(
+        origin.strip().rstrip("/")
+        for origin in values
+        if origin.strip().rstrip("/")
+    ))
+
+
+CORS_ORIGINS = _cors_origins()
+
 # repo_root/data/tests/<test_name>/...
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.environ.get("KIHA_DATA_DIR", REPO_ROOT / "data"))

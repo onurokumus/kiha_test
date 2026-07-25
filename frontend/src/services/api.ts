@@ -1,10 +1,12 @@
 /**
  * API layer for the PTT FastAPI backend.
  *
- * In dev, '/api' is proxied to http://127.0.0.1:8000 by vite (vite.config.ts),
- * so no CORS is involved. Gotcha: /filter takes `cols`+`type`, /spectrum takes
- * `col`+`mode`; POST /split/auto returns a BARE LIST proposal that must be
- * wrapped in the TestPointsFile shape before PUT /testpoints persists it.
+ * In dev, '/api' is proxied to http://127.0.0.1:8000 by vite. The production
+ * build uses Vite's /ptt/ base, so this becomes same-origin '/ptt/api' for
+ * nginx. VITE_API_BASE can override it for a deliberately separate API host.
+ * Gotcha: /filter takes `cols`+`type`, /spectrum takes `col`+`mode`; POST
+ * /split/auto returns a BARE LIST proposal that must be wrapped in the
+ * TestPointsFile shape before PUT /testpoints persists it.
  */
 import {
   DataWindow,
@@ -22,7 +24,9 @@ import {
   XYData,
 } from '../types';
 
-const API_BASE = '/api';
+const API_BASE = (
+  import.meta.env.VITE_API_BASE || `${import.meta.env.BASE_URL}api`
+).replace(/\/+$/, '');
 
 export function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === 'AbortError';
