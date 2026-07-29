@@ -1,7 +1,18 @@
 # PTT — Linux Deployment Guide (systemd + nginx, Python 3.11)
 
-Production layout: **one** uvicorn process (via systemd) on `127.0.0.1:8000`,
-with nginx serving the built frontend at `http://heliweb/ptt/` and proxying
+This guide targets the current production host and layout:
+
+- host: `heliweb1`
+- application URL: `http://heliweb1/ptt/`
+- checkout: `/progs2/ptt`
+- service account: `t21485srv`
+- backend service: `ptt-backend.service`
+
+Substitute the service account only if ownership on the target server differs;
+the checkout path and hostname should stay consistent throughout the guide.
+
+Production runs **one** uvicorn process (via systemd) on `127.0.0.1:8000`,
+with nginx serving the built frontend at `http://heliweb1/ptt/` and proxying
 `/ptt/api/` to the backend's `/api/` routes. This is same-origin, so browser
 CORS is not involved in normal production traffic. Node is only needed at
 **build** time.
@@ -17,31 +28,36 @@ CORS is not involved in normal production traffic. Node is only needed at
 sudo apt update && sudo apt install -y git nginx python3.11 python3.11-venv
 # Node 18+: fine from apt on Ubuntu 24.04; on older distros use nvm/NodeSource.
 
-sudo useradd -r -m -d /opt/ptt -s /usr/sbin/nologin ptt
-sudo git clone https://github.com/onurokumus/kiha_test.git /opt/ptt
-sudo chown -R ptt:ptt /opt/ptt
+# t21485srv already exists on heliweb1. For a clean installation, ensure the
+# target is empty and owned by that unprivileged account.
+sudo install -d -o t21485srv /progs2/ptt
+sudo -u t21485srv git clone https://github.com/onurokumus/kiha_test.git /progs2/ptt
 
 # backend venv — python3.11 executable explicitly
-cd /opt/ptt/backend
-sudo -u ptt python3.11 -m venv .venv
-sudo -u ptt .venv/bin/pip install -r requirements.txt
+cd /progs2/ptt/backend
+sudo -u t21485srv python3.11 -m venv .venv
+sudo -u t21485srv .venv/bin/pip install -r requirements.txt
 
 # one-time sanity check
-sudo -u ptt .venv/bin/pip install -r requirements-dev.txt
-sudo -u ptt .venv/bin/python -m pytest tests
+sudo -u t21485srv .venv/bin/pip install -r requirements-dev.txt
+sudo -u t21485srv .venv/bin/python -m pytest tests
 
-# frontend build -> frontend/dist  (or build elsewhere and copy dist/ over)
-cd /opt/ptt/frontend
-sudo -u ptt npm ci
-sudo -u ptt npm run build
+# Build into an immutable release directory, then publish it with one symlink.
+cd /progs2/ptt/frontend
+sudo -u t21485srv npm ci
+sudo install -d -o t21485srv /progs2/ptt-releases
+PTT_RELEASE=$(date -u +%Y%m%dT%H%M%SZ)-$(sudo -u t21485srv git -C /progs2/ptt rev-parse --short=12 HEAD)
+test ! -e /progs2/ptt-releases/$PTT_RELEASE
+sudo -u t21485srv npm run build -- --outDir /progs2/ptt-releases/$PTT_RELEASE --emptyOutDir
+test -f /progs2/ptt-releases/$PTT_RELEASE/index.html
 
-# Expose that build under the existing heliweb document root. If heliweb uses
+# Expose that build under the existing heliweb1 document root. If heliweb1 uses
 # another root, substitute it here and in the nginx `root` directive below.
-sudo install -d /var/www/heliweb
-sudo ln -s /opt/ptt/frontend/dist /var/www/heliweb/ptt
+sudo install -d /var/www/heliweb1
+sudo ln -s /progs2/ptt-releases/$PTT_RELEASE /var/www/heliweb1/ptt
 ```
 
-Test data lands in `/opt/ptt/data/` by default (`KIHA_DATA_DIR` overrides — put it
+Test data lands in `/progs2/ptt/data/` by default (`KIHA_DATA_DIR` overrides — put it
 on a disk with room; a 1 h test is ~2 GB on disk plus the retained raw.csv).
 
 ## 2. Backend service — `/etc/systemd/system/ptt-backend.service`
@@ -53,9 +69,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=ptt
-WorkingDirectory=/opt/ptt/backend
-ExecStart=/opt/ptt/backend/.venv/bin/python run.py
+User=t21485srv
+WorkingDirectory=/progs2/ptt/backend
+ExecStart=/progs2/ptt/backend/.venv/bin/python run.py
 Restart=always
 RestartSec=2
 Environment=KIHA_HOST=127.0.0.1
@@ -64,7 +80,7 @@ Environment=KIHA_PORT=8000
 Environment=PYTHONFAULTHANDLER=1
 # Optional: complete comma-separated CORS allowlist for direct backend access.
 # /ptt is a URL path, not part of an Origin; change these if the host/scheme does.
-Environment=KIHA_CORS_ORIGINS=http://heliweb,https://heliweb
+Environment=KIHA_CORS_ORIGINS=http://heliweb1
 # Environment=KIHA_DATA_DIR=/srv/ptt-data
 # Environment=KIHA_MAX_UPLOAD_BYTES=21474836480
 # Resumable-upload defaults (values are bytes except STALE_AGE_S):
@@ -88,13 +104,13 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload
 sudo systemctl enable --now ptt-backend
 curl http://127.0.0.1:8000/api/health        # -> {"ok":true}
-journalctl -u ptt-backend -f                 # logs (kiha.* + uvicorn)
+sudo journalctl -u ptt-backend -f            # logs (kiha.* + uvicorn)
 ```
 
-## 3. nginx — existing `heliweb` server
+## 3. nginx — existing `heliweb1` server
 
 Add these three `location` blocks inside the existing `server` block whose
-`server_name` is `heliweb`. Do not create a second `server_name heliweb` block;
+`server_name` is `heliweb1`. Do not create a second `server_name heliweb1` block;
 that server may already host other tools at other paths.
 
 ```nginx
@@ -136,25 +152,25 @@ location ^~ /ptt/api/ {
 # Vite builds asset references with the /ptt/ prefix. The fallback keeps
 # direct browser loads under that prefix working if client routes are added.
 location ^~ /ptt/ {
-    root /var/www/heliweb;
+    root /var/www/heliweb1;
     try_files $uri $uri/ /ptt/index.html;
 }
 ```
 
 ```bash
 sudo nginx -t
-sudo systemctl reload nginx
-# If this nginx installation has no systemd unit, use:
-# sudo nginx -s reload
+sudo nginx -s reload
+# heliweb1 has no nginx systemd unit. On a different installation that does,
+# `sudo systemctl reload nginx` is an equivalent reload command.
 # firewall, if enabled:
 sudo ufw allow 80/tcp
 
 # Both should succeed through nginx:
-curl --fail http://heliweb/ptt/
-curl --fail http://heliweb/ptt/api/health
+curl --fail http://heliweb1/ptt/
+curl --fail http://heliweb1/ptt/api/health
 ```
 
-Open `http://heliweb/ptt/` — drag a CSV in; the Uploads tab should show
+Open `http://heliweb1/ptt/` — drag a CSV in; the Uploads tab should show
 verified progress and the status chain receiving → ingesting → ready.
 
 ### Upload protocol and recovery
@@ -198,27 +214,217 @@ network attacker could replace both a chunk and its checksum, and CORS is a
 browser policy rather than access control. Use HTTPS plus appropriate
 authentication and authorization if the network or its users are not trusted.
 
-## 4. Updating
+## 4. Deploying this resumable-upload update
+
+The first work-network trial should use the published feature branch. Confirm
+that the checkout is clean before switching branches; if `git status --short`
+prints anything, stop and preserve those server-side changes first. The
+`ls-remote` check prevents starting a deployment before the branch exists on
+GitHub.
 
 ```bash
-cd /opt/ptt
-sudo -u ptt git pull
-sudo -u ptt backend/.venv/bin/pip install -r backend/requirements.txt   # if changed
-cd frontend && sudo -u ptt npm ci && sudo -u ptt npm run build && cd ..
-sudo systemctl restart ptt-backend        # nginx reload only if its config changed
+set -euo pipefail
+cd /progs2/ptt
+if [ -n "$(sudo -u t21485srv git status --porcelain)" ]
+then
+    echo "STOP: /progs2/ptt has local changes"
+    exit 1
+fi
+sudo -u t21485srv git ls-remote --exit-code --heads origin feature/resumable-multipart-upload
+sudo -u t21485srv git fetch origin
+sudo -u t21485srv git switch feature/resumable-multipart-upload
+sudo -u t21485srv git pull --ff-only origin feature/resumable-multipart-upload
+sudo -u t21485srv git rev-parse HEAD
 ```
 
-Deploy backend changes before the matching frontend build. The former
-single-request raw-body upload route is not a compatibility fallback, so an
-already-open browser tab from the old build must be refreshed after this
-upgrade.
+Install dependencies and build the new frontend into a versioned staging
+directory. This does not change the live frontend yet. Keeping release
+directories outside the checkout also keeps `git status` clean.
+
+```bash
+set -euo pipefail
+cd /progs2/ptt
+sudo -u t21485srv backend/.venv/bin/pip install -r backend/requirements.txt
+sudo install -d -o t21485srv /progs2/ptt-releases
+PTT_RELEASE=$(date -u +%Y%m%dT%H%M%SZ)-$(sudo -u t21485srv git -C /progs2/ptt rev-parse --short=12 HEAD)
+test ! -e /progs2/ptt-releases/$PTT_RELEASE
+cd /progs2/ptt/frontend
+sudo -u t21485srv npm ci
+sudo -u t21485srv npm run build -- --outDir /progs2/ptt-releases/$PTT_RELEASE --emptyOutDir
+test -f /progs2/ptt-releases/$PTT_RELEASE/index.html
+printf '%s\n' "$PTT_RELEASE" | sudo tee /run/ptt-candidate-release >/dev/null
+```
+
+If the nginx location has not yet been updated to the configuration in section
+3, validate and load it now:
+
+```bash
+set -euo pipefail
+sudo nginx -t
+sudo nginx -s reload
+```
+
+Schedule a short maintenance window and have every user close all existing PTT
+tabs. Before restarting, confirm in the current UI that no test is `receiving`
+or `ingesting`; allow ingestion to finish and allow an in-flight legacy upload
+to finish or fail cleanly. Closing a tab alone does not stop server-side
+ingestion. An old tab still calls the removed raw-body endpoint. Activate and
+verify the new backend first, then atomically move the public symlink to the
+already built frontend release:
+
+```bash
+set -euo pipefail
+PTT_RELEASE=$(sudo cat /run/ptt-candidate-release)
+test -f /progs2/ptt-releases/$PTT_RELEASE/index.html
+sudo systemctl restart ptt-backend
+sudo systemctl status ptt-backend --no-pager
+curl --fail http://127.0.0.1:8000/api/health
+curl --fail --silent http://127.0.0.1:8000/openapi.json | grep -q '"/api/uploads"'
+sudo ln -sfn /progs2/ptt-releases/$PTT_RELEASE /var/www/heliweb1/ptt.next
+sudo mv -Tf /var/www/heliweb1/ptt.next /var/www/heliweb1/ptt
+curl --fail http://heliweb1/ptt/
+curl --fail http://heliweb1/ptt/api/health
+sudo rm -f /run/ptt-candidate-release
+```
+
+The symlink rename is the frontend cutover; nginx does not need a reload for
+it. Keep the previous release directory until the work-network test passes.
+Users must open a fresh tab or hard-refresh after the cutover.
+
+### Post-deployment upload check
+
+Use the browser for this check because the production upload is now a
+multi-request protocol. The previous one-command curl probe against
+`/api/tests/upload` exercises a removed endpoint and is not a valid speed test.
+
+Create three copies of a representative CSV with distinct filenames/test names,
+or delete each completed test before starting the next one. Reusing an existing
+ready test name is correctly rejected as a conflict.
+
+1. Open a new incognito window at `http://heliweb1/ptt/`.
+2. Open DevTools → Network, enable **Preserve log**, and filter for `/uploads`.
+3. Upload the first CSV normally; record its size and elapsed time.
+4. Upload the second CSV, click Pause, wait a few seconds, and click Resume.
+5. Upload the third CSV, click Pause, and reload the page. In its upload row,
+   click **Select original CSV** and choose that exact file. Resume starts
+   automatically.
+6. In the preserved Network log, confirm the resume status GET is followed by
+   PUT requests only for chunk indexes that were missing; verified indexes
+   must not be sent again.
+7. Confirm all three final states reach `ready` and each test opens normally.
+8. Check the backend journal for errors:
+
+```bash
+sudo journalctl -u ptt-backend -n 200 --no-pager
+```
+
+The home-PC tests prove protocol correctness, recovery, and file integrity.
+Only this test on the work PC, server, and network establishes production
+throughput.
+
+### Routine updates after merge
+
+After the feature is merged to `main`, follow the same pattern: build a new
+release without exposing it, open a short maintenance window, activate and
+verify the backend, then atomically publish the frontend.
+
+```bash
+set -euo pipefail
+cd /progs2/ptt
+if [ -n "$(sudo -u t21485srv git status --porcelain)" ]
+then
+    echo "STOP: /progs2/ptt has local changes"
+    exit 1
+fi
+sudo -u t21485srv git switch main
+sudo -u t21485srv git pull --ff-only origin main
+sudo -u t21485srv backend/.venv/bin/pip install -r backend/requirements.txt
+sudo install -d -o t21485srv /progs2/ptt-releases
+PTT_RELEASE=$(date -u +%Y%m%dT%H%M%SZ)-$(sudo -u t21485srv git -C /progs2/ptt rev-parse --short=12 HEAD)
+test ! -e /progs2/ptt-releases/$PTT_RELEASE
+cd /progs2/ptt/frontend
+sudo -u t21485srv npm ci
+sudo -u t21485srv npm run build -- --outDir /progs2/ptt-releases/$PTT_RELEASE --emptyOutDir
+test -f /progs2/ptt-releases/$PTT_RELEASE/index.html
+printf '%s\n' "$PTT_RELEASE" | sudo tee /run/ptt-candidate-release >/dev/null
+```
+
+After users close their PTT tabs:
+
+```bash
+set -euo pipefail
+PTT_RELEASE=$(sudo cat /run/ptt-candidate-release)
+test -f /progs2/ptt-releases/$PTT_RELEASE/index.html
+sudo systemctl restart ptt-backend
+curl --fail http://127.0.0.1:8000/api/health
+curl --fail --silent http://127.0.0.1:8000/openapi.json | grep -q '"/api/uploads"'
+sudo ln -sfn /progs2/ptt-releases/$PTT_RELEASE /var/www/heliweb1/ptt.next
+sudo mv -Tf /var/www/heliweb1/ptt.next /var/www/heliweb1/ptt
+curl --fail http://heliweb1/ptt/api/health
+sudo rm -f /run/ptt-candidate-release
+```
+
+Reload nginx with `sudo nginx -t` followed by `sudo nginx -s reload` only when
+its configuration changed.
+
+### Rolling back to the pre-resumable release
 
 Completed tests remain rollback-compatible because their final layout is still
-`raw.csv` plus the existing Parquet/pyramid files. Before rolling back to a
-pre-resumable backend, finish or cancel every `receiving` upload and wait for
-every `ingesting` upload to reach `ready` or `error`. The old backend does not
-understand `.upload/` manifests and will mark unresolved partial sessions as
-interrupted. Then deploy the chosen earlier Git commit normally.
+`raw.csv` plus the existing Parquet/pyramid files. Schedule a maintenance
+window, have all users close PTT, and then prepare the state in this order:
+
+1. Wait for every `ingesting` upload to reach `ready` or `error`.
+2. Finish or cancel every `receiving` upload.
+3. Cancel every failed upload that still offers a Cancel action.
+4. Confirm no `receiving` or `ingesting` row remains.
+5. Confirm `git status --short` is empty.
+
+The old backend does not understand `.upload/` manifests and will mark
+unresolved partial sessions as interrupted. Once the preconditions above are
+met, stop the backend first. This prevents any new upload mutation while the
+checkout and frontend are changed. The API is intentionally unavailable during
+this rollback window.
+
+Before this feature is merged, `origin/main` is the rollback target used below.
+After it is merged, first publish a normal revert commit (or revert PR) to
+`main`, then use the same sequence. Do not use the routine-update activation
+block for a pre-resumable rollback: that block intentionally requires the new
+`/api/uploads` route. Do not rewrite server history with `git reset --hard`.
+
+```bash
+set -euo pipefail
+cd /progs2/ptt
+if [ -n "$(sudo -u t21485srv git status --porcelain)" ]
+then
+    echo "STOP: /progs2/ptt has local changes"
+    exit 1
+fi
+sudo systemctl stop ptt-backend
+sudo -u t21485srv git switch main
+sudo -u t21485srv git pull --ff-only origin main
+sudo -u t21485srv backend/.venv/bin/pip install -r backend/requirements.txt
+sudo install -d -o t21485srv /progs2/ptt-releases
+PTT_RELEASE=$(date -u +%Y%m%dT%H%M%SZ)-$(sudo -u t21485srv git -C /progs2/ptt rev-parse --short=12 HEAD)
+test ! -e /progs2/ptt-releases/$PTT_RELEASE
+cd /progs2/ptt/frontend
+sudo -u t21485srv npm ci
+sudo -u t21485srv npm run build -- --outDir /progs2/ptt-releases/$PTT_RELEASE --emptyOutDir
+test -f /progs2/ptt-releases/$PTT_RELEASE/index.html
+sudo systemctl start ptt-backend
+curl --fail http://127.0.0.1:8000/api/health
+if ! curl --fail --silent http://127.0.0.1:8000/openapi.json | grep -q '"/api/tests/upload"'
+then
+    sudo systemctl stop ptt-backend
+    echo "STOP: restored backend does not expose the legacy upload route"
+    exit 1
+fi
+sudo ln -sfn /progs2/ptt-releases/$PTT_RELEASE /var/www/heliweb1/ptt.next
+sudo mv -Tf /var/www/heliweb1/ptt.next /var/www/heliweb1/ptt
+curl --fail http://heliweb1/ptt/
+curl --fail http://heliweb1/ptt/api/health
+```
+
+Hard-refresh or close every PTT tab after the rollback build as well.
 
 ## 5. Notes
 
@@ -228,6 +434,9 @@ interrupted. Then deploy the chosen earlier Git commit normally.
   event loop and 4 concurrent native reads.
 - `start.sh` / `stop.sh` are for ad-hoc dev runs, not servers: no auto-restart,
   localhost-only vite dev server. systemd + nginx above replace them.
+- Run checkout-owned `git`, Python/pip, and npm commands as `t21485srv`, as
+  shown above. Running them as root can leave root-owned caches, bytecode, or
+  dependencies behind and later cause `Permission denied` errors.
 - Backend binds `127.0.0.1` on purpose — only nginx is exposed. Don't set
   `KIHA_HOST=0.0.0.0` unless you deliberately intend to bypass nginx and serve
   the API separately from the frontend.
@@ -237,8 +446,8 @@ interrupted. Then deploy the chosen earlier Git commit normally.
   frontend at a deliberately separate API URL, but then that URL's exact
   scheme/host/port must be included in `KIHA_CORS_ORIGINS`.
 - A CORS origin contains only scheme, host, and optional port. For
-  `http://heliweb/ptt/`, the origin is `http://heliweb`, never
-  `http://heliweb/ptt`.
+  `http://heliweb1/ptt/`, the origin is `http://heliweb1`, never
+  `http://heliweb1/ptt`.
 - Deleted tests move to `data/trash/` and purge ~1 h after the next delete; disk
   usage is roughly 2× the retained tests (raw.csv + parquet + pyramid).
 - Known multi-user caveat (possible_bugs2.md §1.1): a very slow client downloading a
