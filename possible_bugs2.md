@@ -7,6 +7,11 @@ are either NEW findings or explicitly tagged **(carry-over)** when they were alr
 and are still open. Nothing has been fixed; this is a findings list only. Items are ordered
 by **decreasing severity within each section**. File references are relative to `ptt/`.
 
+> This review predates the 2026-07-29 resumable multipart upload replacement.
+> Sections 1.4 and 1.10 and other raw-body-upload notes are retained as
+> historical findings; they do not describe the current `/api/uploads`
+> protocol.
+
 ---
 
 ## 1. Likely bugs
@@ -50,7 +55,7 @@ until GC — and on Windows `shutil.rmtree`/`api_delete_test` fails with "files 
 (409) until the process happens to collect them. Wrap the writers in `try/finally` (the
 module is otherwise careful about exactly this class of Windows sharing violations).
 
-### 1.4 Upload stream: only `ClientDisconnect`/`OSError` are handled — anything else leaks the open raw.csv and a permanent 'receiving' test
+### 1.4 Upload stream cleanup — FIXED 2026-07-29 by replacing the raw-body endpoint
 `api_upload`'s receive loop ([backend/app/main.py:412-439](backend/app/main.py#L412-L439))
 catches `ClientDisconnect` and `OSError`. Any other exception escaping `request.stream()`
 (h11 protocol error, a cancellation variant that isn't mapped to ClientDisconnect) propagates
@@ -104,7 +109,7 @@ pattern that was fixed for per-test locks in bug 4.8 (`drop_test_lock`,
 would be the natural place to also drop the size-cache entry). Unbounded (if slow) growth
 over the process lifetime; a deleted-then-recreated name is protected only by the mtime gate.
 
-### 1.10 An empty upload body creates a junk 'error' test instead of failing the request
+### 1.10 Empty raw upload — FIXED 2026-07-29 by validated session initialization
 In `api_upload`, a zero-byte body produces no chunks (NUL sniff never runs), and the
 truncation check `if expected and received != expected`
 ([backend/app/main.py:440](backend/app/main.py#L440)) is skipped when `content-length`
@@ -428,8 +433,9 @@ implements exactly this look) would remove all four.
 - **CI** (4.1) + codify the headless-Edge checks as a Playwright smoke suite — the
   hard-won gotchas in CLAUDE.md are one refactor away from being lost.
 - **WebSocket/SSE status channel** to replace the 2 s poll (kills 2.2's poll pressure too).
-- **Chunked/resumable uploads** for multi-GB files over flaky links (the raw-body endpoint
-  discards on truncation, which is safe but restarts from zero).
+- **Chunked/resumable uploads — DONE 2026-07-29**: server-selected 16 MiB
+  multipart chunks, concurrency three, SHA-256 verification, idempotent retry,
+  browser/backend restart resume, explicit cancellation and atomic completion.
 - **Parallel multi-file upload**: `handleUploadFiles` awaits sequentially; two files upload
   one at a time today.
 - **ETag/If-None-Match on `/api/tests`** so the 2 s poll costs ~nothing when idle.

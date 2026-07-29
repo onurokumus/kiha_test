@@ -16,13 +16,28 @@ export interface TestInfo {
   created_at?: string | null;
   edited_at?: string | null;
   ingest_seconds?: number | null;
-  /** Bytes on disk; grows live while a test is 'receiving'. */
+  /** Ready: total on-disk footprint. Receiving: durably committed CSV bytes. */
   size_bytes?: number | null;
+  upload_id?: string | null;
+  received_bytes?: number | null;
+  total_bytes?: number | null;
+  received_chunks?: number | null;
+  total_chunks?: number | null;
 }
 
-/** One in-flight (or failed) CSV upload, shown as a header chip and as a
- *  live row on the Uploads page. Progress entries live until the request
- *  settles; error entries until dismissed. */
+export type UploadPhase =
+  | 'queued'
+  | 'preparing'
+  | 'verifying'
+  | 'uploading'
+  | 'retrying'
+  | 'paused'
+  | 'finalizing'
+  | 'error';
+
+/** One resumable CSV upload, shown as a header chip and as a live row on the
+ *  Uploads page. `progress` combines server-confirmed bytes with the current
+ *  multipart requests; `committedBytes` is the durable/resumable subset. */
 export interface UploadItem {
   id: number;
   fileName: string;
@@ -30,6 +45,15 @@ export interface UploadItem {
    *  entry with the backend's 'receiving' row for the same transfer. */
   testName: string;
   progress: number | null; // 0..1 bytes sent; null = length unknown
+  phase: UploadPhase;
+  sessionId?: string;
+  committedBytes: number;
+  totalBytes: number;
+  completedChunks: number;
+  totalChunks: number;
+  retryAttempt?: number;
+  /** A refresh cannot retain browser permission to the local File. */
+  requiresFile?: boolean;
   error?: string;
 }
 

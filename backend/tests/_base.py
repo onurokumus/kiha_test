@@ -15,11 +15,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app import dsp, edit, ingest, main, split, store
+from app import dsp, edit, ingest, main, split, store, uploads
 
 # Every module that did `from .config import TESTS_DIR` holds its own binding, so
 # each must be patched independently for a test to be fully isolated on disk.
-_TESTS_DIR_MODULES = (main, store, ingest, edit, dsp, split)
+_TESTS_DIR_MODULES = (main, store, ingest, edit, dsp, split, uploads)
 
 
 class DataDirTestCase(unittest.TestCase):

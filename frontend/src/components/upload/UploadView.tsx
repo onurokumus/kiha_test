@@ -5,6 +5,8 @@ import {
   rebuildTpStats,
   restoreTest,
 } from '../../services/api';
+import { cancelUploadSession } from '../../services/resumableUpload';
+import { removeUploadRecord } from '../../services/uploadPersistence';
 import { TestInfo, UploadItem } from '../../types';
 import { isBusyStatus } from '../../constants/status';
 
@@ -13,6 +15,9 @@ interface Props {
   uploads: UploadItem[];
   onUploadFiles: (files: File[]) => void;
   onDismissUpload: (id: number) => void;
+  onPauseUpload: (id: number) => void;
+  onResumeUpload: (id: number, file?: File) => void;
+  onCancelUpload: (id: number) => void;
   /** Open a ready test in the Analyze tab. */
   onOpenTest: (name: string) => void;
   /** A test was deleted server-side — parent drops caches + refreshes. */
@@ -122,6 +127,9 @@ export default function UploadView({
   uploads,
   onUploadFiles,
   onDismissUpload,
+  onPauseUpload,
+  onResumeUpload,
+  onCancelUpload,
   onOpenTest,
   onTestDeleted,
   onTestsChanged,
@@ -134,9 +142,17 @@ export default function UploadView({
   const [actionError, setActionError] = useState('');
   const [actionNote, setActionNote] = useState('');
 
-  const activeUploads = uploads.filter((u) => !u.error);
-  const failedUploads = uploads.filter((u) => u.error);
-  const uploadByTestName = new Map(activeUploads.map((u) => [u.testName, u]));
+  const activeUploads = uploads.filter((u) => u.phase !== 'error');
+  const failedUploads = uploads.filter(
+    (u) =>
+      u.phase === 'error' &&
+      (!u.sessionId || !tests.some((test) => test.name === u.testName))
+  );
+  const uploadByTestName = new Map(
+    uploads
+      .filter((u) => u.phase !== 'error' || !!u.sessionId)
+      .map((u) => [u.testName, u])
+  );
 
   const rows = useMemo(
     () =>
@@ -159,6 +175,35 @@ export default function UploadView({
       onTestDeleted(name);
     } catch (e) {
       setActionError(`delete '${name}' failed: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setBusyRow(null);
+    }
+  };
+
+  const handleCancelReceiving = async (test: TestInfo) => {
+    if (!test.upload_id) return;
+    if (
+      !confirm(
+        `Cancel incomplete upload '${test.name}'?\n\n` +
+          'Its verified partial data will be permanently removed.'
+      )
+    ) {
+      return;
+    }
+    setBusyRow(test.name);
+    setActionError('');
+    setActionNote('');
+    try {
+      await cancelUploadSession(test.upload_id, test.name);
+      removeUploadRecord(test.upload_id);
+      setActionNote(`${test.name}: incomplete upload canceled`);
+      onTestsChanged();
+    } catch (error) {
+      setActionError(
+        `cancel '${test.name}' failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     } finally {
       setBusyRow(null);
     }
@@ -202,31 +247,111 @@ export default function UploadView({
   /** Progress cell for a server row that has a matching local transfer. */
   const progressCell = (u: UploadItem) => {
     const pct = u.progress === null ? null : Math.round(u.progress * 100);
+    const phase =
+      u.phase === 'retrying'
+        ? `retry ${u.retryAttempt ?? ''}`
+        : u.phase === 'error'
+          ? 'error'
+        : u.phase === 'finalizing'
+          ? 'finalizing…'
+          : u.phase === 'verifying'
+            ? 'verifying…'
+            : u.phase === 'preparing'
+              ? 'preparing…'
+              : u.phase === 'queued'
+                ? 'queued'
+                : u.phase === 'paused'
+                  ? 'paused'
+                  : pct === null
+                    ? 'uploading…'
+                    : `${pct}%`;
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 160 }}>
-        <div
-          style={{
-            flex: 1,
-            height: 6,
-            background: '#3c3c3c',
-            borderRadius: 3,
-            overflow: 'hidden',
-          }}
-        >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 190 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div
-            className={pct === null ? 'upload-pulse' : undefined}
             style={{
-              width: pct === null ? '100%' : `${pct}%`,
-              height: '100%',
-              background: '#569cd6',
-              transition: 'width 0.3s ease',
+              flex: 1,
+              height: 6,
+              background: '#3c3c3c',
+              borderRadius: 3,
+              overflow: 'hidden',
             }}
-          />
+          >
+            <div
+              className={pct === null ? 'upload-pulse' : undefined}
+              style={{
+                width: pct === null ? '100%' : `${pct}%`,
+                height: '100%',
+                background: u.phase === 'paused' ? '#909090' : '#569cd6',
+                transition: 'width 0.2s ease',
+              }}
+            />
+          </div>
+          <span style={{ fontSize: 10, color: '#569cd6', whiteSpace: 'nowrap' }}>
+            {phase}
+          </span>
         </div>
-        <span style={{ fontSize: 10, color: '#569cd6', whiteSpace: 'nowrap' }}>
-          {pct === null ? 'uploading…' : pct >= 100 ? 'finishing…' : `${pct}%`}
+        <span style={{ fontSize: 9, color: '#777', whiteSpace: 'nowrap' }}>
+          {fmtBytes(u.committedBytes)} verified
+          {u.totalBytes ? ` / ${fmtBytes(u.totalBytes)}` : ''}
+          {u.totalChunks ? ` • ${u.completedChunks}/${u.totalChunks} chunks` : ''}
         </span>
       </div>
+    );
+  };
+
+  const uploadActions = (u: UploadItem) => {
+    if (u.phase === 'paused' || u.phase === 'error') {
+      return (
+        <span style={{ display: 'inline-flex', gap: 6 }}>
+          {u.requiresFile ? (
+            <label className="btn" style={{ cursor: 'pointer' }}>
+              Select original CSV
+              <input
+                type="file"
+                accept=".csv"
+                style={{ display: 'none' }}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) onResumeUpload(u.id, file);
+                  event.target.value = '';
+                }}
+              />
+            </label>
+          ) : (
+            <button className="btn" onClick={() => onResumeUpload(u.id)}>
+              {u.phase === 'error' ? 'Retry' : 'Resume'}
+            </button>
+          )}
+          {u.sessionId ? (
+            <button
+              className="btn"
+              style={{ color: '#f48771' }}
+              onClick={() => onCancelUpload(u.id)}
+            >
+              Cancel
+            </button>
+          ) : (
+            <button className="btn" onClick={() => onDismissUpload(u.id)}>
+              Dismiss
+            </button>
+          )}
+        </span>
+      );
+    }
+    return (
+      <span style={{ display: 'inline-flex', gap: 6 }}>
+        <button className="btn" onClick={() => onPauseUpload(u.id)}>
+          Pause
+        </button>
+        <button
+          className="btn"
+          style={{ color: '#f48771' }}
+          onClick={() => onCancelUpload(u.id)}
+        >
+          Cancel
+        </button>
+      </span>
     );
   };
 
@@ -266,7 +391,7 @@ export default function UploadView({
           />
         </div>
 
-        {/* Failed local uploads (never reached the server list) */}
+        {/* Failed transfers remain actionable: retry/resume or cancel server state. */}
         {failedUploads.map((u) => (
           <div
             key={u.id}
@@ -285,13 +410,7 @@ export default function UploadView({
               ✗ {u.fileName}: {u.error}
             </span>
             <span style={{ flex: 1 }} />
-            <button
-              className="btn"
-              style={{ flex: 'none', color: '#f48771' }}
-              onClick={() => onDismissUpload(u.id)}
-            >
-              dismiss
-            </button>
+            {uploadActions(u)}
           </div>
         ))}
 
@@ -390,7 +509,9 @@ export default function UploadView({
                       <td style={tdStyle}>—</td>
                       <td style={tdStyle}>{u.fileName}</td>
                       <td style={tdRight} colSpan={6} />
-                      <td style={tdStyle} />
+                      <td style={{ ...tdStyle, textAlign: 'right' }}>
+                        {uploadActions(u)}
+                      </td>
                     </tr>
                   ))}
                 {rows.map((t) => {
@@ -407,7 +528,11 @@ export default function UploadView({
                             <StatusChip status={t.status} />
                             {t.status === 'receiving' && (
                               <span style={{ fontSize: 10, color: '#909090' }}>
-                                {fmtBytes(t.size_bytes)} received
+                                {fmtBytes(t.received_bytes ?? t.size_bytes)}
+                                {t.total_bytes ? ` / ${fmtBytes(t.total_bytes)}` : ''} received
+                                {t.total_chunks
+                                  ? ` (${t.received_chunks ?? 0}/${t.total_chunks} chunks)`
+                                  : ''}
                               </span>
                             )}
                             {t.status === 'error' && t.error && (
@@ -453,7 +578,18 @@ export default function UploadView({
                       <td style={tdRight}>{t.fs_hz ?? '—'}</td>
                       <td style={tdRight}>{t.ingest_seconds != null ? `${t.ingest_seconds} s` : '—'}</td>
                       <td style={{ ...tdStyle, textAlign: 'right' }}>
+                        {upload ? uploadActions(upload) : (
                         <span style={{ display: 'inline-flex', gap: 6 }}>
+                          {t.status === 'receiving' && t.upload_id && (
+                            <button
+                              className="btn"
+                              disabled={busyRow === t.name}
+                              onClick={() => handleCancelReceiving(t)}
+                              style={{ color: '#f48771' }}
+                            >
+                              {busyRow === t.name ? 'canceling…' : 'Cancel'}
+                            </button>
+                          )}
                           {t.status === 'ready' && (
                             <button className="btn" onClick={() => onOpenTest(t.name)}>
                               Analyze →
@@ -491,6 +627,7 @@ export default function UploadView({
                             </button>
                           )}
                         </span>
+                        )}
                       </td>
                     </tr>
                   );

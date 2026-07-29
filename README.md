@@ -86,6 +86,24 @@ Test data is not stored in git, so a fresh clone starts empty:
 4. The **Edit** tab holds test metadata, column rename/drop, NaN policy,
    trimming, and test rename/delete.
 
+## Uploads
+
+Large CSVs use a resumable multipart protocol. The browser splits each file
+into server-selected 16 MiB chunks, hashes every chunk with SHA-256, and sends
+up to three chunks concurrently. The backend records only verified chunks and
+atomically promotes the completed file to `raw.csv` before ingestion starts.
+
+A transient network failure retries only the affected chunk. Backend restarts
+also preserve valid partial uploads. If the page is refreshed, the browser
+cannot retain access to the local `File`; select the same file again and PTT
+will verify its already-committed chunk hashes before resuming. Canceling an
+upload removes its partial server-side data and releases the test name.
+
+SHA-256 protects against accidental corruption and against resuming with the
+wrong local file. It is not authentication: on an untrusted network, serve PTT
+over HTTPS and add access control at the reverse proxy, because a digest sent
+over the same unauthenticated HTTP connection cannot stop an active attacker.
+
 ## Development
 
 - Backend tests: `backend\.venv\Scripts\pip install -r backend\requirements-dev.txt`

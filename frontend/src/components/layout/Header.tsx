@@ -10,14 +10,32 @@ interface HeaderProps {
   onUploadFiles: (files: File[]) => void;
   uploads: UploadItem[];
   onDismissUpload: (id: number) => void;
+  onPauseUpload: (id: number) => void;
+  onResumeUpload: (id: number) => void;
+  onCancelUpload: (id: number) => void;
   notice?: string;
 }
 
-/** One upload's chip: live progress while sending, sticky red on failure. */
-const UploadChip: React.FC<{ item: UploadItem; onDismiss: () => void }> = ({
-  item,
-  onDismiss,
-}) => {
+const chipButton: React.CSSProperties = {
+  flex: 'none',
+  background: 'none',
+  border: 'none',
+  color: 'inherit',
+  cursor: 'pointer',
+  fontSize: 10,
+  padding: 0,
+  textDecoration: 'underline',
+};
+
+/** One upload's chip: live verified progress plus pause/resume/cancel. */
+const UploadChip: React.FC<{
+  item: UploadItem;
+  onDismiss: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onCancel: () => void;
+  onOpenUploads: () => void;
+}> = ({ item, onDismiss, onPause, onResume, onCancel, onOpenUploads }) => {
   if (item.error) {
     return (
       <span
@@ -25,14 +43,13 @@ const UploadChip: React.FC<{ item: UploadItem; onDismiss: () => void }> = ({
         style={{
           color: '#f48771',
           background: '#4b1d1d',
-          maxWidth: 360,
+          maxWidth: 480,
           display: 'inline-flex',
           alignItems: 'center',
           gap: 6,
         }}
         title={`${item.fileName}: ${item.error}`}
       >
-        {/* text truncates; the dismiss button must never be clipped away */}
         <span
           style={{
             overflow: 'hidden',
@@ -42,39 +59,62 @@ const UploadChip: React.FC<{ item: UploadItem; onDismiss: () => void }> = ({
         >
           ✗ {item.fileName}: {item.error}
         </span>
-        <button
-          onClick={onDismiss}
-          title="dismiss"
-          style={{
-            flex: 'none',
-            background: 'none',
-            border: 'none',
-            color: '#f48771',
-            cursor: 'pointer',
-            fontSize: 11,
-            padding: 0,
-          }}
-        >
-          ✕
-        </button>
+        {item.sessionId ? (
+          <>
+            <button
+              onClick={item.requiresFile ? onOpenUploads : onResume}
+              style={chipButton}
+            >
+              {item.requiresFile ? 'select file' : 'retry'}
+            </button>
+            <button onClick={onCancel} style={chipButton}>cancel</button>
+          </>
+        ) : (
+          <button onClick={onDismiss} title="dismiss" style={chipButton}>×</button>
+        )}
       </span>
     );
   }
-  const pct =
-    item.progress === null
-      ? '…'
-      : item.progress >= 1
-        ? 'finishing…' // body handed to the network; awaiting server response
-        : `${Math.round(item.progress * 100)}%`;
+
+  const pct = item.progress === null ? '…' : `${Math.round(item.progress * 100)}%`;
+  const label =
+    item.phase === 'uploading'
+      ? pct
+      : item.phase === 'retrying'
+        ? `retry ${item.retryAttempt ?? ''}`
+        : item.phase === 'finalizing'
+          ? 'finalizing…'
+          : item.phase === 'verifying'
+            ? 'verifying…'
+            : item.phase === 'preparing'
+              ? 'preparing…'
+              : item.phase === 'queued'
+                ? 'queued'
+                : 'paused';
+
   return (
-    <span className="badge" title={`uploading ${item.fileName}`}>
-      ⬆ {item.fileName} {pct}
+    <span
+      className="badge"
+      title={`${item.fileName}: ${item.completedChunks}/${item.totalChunks || '?'} chunks committed`}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+    >
+      ⬆ {item.fileName} {label}
+      {item.phase === 'paused' ? (
+        <button
+          onClick={item.requiresFile ? onOpenUploads : onResume}
+          style={chipButton}
+        >
+          {item.requiresFile ? 'select file' : 'resume'}
+        </button>
+      ) : (
+        <button onClick={onPause} style={chipButton}>pause</button>
+      )}
+      <button onClick={onCancel} style={chipButton}>cancel</button>
     </span>
   );
 };
 
-/** Top bar: branding, tabs, upload. The active-test picker lives next to the
- *  views that actually need one (mode bar, split/edit toolbars). */
+/** Top bar: branding, tabs, upload, and compact transfer controls. */
 export const Header: React.FC<HeaderProps> = ({
   tests,
   tab,
@@ -82,18 +122,21 @@ export const Header: React.FC<HeaderProps> = ({
   onUploadFiles,
   uploads,
   onDismissUpload,
+  onPauseUpload,
+  onResumeUpload,
+  onCancelUpload,
   notice,
 }) => {
   const fileRef = useRef<HTMLInputElement>(null);
-  // Local uploads already render their own progress chip; the badge only
-  // counts 'receiving' tests streaming in from elsewhere (another window).
-  const localActive = uploads.filter((u) => !u.error).length;
+  // Local active uploads render their own chip; only count transfers received
+  // from another browser/window in the generic status badge.
+  const localActive = uploads.filter((item) => !!item.sessionId).length;
   const receiving = Math.max(
     0,
-    tests.filter((t) => t.status === 'receiving').length - localActive
+    tests.filter((test) => test.status === 'receiving').length - localActive
   );
-  const ingesting = tests.filter((t) => t.status === 'ingesting').length;
-  const rebuilding = tests.filter((t) => t.status === 'rebuilding').length;
+  const ingesting = tests.filter((test) => test.status === 'ingesting').length;
+  const rebuilding = tests.filter((test) => test.status === 'rebuilding').length;
 
   const tabButton = (value: AppTab, label: string) => (
     <button
@@ -132,14 +175,22 @@ export const Header: React.FC<HeaderProps> = ({
         accept=".csv"
         multiple
         style={{ display: 'none' }}
-        onChange={(e) => {
-          const files = Array.from(e.target.files ?? []);
-          if (files.length) onUploadFiles(files);
-          e.target.value = '';
+        onChange={(event) => {
+          const selected = Array.from(event.target.files ?? []);
+          if (selected.length) onUploadFiles(selected);
+          event.target.value = '';
         }}
       />
-      {uploads.map((u) => (
-        <UploadChip key={u.id} item={u} onDismiss={() => onDismissUpload(u.id)} />
+      {uploads.map((item) => (
+        <UploadChip
+          key={item.id}
+          item={item}
+          onDismiss={() => onDismissUpload(item.id)}
+          onPause={() => onPauseUpload(item.id)}
+          onResume={() => onResumeUpload(item.id)}
+          onCancel={() => onCancelUpload(item.id)}
+          onOpenUploads={() => onTabChange('uploads')}
+        />
       ))}
       {receiving > 0 && (
         <span className="badge" title="uploads currently being received">

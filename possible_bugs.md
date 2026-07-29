@@ -6,6 +6,12 @@ work landed. Supersedes the previous version of this file. Items are ordered by
 **decreasing severity within each section**. Nothing has been fixed; this is a findings
 list only. File references are relative to `ptt/`.
 
+> Upload notes in this historical review describe the former single raw-body
+> endpoint. It was replaced on 2026-07-29 by the resumable multipart
+> `/api/uploads` protocol (16 MiB SHA-256 chunks, concurrency three, durable
+> resume/cancel and atomic completion). The old analysis remains here as review
+> history, not as current API documentation.
+
 Resolved since the last review (removed from the lists below):
 - Selected-points bar clipping its own controls (old 1.13) — fixed via `minHeight: 42`.
 - Constant-column Spectrum/XY uPlot RangeError/OOM (old 1.15b) — fixed via `safeRange`
@@ -68,7 +74,8 @@ Resolved since the last review (removed from the lists below):
 
 ### Fixed 2026-07-19 (thirteenth pass — upload hardening + lock-registry eviction — 77/77 pytest, `npm run build` green)
 
-- **4.12:** `/api/tests/upload` now caps the transfer. `config.MAX_UPLOAD_BYTES`
+- **4.12 (historical raw-body implementation; superseded 2026-07-29):**
+  `/api/tests/upload` capped the transfer. `config.MAX_UPLOAD_BYTES`
   (default 20 GB, `KIHA_MAX_UPLOAD_BYTES` override) is checked against the declared
   `content-length` BEFORE the dir is reserved (an over-cap upload 413s without
   writing a byte or creating a dir) and again against the running byte count while
@@ -945,5 +952,7 @@ prevented bug 1.15, where `TimePlot`'s hand-rolled copy forgot the eligibility f
   — every phase already does it by hand.
 - **WebSocket or SSE status channel** to replace the 2 s poll (removes 2.9 and makes the
   Uploads page truly live).
-- **Upload hardening**: size cap + first-KB content sniff (4.12), and chunked/resumable
-  uploads for multi-GB files over flaky links.
+- **Resumable upload hardening — DONE 2026-07-29**: the replacement protocol
+  retains the complete-file cap/content sniff and adds bounded multipart
+  requests, per-chunk SHA-256, idempotent retry, restart resume, cancellation,
+  stale cleanup, disk reserve, and atomic publication of `raw.csv`.

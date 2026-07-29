@@ -140,5 +140,6 @@ The `dead`-flag + AbortController + 100 ms timer + `tpFingerprint` + per-TP
 **Infrastructure:**
 - CI (see 4.1); codify the headless-Edge check as a Playwright smoke test.
 - WebSocket/SSE status channel to replace the 2 s poll (removes 2.9).
-- Upload hardening: size cap + first-KB content sniff (4.12); chunked/resumable
-  uploads for multi-GB files over flaky links.
+- Resumable multipart uploads — **DONE 2026-07-29**: 16 MiB SHA-256-verified
+  chunks, three concurrent requests, durable restart recovery, retry/resume,
+  explicit cancel, atomic completion, and whole-file/request/disk guards.

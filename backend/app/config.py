@@ -60,3 +60,36 @@ MAX_FILTER_SAMPLES = 8_000_000     # reject filter/spectrum requests over larger
 MAX_UPLOAD_BYTES = int(os.environ.get("KIHA_MAX_UPLOAD_BYTES", 20 * 1024**3))
 # Bytes of the first chunk inspected for binary content (a NUL byte -> not CSV).
 UPLOAD_SNIFF_BYTES = 8192
+
+# Resumable browser uploads.  A 16 MiB part is large enough to avoid
+# request/latency overhead on the heliweb LAN while keeping retries cheap and
+# bounding Starlette's temporary multipart spool.  The server advertises the
+# value during initiation; clients must never assume it.
+UPLOAD_CHUNK_BYTES = int(
+    os.environ.get("KIHA_UPLOAD_CHUNK_BYTES", 16 * 1024**2))
+# Multipart framing is tiny in normal requests.  This allowance is enforced by
+# an ASGI receive wrapper *before* form parsing, so a malformed request cannot
+# make Starlette spool an unbounded file part.
+UPLOAD_MULTIPART_OVERHEAD_BYTES = int(
+    os.environ.get("KIHA_UPLOAD_MULTIPART_OVERHEAD_BYTES", 1024**2))
+# Incomplete sessions survive restarts and normal disconnects.  They are
+# permanently cleaned after this age on startup or the next initiation.
+UPLOAD_STALE_AGE_S = int(
+    os.environ.get("KIHA_UPLOAD_STALE_AGE_S", 7 * 24 * 3600))
+# Advisory headroom kept free when reserving a new upload.  ENOSPC is still
+# handled during each commit because filesystem usage can change afterward.
+UPLOAD_DISK_RESERVE_BYTES = int(
+    os.environ.get("KIHA_UPLOAD_DISK_RESERVE_BYTES", 1024**3))
+
+if UPLOAD_CHUNK_BYTES <= 0:
+    raise ValueError("KIHA_UPLOAD_CHUNK_BYTES must be greater than zero")
+if UPLOAD_CHUNK_BYTES > 64 * 1024**2:
+    raise ValueError(
+        "KIHA_UPLOAD_CHUNK_BYTES cannot exceed 67108864 (64 MiB)")
+if UPLOAD_MULTIPART_OVERHEAD_BYTES < 64 * 1024:
+    raise ValueError(
+        "KIHA_UPLOAD_MULTIPART_OVERHEAD_BYTES must be at least 65536")
+if UPLOAD_STALE_AGE_S <= 0:
+    raise ValueError("KIHA_UPLOAD_STALE_AGE_S must be greater than zero")
+if UPLOAD_DISK_RESERVE_BYTES < 0:
+    raise ValueError("KIHA_UPLOAD_DISK_RESERVE_BYTES cannot be negative")

@@ -56,8 +56,8 @@ gotchas), not human onboarding.
 - Frontend dev: `cd frontend && npm run dev` (port 3000)
 - Both, minimized with auto-restart: `start.bat` / `stop.bat`
 - Test data: generate via `python ..\other_small_project\generate_dummy_data.py
-  --duration 60 --name demo_60s` (CSV lands in dummy_data/), upload via
-  `POST /api/tests/upload`.
+  --duration 60 --name demo_60s` (CSV lands in dummy_data/), then upload through
+  the UI or the resumable `/api/uploads` protocol documented under API gotchas.
 
 ## Plan status
 
@@ -146,16 +146,16 @@ gotchas), not human onboarding.
       (rebuild/rename/delete/split-save paths). SplitPlot data trace is
       colorFor(i+1) (orange first) so it can't melt into the blue TP
       region overlays.
-- [x] Upload overhaul (2026-07-16, user bug report: "upload silently does
+- [x] Upload overhaul (2026-07-16, historical implementation superseded by the
+      2026-07-29 resumable protocol below; user bug report: "upload silently does
       nothing / ingest starts minutes later") — root causes: (a) multipart
       spooling hid the whole transfer from UI and logs, (b) the 6 s notice
       auto-clear erased "uploading…" mid-flight, (c) Node requestTimeout
-      killed >5 min uploads. Now: raw-body streaming endpoint writes
-      status 'receiving' the moment headers arrive and logs
-      receive/ingest start+finish; client disconnect / truncation
-      discards the partial test dir (retry-safe); delete/rename/restart-
-      recovery treat 'receiving' like 'ingesting'. Frontend: XHR upload
-      with per-file header chips (live %, sticky dismissible error chips
+      killed >5 min uploads. That superseded version used a raw-body streaming
+      endpoint which wrote status 'receiving' when headers arrived and logged
+      receive/ingest start+finish; client disconnect / truncation discarded
+      the partial test dir. Its frontend used XHR upload with per-file header
+      chips (live %, sticky dismissible error chips
       — error text truncates but the ✕ never clips), duplicate names
       pre-checked before sending bytes, names sanitized to the backend
       charset, poller runs during uploads so the 'receiving' row shows
@@ -165,6 +165,19 @@ gotchas), not human onboarding.
       pytest. Playwright drop gotcha: dispatch DragEvent on a node INSIDE
       #root — body is the root's parent, React never sees events
       dispatched there.
+- [x] Resumable multipart uploads (2026-07-29) — replaced the single raw-body
+      request with durable sessions and server-selected 16 MiB chunks. The
+      frontend SHA-256 hashes each chunk and sends three multipart requests in
+      parallel; exact retries are idempotent and only verified chunks count
+      toward progress. `POST /api/uploads` reserves a name, GET resumes,
+      PUT `/chunks/{index}` commits one chunk, POST `/complete` atomically
+      promotes `.upload/raw.csv.uploading` to `raw.csv`, and DELETE cancels.
+      Valid `receiving` manifests survive backend restarts; seven-day stale
+      sessions are recoverable/cleanable. Browser resume metadata lives in
+      localStorage, but a refresh loses the `File` permission: the user must
+      reselect the file, after which every already-committed local chunk hash
+      is checked before it is skipped. Completed storage and ingestion remain
+      unchanged.
 - [x] Overlap clustering revived (2026-07-16, user request: "can't see if two
       points are on top of each other") — the forked FMS cluster machinery
       (pointClustering.ts, ClusterDot, cluster->PointSelectionMenu) was wired
@@ -324,10 +337,9 @@ gotchas), not human onboarding.
       edited_at/ingest_seconds/size_bytes — created_at falls back to dir
       birthtime for receiving/error tests without meta.json (same UTC ISO
       format, so lexicographic sort stays chronological), size_bytes grows
-      live during 'receiving' (shown as "N MB received"). Upload endpoint
-      takes ?source= (original client file name — raw-body uploads land in
-      raw.csv, which would otherwise be recorded as the source); uploadTest
-      sends it. UploadItem gained testName so the page merges a local
+      live during 'receiving' (shown as "N MB received"). Upload initiation
+      records `source_file` in its JSON session metadata before any chunks are
+      sent. UploadItem gained testName so the page merges a local
       in-flight transfer (progress bar row) with the server's 'receiving'
       row instead of showing both. App: poller also runs while the Uploads
       tab is open (live status is the page's point); tab renders without
@@ -414,8 +426,8 @@ gotchas), not human onboarding.
       UI prefs, no API). Preferred scatter X/Y, per-SLOT grid columns
       (positional, 9 selects — the plotted/Y variable in every view mode),
       per-SLOT XY pairs (see 5), default view mode / spectrum estimator /
-      logY / clustering, upload fallback fs (sent as ?fs=, only used for
-      unusable time columns; uploadTest gained the param). Edits accumulate
+      logY / clustering, upload fallback fs (stored in the upload-init JSON,
+      only used for unusable time columns). Edits accumulate
       in a DRAFT (App.settingsDraft — hoisted so tab switches keep it;
       "unsaved changes" badge) and take effect ONLY via Save:
       App.handleSettingsSave persists then DIFFS old vs new and applies just
@@ -465,20 +477,38 @@ gotchas), not human onboarding.
 
 ## API gotchas (learned during Phase 0 verification)
 
-- POST /api/tests/upload takes the CSV as the RAW request body (`?name=`
-  required) — NOT multipart. Multipart made starlette spool the whole body
-  to a temp file before the endpoint ran: minutes of dead air for GB files
-  (no status.json, no log, and the 6 s notice auto-clear made the UI look
-  idle — the original "upload does nothing" bug). Status lifecycle:
-  receiving -> ingesting -> ready|error; aborted/truncated transfers
-  self-discard so a retry never 409s. Gotcha: an early 4xx (duplicate/bad
-  name) closes the connection before the body is read, which XHR reports
-  as an opaque network error — that's why App.handleUploadFiles pre-checks
-  duplicates against /api/tests BEFORE sending any bytes.
-- Node's HTTP server kills request bodies slower than 5 min
-  (requestTimeout=300 s default) — the vite plugin 'ptt:unlimited-upload-
-  time' (vite.config.ts) sets it to 0 on dev+preview servers or multi-GB
-  uploads through the proxy die mid-transfer with no trace anywhere.
+- Upload is a five-route resumable protocol:
+  `POST /api/uploads` initializes from
+  `{name,source_file,size_bytes,last_modified_ms,fs_hz}`;
+  `GET /api/uploads/{id}?name=...` reports durable chunks;
+  `PUT /api/uploads/{id}/chunks/{index}?name=...` accepts exactly one
+  multipart `file` plus `X-Chunk-SHA256`;
+  `POST /api/uploads/{id}/complete?name=...` atomically publishes `raw.csv`
+  and schedules ingest; `DELETE /api/uploads/{id}?name=...` removes only the
+  matching receiving/failed session (never ingesting/ready). The server derives
+  offsets and exact lengths;
+  never trust a client-provided offset. Defaults are 16 MiB chunks and three
+  concurrent browser requests. Lifecycle remains
+  receiving -> ingesting -> ready|error.
+- A chunk is committed in this order: validate size/hash, write its
+  server-derived range, flush+fsync, atomically persist commit metadata. Exact
+  retries return the existing commit; conflicting retries 409. Completion
+  requires every expected range and atomically renames the partial file, so
+  ingest never observes holes or an unfinished CSV.
+- A backend restart preserves a valid `receiving` manifest. A browser refresh
+  preserves only localStorage metadata, not the local `File`; require the user
+  to reselect it and verify hashes of every committed local chunk before
+  skipping bytes. Cancel if the original file is unavailable.
+- Upload limits are `KIHA_MAX_UPLOAD_BYTES` for the complete file and
+  `KIHA_UPLOAD_CHUNK_BYTES + KIHA_UPLOAD_MULTIPART_OVERHEAD_BYTES` for one
+  multipart request. `KIHA_UPLOAD_STALE_AGE_S` defaults to seven days and
+  `KIHA_UPLOAD_DISK_RESERVE_BYTES` defaults to 1 GiB. Keep these synchronized
+  with nginx's `client_max_body_size`.
+- Node's HTTP server normally kills request bodies slower than 5 min
+  (`requestTimeout=300 s` default). The vite plugin
+  `ptt:unlimited-upload-time` sets it to 0 on dev+preview servers. Requests are
+  now bounded chunks rather than a whole multi-GB body, but retaining the
+  override protects very slow development links.
 - kiha.* loggers only print because run.py calls logging.basicConfig —
   uvicorn's dictConfig wires only its own uvicorn.* loggers, and bare
   INFO records are otherwise dropped silently (logging.lastResort is

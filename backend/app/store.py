@@ -28,7 +28,9 @@ def list_tests() -> list[dict]:
             continue
         status = _read_json(d / "status.json") or {"status": "unknown"}
         meta = _read_json(d / "meta.json") or {}
-        out.append({"name": d.name, "status": status.get("status"),
+        lifecycle = status.get("status")
+        receiving_bytes = status.get("received_bytes")
+        out.append({"name": d.name, "status": lifecycle,
                     "error": status.get("error"),
                     "n_rows": meta.get("n_rows"), "fs_hz": meta.get("fs_hz"),
                     "duration_s": meta.get("duration_s"),
@@ -36,11 +38,25 @@ def list_tests() -> list[dict]:
                     # Upload-history fields.  created_at falls back to the
                     # directory creation time so receiving/ingesting/failed
                     # tests (no meta.json yet) still sort chronologically.
-                    "source_file": meta.get("source_file"),
+                    "source_file": (meta.get("source_file")
+                                    or status.get("source_file")),
                     "created_at": meta.get("created_at") or _dir_created_at(d),
                     "edited_at": meta.get("edited_at"),
                     "ingest_seconds": meta.get("ingest_seconds"),
-                    "size_bytes": _cached_dir_size(d, status.get("status"))})
+                    # A random-access staging file can be sparse and its
+                    # logical st_size can jump ahead of durable progress.
+                    # Receiving progress therefore comes only from committed
+                    # chunk receipts published in status.json.
+                    "size_bytes": (
+                        int(receiving_bytes)
+                        if lifecycle == "receiving"
+                        and isinstance(receiving_bytes, int)
+                        else _cached_dir_size(d, lifecycle)),
+                    "upload_id": status.get("upload_id"),
+                    "received_bytes": status.get("received_bytes"),
+                    "total_bytes": status.get("total_bytes"),
+                    "received_chunks": status.get("received_chunks"),
+                    "total_chunks": status.get("total_chunks")})
     return out
 
 

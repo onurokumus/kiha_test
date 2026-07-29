@@ -25,9 +25,15 @@ INGEST_LIKE = ("receiving", "ingesting")
 BUSY_STATUSES = ("receiving", "ingesting", "rebuilding")
 
 
-def write_status(test_dir: Path, status: str, error: str = "") -> None:
-    """Atomically publish a test's status.json (status + optional error)."""
-    payload = {"status": status}
+def write_status(test_dir: Path, status: str, error: str = "",
+                 **details) -> None:
+    """Atomically publish lifecycle state and optional upload progress.
+
+    ``details`` keeps receiving-session metadata in the same atomically
+    readable document as the status.  Existing ingestion/edit callers do not
+    pass it, so ready/error/rebuilding documents retain their compact shape.
+    """
+    payload = {"status": status, **details}
     if error:
         payload["error"] = error
     write_json_atomic(test_dir / "status.json", payload)

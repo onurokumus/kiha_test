@@ -13,13 +13,13 @@ import { useTestPointSelection } from './hooks/useTestPointSelection';
 import { useScatterFilter } from './hooks/useScatterFilter';
 import { useMainPlotZoom } from './hooks/useMainPlotZoom';
 import { useTimeZoom } from './hooks/useTimeZoom';
+import { useUploadManager } from './hooks/useUploadManager';
 import {
   fetchTests,
   fetchMeta,
   fetchTestPoints,
   fetchTpStats,
   fetchTestPointTrace,
-  uploadTest,
 } from './services/api';
 import { noSelect } from './constants/styles';
 import { DEFAULT_FILTER_UI, FilterUi, buildFilterSpec } from './constants/filters';
@@ -37,7 +37,6 @@ import {
   TestMeta,
   TestPoint,
   TpStat,
-  UploadItem,
 } from './types';
 import './App.css';
 
@@ -134,10 +133,19 @@ function App() {
   const [xyXCols, setXYXCols] = useState<string[]>([]);
   const [tab, setTab] = useState<AppTab>('analyze');
   const [notice, setNotice] = useState('');
-  // In-flight/failed uploads as persistent header chips — the transient
-  // notice auto-clears after 6 s, which must never hide a running upload.
-  const [uploads, setUploads] = useState<UploadItem[]>([]);
-  const uploadSeq = useRef(0);
+  const {
+    uploads,
+    startUploads: handleUploadFiles,
+    pauseUpload,
+    resumeUpload,
+    cancelUpload,
+    dismissUpload,
+  } = useUploadManager({
+    tests,
+    fsHz: parseUploadFs(settings),
+    onTestsChanged: setTests,
+    onNotice: setNotice,
+  });
   const [isDragging, setIsDragging] = useState(false);
   const dragDepth = useRef(0);
   // Set while an /edit rebuild runs; the poller reloads the test when ready.
@@ -431,7 +439,9 @@ function App() {
   // Uploads page is open (its whole point is live status); auto-select the
   // first ready test if none is selected, and reload the current test when
   // its rebuild completes.
-  const uploadsActive = uploads.some((u) => !u.error);
+  const uploadsActive = uploads.some(
+    (u) => u.phase !== 'paused' && u.phase !== 'error'
+  );
   useEffect(() => {
     const busy = tests.some((t) => isBusyStatus(t.status));
     // uploadsActive: while a body is still streaming up, the new test only
@@ -472,74 +482,6 @@ function App() {
     const id = window.setTimeout(() => setNotice(''), 6000);
     return () => window.clearTimeout(id);
   }, [notice]);
-
-  const handleUploadFiles = useCallback(async (files: File[]) => {
-    // Duplicate names must be caught BEFORE any bytes are sent: the backend
-    // 409s without reading the body, which aborts the connection mid-stream
-    // and surfaces to XHR as an opaque "network error" (and would waste a
-    // multi-GB transfer). The backend check stays authoritative for races.
-    let existing: Set<string>;
-    try {
-      existing = new Set((await fetchTests()).map((t) => t.name));
-    } catch {
-      existing = new Set(tests.map((t) => t.name));
-    }
-    for (const f of files) {
-      if (!f.name.toLowerCase().endsWith('.csv')) {
-        setNotice(`${f.name}: only .csv files can be uploaded`);
-        continue;
-      }
-      // Backend test names allow [A-Za-z0-9._-] only; sanitize instead of
-      // letting "my test (1).csv" die with a 400 the user may never read.
-      const testName = f.name
-        .replace(/\.[^.]+$/, '')
-        .replace(/[^A-Za-z0-9._-]+/g, '_');
-      const id = ++uploadSeq.current;
-      if (existing.has(testName)) {
-        setUploads((prev) => [
-          ...prev,
-          {
-            id,
-            fileName: f.name,
-            testName,
-            progress: 0,
-            error: `test '${testName}' already exists — delete or rename it first`,
-          },
-        ]);
-        continue;
-      }
-      existing.add(testName);
-      setUploads((prev) => [...prev, { id, fileName: f.name, testName, progress: 0 }]);
-      try {
-        const res = await uploadTest(
-          f,
-          testName,
-          (fraction) =>
-            setUploads((prev) =>
-              prev.map((u) => (u.id === id ? { ...u, progress: fraction } : u))
-            ),
-          parseUploadFs(settings) // fallback rate, only used for bad time columns
-        );
-        setUploads((prev) => prev.filter((u) => u.id !== id));
-        setNotice(`${res.name}: upload complete, ingesting…`);
-      } catch (e) {
-        // Keep the chip (with the reason) until the user dismisses it.
-        const message = e instanceof Error ? e.message : String(e);
-        setUploads((prev) =>
-          prev.map((u) => (u.id === id ? { ...u, error: message } : u))
-        );
-      }
-      try {
-        setTests(await fetchTests());
-      } catch {
-        // list refresh failure is non-fatal; polling will catch up
-      }
-    }
-  }, [tests, settings]);
-
-  const dismissUpload = useCallback((id: number) => {
-    setUploads((prev) => prev.filter((u) => u.id !== id));
-  }, []);
 
   // Settings page SAVE: persist the draft and apply exactly the fields that
   // changed (an untouched field must not disturb the session — e.g. re-saving
@@ -912,6 +854,9 @@ function App() {
       uploads={uploads}
       onUploadFiles={handleUploadFiles}
       onDismissUpload={dismissUpload}
+      onPauseUpload={pauseUpload}
+      onResumeUpload={resumeUpload}
+      onCancelUpload={cancelUpload}
       onOpenTest={handleOpenTest}
       onTestDeleted={handleTestDeleted}
       onTestsChanged={handleTestsChanged}
@@ -1033,6 +978,9 @@ function App() {
           onUploadFiles={handleUploadFiles}
           uploads={uploads}
           onDismissUpload={dismissUpload}
+          onPauseUpload={pauseUpload}
+          onResumeUpload={resumeUpload}
+          onCancelUpload={cancelUpload}
           notice={notice}
         />
         {tab === 'uploads' ? (
@@ -1075,6 +1023,9 @@ function App() {
         onUploadFiles={handleUploadFiles}
         uploads={uploads}
         onDismissUpload={dismissUpload}
+        onPauseUpload={pauseUpload}
+        onResumeUpload={resumeUpload}
+        onCancelUpload={cancelUpload}
         notice={notice}
       />
 
