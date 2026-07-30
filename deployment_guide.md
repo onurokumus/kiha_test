@@ -5,11 +5,12 @@ This guide targets the current production host and layout:
 - host: `heliweb1`
 - application URL: `http://heliweb1/ptt/`
 - checkout: `/progs2/ptt`
-- service account: `t21485srv`
+- service account and checkout owner: `ptt:ptt`
 - backend service: `ptt-backend.service`
 
-Substitute the service account only if ownership on the target server differs;
-the checkout path and hostname should stay consistent throughout the guide.
+The interactive SSH/admin account may be `t21485srv`, but it must not own or
+run the application. Use `sudo` from that account for the privileged commands
+below and `sudo -u ptt` for checkout-owned commands.
 
 Production runs **one** uvicorn process (via systemd) on `127.0.0.1:8000`,
 with nginx serving the built frontend at `http://heliweb1/ptt/` and proxying
@@ -28,27 +29,28 @@ CORS is not involved in normal production traffic. Node is only needed at
 sudo apt update && sudo apt install -y git nginx python3.11 python3.11-venv
 # Node 18+: fine from apt on Ubuntu 24.04; on older distros use nvm/NodeSource.
 
-# t21485srv already exists on heliweb1. For a clean installation, ensure the
-# target is empty and owned by that unprivileged account.
-sudo install -d -o t21485srv /progs2/ptt
-sudo -u t21485srv git clone https://github.com/onurokumus/kiha_test.git /progs2/ptt
+# On a clean server, create the unprivileged service account if it does not
+# already exist. Skip useradd when `id ptt` already succeeds.
+sudo useradd -r -M -d /progs2/ptt -s /usr/sbin/nologin ptt
+sudo install -d -o ptt -g ptt /progs2/ptt
+sudo -u ptt git clone https://github.com/onurokumus/kiha_test.git /progs2/ptt
 
 # backend venv — python3.11 executable explicitly
 cd /progs2/ptt/backend
-sudo -u t21485srv python3.11 -m venv .venv
-sudo -u t21485srv .venv/bin/pip install -r requirements.txt
+sudo -u ptt python3.11 -m venv .venv
+sudo -u ptt .venv/bin/pip install -r requirements.txt
 
 # one-time sanity check
-sudo -u t21485srv .venv/bin/pip install -r requirements-dev.txt
-sudo -u t21485srv .venv/bin/python -m pytest tests
+sudo -u ptt .venv/bin/pip install -r requirements-dev.txt
+sudo -u ptt .venv/bin/python -m pytest tests
 
 # Build into an immutable release directory, then publish it with one symlink.
 cd /progs2/ptt/frontend
-sudo -u t21485srv npm ci
-sudo install -d -o t21485srv /progs2/ptt-releases
-PTT_RELEASE=$(date -u +%Y%m%dT%H%M%SZ)-$(sudo -u t21485srv git -C /progs2/ptt rev-parse --short=12 HEAD)
+sudo -u ptt npm ci
+sudo install -d -o ptt -g ptt /progs2/ptt-releases
+PTT_RELEASE=$(date -u +%Y%m%dT%H%M%SZ)-$(sudo -u ptt git -C /progs2/ptt rev-parse --short=12 HEAD)
 test ! -e /progs2/ptt-releases/$PTT_RELEASE
-sudo -u t21485srv npm run build -- --outDir /progs2/ptt-releases/$PTT_RELEASE --emptyOutDir
+sudo -u ptt npm run build -- --outDir /progs2/ptt-releases/$PTT_RELEASE --emptyOutDir
 test -f /progs2/ptt-releases/$PTT_RELEASE/index.html
 
 # Expose that build under the existing heliweb1 document root. If heliweb1 uses
@@ -69,7 +71,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=t21485srv
+User=ptt
 WorkingDirectory=/progs2/ptt/backend
 ExecStart=/progs2/ptt/backend/.venv/bin/python run.py
 Restart=always
@@ -225,16 +227,16 @@ GitHub.
 ```bash
 set -euo pipefail
 cd /progs2/ptt
-if [ -n "$(sudo -u t21485srv git status --porcelain)" ]
+if [ -n "$(sudo -u ptt git status --porcelain)" ]
 then
     echo "STOP: /progs2/ptt has local changes"
     exit 1
 fi
-sudo -u t21485srv git ls-remote --exit-code --heads origin feature/resumable-multipart-upload
-sudo -u t21485srv git fetch origin
-sudo -u t21485srv git switch feature/resumable-multipart-upload
-sudo -u t21485srv git pull --ff-only origin feature/resumable-multipart-upload
-sudo -u t21485srv git rev-parse HEAD
+sudo -u ptt git ls-remote --exit-code --heads origin feature/resumable-multipart-upload
+sudo -u ptt git fetch origin
+sudo -u ptt git switch feature/resumable-multipart-upload
+sudo -u ptt git pull --ff-only origin feature/resumable-multipart-upload
+sudo -u ptt git rev-parse HEAD
 ```
 
 Install dependencies and build the new frontend into a versioned staging
@@ -244,13 +246,13 @@ directories outside the checkout also keeps `git status` clean.
 ```bash
 set -euo pipefail
 cd /progs2/ptt
-sudo -u t21485srv backend/.venv/bin/pip install -r backend/requirements.txt
-sudo install -d -o t21485srv /progs2/ptt-releases
-PTT_RELEASE=$(date -u +%Y%m%dT%H%M%SZ)-$(sudo -u t21485srv git -C /progs2/ptt rev-parse --short=12 HEAD)
+sudo -u ptt backend/.venv/bin/pip install -r backend/requirements.txt
+sudo install -d -o ptt -g ptt /progs2/ptt-releases
+PTT_RELEASE=$(date -u +%Y%m%dT%H%M%SZ)-$(sudo -u ptt git -C /progs2/ptt rev-parse --short=12 HEAD)
 test ! -e /progs2/ptt-releases/$PTT_RELEASE
 cd /progs2/ptt/frontend
-sudo -u t21485srv npm ci
-sudo -u t21485srv npm run build -- --outDir /progs2/ptt-releases/$PTT_RELEASE --emptyOutDir
+sudo -u ptt npm ci
+sudo -u ptt npm run build -- --outDir /progs2/ptt-releases/$PTT_RELEASE --emptyOutDir
 test -f /progs2/ptt-releases/$PTT_RELEASE/index.html
 printf '%s\n' "$PTT_RELEASE" | sudo tee /run/ptt-candidate-release >/dev/null
 ```
@@ -331,20 +333,20 @@ verify the backend, then atomically publish the frontend.
 ```bash
 set -euo pipefail
 cd /progs2/ptt
-if [ -n "$(sudo -u t21485srv git status --porcelain)" ]
+if [ -n "$(sudo -u ptt git status --porcelain)" ]
 then
     echo "STOP: /progs2/ptt has local changes"
     exit 1
 fi
-sudo -u t21485srv git switch main
-sudo -u t21485srv git pull --ff-only origin main
-sudo -u t21485srv backend/.venv/bin/pip install -r backend/requirements.txt
-sudo install -d -o t21485srv /progs2/ptt-releases
-PTT_RELEASE=$(date -u +%Y%m%dT%H%M%SZ)-$(sudo -u t21485srv git -C /progs2/ptt rev-parse --short=12 HEAD)
+sudo -u ptt git switch main
+sudo -u ptt git pull --ff-only origin main
+sudo -u ptt backend/.venv/bin/pip install -r backend/requirements.txt
+sudo install -d -o ptt -g ptt /progs2/ptt-releases
+PTT_RELEASE=$(date -u +%Y%m%dT%H%M%SZ)-$(sudo -u ptt git -C /progs2/ptt rev-parse --short=12 HEAD)
 test ! -e /progs2/ptt-releases/$PTT_RELEASE
 cd /progs2/ptt/frontend
-sudo -u t21485srv npm ci
-sudo -u t21485srv npm run build -- --outDir /progs2/ptt-releases/$PTT_RELEASE --emptyOutDir
+sudo -u ptt npm ci
+sudo -u ptt npm run build -- --outDir /progs2/ptt-releases/$PTT_RELEASE --emptyOutDir
 test -f /progs2/ptt-releases/$PTT_RELEASE/index.html
 printf '%s\n' "$PTT_RELEASE" | sudo tee /run/ptt-candidate-release >/dev/null
 ```
@@ -394,21 +396,21 @@ block for a pre-resumable rollback: that block intentionally requires the new
 ```bash
 set -euo pipefail
 cd /progs2/ptt
-if [ -n "$(sudo -u t21485srv git status --porcelain)" ]
+if [ -n "$(sudo -u ptt git status --porcelain)" ]
 then
     echo "STOP: /progs2/ptt has local changes"
     exit 1
 fi
 sudo systemctl stop ptt-backend
-sudo -u t21485srv git switch main
-sudo -u t21485srv git pull --ff-only origin main
-sudo -u t21485srv backend/.venv/bin/pip install -r backend/requirements.txt
-sudo install -d -o t21485srv /progs2/ptt-releases
-PTT_RELEASE=$(date -u +%Y%m%dT%H%M%SZ)-$(sudo -u t21485srv git -C /progs2/ptt rev-parse --short=12 HEAD)
+sudo -u ptt git switch main
+sudo -u ptt git pull --ff-only origin main
+sudo -u ptt backend/.venv/bin/pip install -r backend/requirements.txt
+sudo install -d -o ptt -g ptt /progs2/ptt-releases
+PTT_RELEASE=$(date -u +%Y%m%dT%H%M%SZ)-$(sudo -u ptt git -C /progs2/ptt rev-parse --short=12 HEAD)
 test ! -e /progs2/ptt-releases/$PTT_RELEASE
 cd /progs2/ptt/frontend
-sudo -u t21485srv npm ci
-sudo -u t21485srv npm run build -- --outDir /progs2/ptt-releases/$PTT_RELEASE --emptyOutDir
+sudo -u ptt npm ci
+sudo -u ptt npm run build -- --outDir /progs2/ptt-releases/$PTT_RELEASE --emptyOutDir
 test -f /progs2/ptt-releases/$PTT_RELEASE/index.html
 sudo systemctl start ptt-backend
 curl --fail http://127.0.0.1:8000/api/health
@@ -434,7 +436,7 @@ Hard-refresh or close every PTT tab after the rollback build as well.
   event loop and 4 concurrent native reads.
 - `start.sh` / `stop.sh` are for ad-hoc dev runs, not servers: no auto-restart,
   localhost-only vite dev server. systemd + nginx above replace them.
-- Run checkout-owned `git`, Python/pip, and npm commands as `t21485srv`, as
+- Run checkout-owned `git`, Python/pip, and npm commands as `ptt`, as
   shown above. Running them as root can leave root-owned caches, bytecode, or
   dependencies behind and later cause `Permission denied` errors.
 - Backend binds `127.0.0.1` on purpose — only nginx is exposed. Don't set
