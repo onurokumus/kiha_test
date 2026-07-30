@@ -28,8 +28,8 @@ export interface AppSettings {
   specLogY: boolean;
   /** Scatter overlap-clustering on load. */
   clustering: boolean;
-  /** Assumed sample rate sent as ?fs= on upload — ONLY used when the CSV's
-   *  time column is unusable and the backend must generate a uniform axis.
+  /** Default shown in per-upload time setup. Auto/column modes use it only
+   *  when the source clock is unusable; generated mode makes it authoritative.
    *  Raw string ('' = backend default, 2048 Hz); parsed at upload time. */
   uploadFsHz: string;
 }

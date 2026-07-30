@@ -23,6 +23,9 @@ export interface UploadSession {
   source_file: string;
   size_bytes: number;
   last_modified_ms: number;
+  fs_hz?: number | null;
+  time_mode?: UploadTimeMode;
+  time_column?: string | null;
   chunk_size: number;
   total_chunks: number;
   state: string;
@@ -31,12 +34,25 @@ export interface UploadSession {
   chunks: UploadSessionChunk[];
 }
 
+export type UploadTimeMode = 'auto' | 'column' | 'generated';
+
+/** Immutable data interpretation selected before any bytes are uploaded. */
+export interface UploadDataOptions {
+  /** Auto/column: fallback rate. Generated: authoritative sample rate. */
+  fsHz?: number;
+  timeMode?: UploadTimeMode;
+  /** Existing source column in column mode; output column in generated mode. */
+  timeColumn?: string;
+}
+
 export interface UploadInit {
   name: string;
   source_file: string;
   size_bytes: number;
   last_modified_ms: number;
   fs_hz?: number;
+  time_mode?: UploadTimeMode;
+  time_column?: string;
 }
 
 export interface UploadProgress {
@@ -445,7 +461,10 @@ export async function runResumableUpload(
       session.name !== init.name ||
       session.source_file !== init.source_file ||
       session.size_bytes !== init.size_bytes ||
-      session.last_modified_ms !== init.last_modified_ms
+      session.last_modified_ms !== init.last_modified_ms ||
+      (session.fs_hz ?? undefined) !== init.fs_hz ||
+      (session.time_mode ?? 'auto') !== (init.time_mode ?? 'auto') ||
+      (session.time_column ?? undefined) !== init.time_column
     ) {
       throw new Error('server resumed a session for a different local file');
     }

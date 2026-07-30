@@ -21,6 +21,7 @@ from pathlib import Path
 import polars as pl
 import pyarrow.parquet as pq
 
+from . import formula
 from .config import ROW_GROUP_SIZE, TESTS_DIR
 from .ingest import build_pyramid
 from .locks import test_write
@@ -28,6 +29,31 @@ from .status import write_status
 from .store import write_json_atomic
 
 NAN_POLICIES = ("keep_gaps", "zero_fill", "interpolate")
+
+
+def _updated_gap_ranges(
+    meta: dict,
+    fs: float,
+    new_t_start: float,
+    n_rows: int,
+    policy: str | None,
+) -> list[list[int]]:
+    """Shift imported gap ranges after a trim, or clear them after filling."""
+    if policy and policy != "keep_gaps":
+        return []
+    old_t_start = float(meta.get("t_start") or 0.0)
+    offset = max(0, int(round((new_t_start - old_t_start) * fs)))
+    source_end = offset + n_rows
+    shifted: list[list[int]] = []
+    for value in meta.get("time_gap_ranges") or []:
+        if (not isinstance(value, list) or len(value) != 2
+                or not all(isinstance(item, int) for item in value)):
+            continue
+        start = max(offset, value[0])
+        end = min(source_end, value[1])
+        if start < end:
+            shifted.append([start - offset, end - offset])
+    return shifted
 
 
 def rebuild_test(name: str, ops: dict) -> None:
@@ -80,9 +106,26 @@ def _rebuild(name: str, ops: dict) -> None:
         trim_t0 = ops.get("trim_t0")
         trim_t1 = ops.get("trim_t1")
         policy = ops.get("nan_policy")
+        formula_specs: list = ops.get("formulas") or []
+
+        if formula_specs and (
+                rename or drop or policy
+                or trim_t0 is not None or trim_t1 is not None):
+            raise ValueError(
+                "formulas cannot be combined with rename, drop, trim, or "
+                "NaN-policy operations in one rebuild")
 
         lf = pl.scan_parquet(parquet_path)
         schema = lf.collect_schema()
+        compiled_formulas: list[formula.CompiledFormula] = []
+
+        if formula_specs:
+            compiled_formulas = formula.compile_formula_batch(
+                formula_specs, schema.names(), tcol)
+            # Deliberately one with_columns call per formula: later formulas
+            # may reference a result materialized by an earlier one.
+            for compiled in compiled_formulas:
+                lf = lf.with_columns(compiled.polars_expr)
 
         if trim_t0 is not None:
             lf = lf.filter(pl.col(tcol) >= float(trim_t0))
@@ -133,9 +176,12 @@ def _rebuild(name: str, ops: dict) -> None:
                 raise ValueError("edit would leave fewer than 2 samples")
             first = next(pf.iter_batches(batch_size=1, columns=[new_tcol]))
             t_start = float(first.column(0)[0].as_py())
-        duration = round(n_rows / fs, 3)
+        duration = float(n_rows / fs)
         nan_counts, level_rows = build_pyramid(tmp_parquet, tmp_pyramid,
                                                new_tcol)
+        gap_ranges = _updated_gap_ranges(
+            meta, fs, t_start, n_rows, policy)
+        missing_rows = sum(end - start for start, end in gap_ranges)
 
         # 3) COMMIT — fast rename swaps only past this point. Each os.replace
         #    has a non-existent destination (plain atomic rename); no reader
@@ -146,6 +192,13 @@ def _rebuild(name: str, ops: dict) -> None:
         os.replace(tmp_pyramid, pyr_dir)        # swap the new one in
         _discard(old_pyramid)
 
+        edited_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        derived_variables = formula.rewrite_provenance(
+            meta.get("derived_variables"), rename, drop)
+        if compiled_formulas:
+            derived_variables = formula.merge_provenance(
+                derived_variables, compiled_formulas, edited_at)
+
         meta.update({
             "columns": columns,
             "n_columns": len(columns),
@@ -153,11 +206,16 @@ def _rebuild(name: str, ops: dict) -> None:
             "time_column": new_tcol,
             "t_start": t_start,
             "duration_s": duration,
+            "source_n_rows": n_rows - missing_rows,
+            "time_gap_count": len(gap_ranges),
+            "missing_rows_inserted": missing_rows,
+            "time_gap_seconds": missing_rows / fs,
+            "time_gap_ranges": gap_ranges,
             "nan_counts": {c: n for c, n in nan_counts.items() if n > 0},
             "nan_policy": policy or meta.get("nan_policy", "keep_gaps"),
             "pyramid_rows": level_rows,
-            "edited_at": datetime.now(timezone.utc).isoformat(
-                timespec="seconds"),
+            "derived_variables": derived_variables,
+            "edited_at": edited_at,
             "edit_seconds": round(time.time() - t_begin, 1),
         })
         write_json_atomic(test_dir / "meta.json", meta)

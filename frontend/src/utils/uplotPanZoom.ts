@@ -101,3 +101,137 @@ export function xPanZoomPlugin(commit?: (range: [number, number]) => void): uPlo
     },
   };
 }
+
+/**
+ * uPlot plugin for a fully client-side two-dimensional point cloud.
+ *
+ * - wheel: zoom both axes around the cursor
+ * - shift-drag or middle-drag: pan both axes
+ * - plain left-drag: left to uPlot's built-in 2D box zoom
+ * - double-click: left to uPlot's built-in auto-range reset
+ */
+export function xyPanZoomPlugin(): uPlot.Plugin {
+  let destroyed = false;
+  let detachReadyListeners: (() => void) | null = null;
+  let finishPan: (() => void) | null = null;
+
+  return {
+    opts: (_u, opts) => {
+      const cursor = (opts.cursor = opts.cursor ?? {});
+      const bind = (cursor.bind = cursor.bind ?? {});
+      bind.mousedown = (_self, _targ, handler) => (e) => {
+        if (!isPanGesture(e)) handler(e);
+        return null;
+      };
+    },
+    hooks: {
+      ready: (u) => {
+        const onWheel = (e: WheelEvent) => {
+          const xMin = u.scales.x.min;
+          const xMax = u.scales.x.max;
+          const yMin = u.scales.y.min;
+          const yMax = u.scales.y.max;
+          if (
+            destroyed ||
+            xMin == null ||
+            xMax == null ||
+            yMin == null ||
+            yMax == null
+          ) {
+            return;
+          }
+
+          const rect = u.over.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return;
+          e.preventDefault();
+
+          const xVal = u.posToVal(e.clientX - rect.left, 'x');
+          const yVal = u.posToVal(e.clientY - rect.top, 'y');
+          const factor = e.deltaY < 0 ? WHEEL_STEP : 1 / WHEEL_STEP;
+          const nextX: [number, number] = [
+            xVal - (xVal - xMin) * factor,
+            xVal + (xMax - xVal) * factor,
+          ];
+          const nextY: [number, number] = [
+            yVal - (yVal - yMin) * factor,
+            yVal + (yMax - yVal) * factor,
+          ];
+          if (
+            nextX[1] - nextX[0] < MIN_SPAN ||
+            nextY[1] - nextY[0] < MIN_SPAN
+          ) {
+            return;
+          }
+
+          u.batch(() => {
+            u.setScale('x', { min: nextX[0], max: nextX[1] });
+            u.setScale('y', { min: nextY[0], max: nextY[1] });
+          });
+        };
+
+        const onDown = (e: MouseEvent) => {
+          if (destroyed || !isPanGesture(e)) return;
+          const xMin = u.scales.x.min;
+          const xMax = u.scales.x.max;
+          const yMin = u.scales.y.min;
+          const yMax = u.scales.y.max;
+          if (
+            xMin == null ||
+            xMax == null ||
+            yMin == null ||
+            yMax == null
+          ) {
+            return;
+          }
+
+          const rect = u.over.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return;
+          e.preventDefault(); // also suppresses middle-button autoscroll
+
+          const x0 = e.clientX;
+          const y0 = e.clientY;
+          const xPerPx = (xMax - xMin) / rect.width;
+          const yPerPx = (yMax - yMin) / rect.height;
+          u.over.style.cursor = 'grabbing';
+
+          const cleanup = () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            if (!destroyed) u.over.style.cursor = '';
+            finishPan = null;
+          };
+          const onMove = (event: MouseEvent) => {
+            if (destroyed) return;
+            const dx = (event.clientX - x0) * xPerPx;
+            const dy = (event.clientY - y0) * yPerPx;
+            u.batch(() => {
+              u.setScale('x', { min: xMin - dx, max: xMax - dx });
+              // Screen y grows downward, while a normal numeric y scale grows upward.
+              u.setScale('y', { min: yMin + dy, max: yMax + dy });
+            });
+          };
+          const onUp = () => cleanup();
+
+          finishPan?.();
+          finishPan = cleanup;
+          window.addEventListener('mousemove', onMove);
+          window.addEventListener('mouseup', onUp);
+        };
+
+        u.over.addEventListener('wheel', onWheel, { passive: false });
+        u.over.addEventListener('mousedown', onDown);
+        detachReadyListeners = () => {
+          u.over.removeEventListener('wheel', onWheel);
+          u.over.removeEventListener('mousedown', onDown);
+        };
+      },
+      destroy: () => {
+        destroyed = true;
+        finishPan?.();
+        detachReadyListeners?.();
+        finishPan = null;
+        detachReadyListeners = null;
+      },
+    },
+  };
+}

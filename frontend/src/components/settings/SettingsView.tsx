@@ -345,9 +345,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         <Section
           title="Upload"
-          hint="Assumed sample rate for CSVs whose time column is unusable (missing, non-increasing, or too coarse) — the backend then generates a uniform time axis at this rate. Files with a good time column are unaffected."
+          hint="Default for the import setup's fallback-rate field. You can change it for each upload; generated-time mode makes that upload's selected rate authoritative."
         >
-          <Row label="Fallback rate (Hz)">
+          <Row label="Default rate (Hz)">
             <input
               className="input"
               style={{ width: 120 }}

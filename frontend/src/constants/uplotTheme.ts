@@ -13,6 +13,11 @@ export const AXIS_STYLE = {
   font: '11px Segoe UI',
 } as const;
 
+export const TIME_AXIS_STYLE = {
+  ...AXIS_STYLE,
+  label: 'Time (s)',
+} as const;
+
 /** Auto-range guard for mode-2 (facet/scatter) scales. uPlot's default x
  *  range there is exactly [dataMin, dataMax] with ZERO padding (snapNumX), so
  *  a constant column — e.g. tp_id or a setpoint inside one TP — collapses the

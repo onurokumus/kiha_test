@@ -174,7 +174,11 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
 
   // Compute clusters
   const clusteredData = useMemo(() => {
-    if (!enableClustering || !chartRef.current) {
+    if (
+      !enableClustering ||
+      chartDimensions.width <= PLOT_INSET_X ||
+      chartDimensions.height <= PLOT_INSET_Y
+    ) {
       return { clusters: [], individualPoints: scatterData };
     }
 
@@ -182,9 +186,8 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
     const selectedPoints = scatterData.filter((p) => p.isSelected);
     const nonSelectedPoints = scatterData.filter((p) => !p.isSelected);
 
-    const rect = chartRef.current.getBoundingClientRect();
-    const chartWidth = rect.width - PLOT_INSET_X; // plot area inside the margins + y-axis
-    const chartHeight = rect.height - PLOT_INSET_Y;
+    const chartWidth = chartDimensions.width - PLOT_INSET_X;
+    const chartHeight = chartDimensions.height - PLOT_INSET_Y;
 
     // Only cluster non-selected points
     const result = clusterPoints(
@@ -301,7 +304,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       },
       cx: number,
       cy: number,
-      event: React.MouseEvent
+      event: { clientX: number; clientY: number }
     ) => {
       // Handle cluster click
       if (clickedPoint.isCluster && clickedPoint.clusterPoints) {
@@ -572,7 +575,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
           }}
           onClick={(e) => {
             e.stopPropagation();
-            handlePointClick(shapeProps.payload, shapeProps.cx, shapeProps.cy, e as any);
+            handlePointClick(shapeProps.payload, shapeProps.cx, shapeProps.cy, e);
           }}
         />
       );

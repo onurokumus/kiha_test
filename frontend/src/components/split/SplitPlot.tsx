@@ -3,8 +3,13 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { fetchWindow, isAbortError } from '../../services/api';
 import { DataWindow, TestPoint } from '../../types';
-import { AXIS_STYLE, colorFor } from '../../constants/uplotTheme';
+import {
+  AXIS_STYLE,
+  colorFor,
+  TIME_AXIS_STYLE,
+} from '../../constants/uplotTheme';
 import { round3 } from '../../utils/formatters';
+import { PlotStateOverlay } from '../plots/PlotState';
 
 export type TimeRange = [number, number] | null;
 
@@ -29,6 +34,9 @@ interface OverlayBox {
 }
 
 /** end of a TP for display: own end, else next TP start, else data end */
+// This shared geometry helper intentionally lives beside the component that
+// owns the TP overlay semantics.
+// eslint-disable-next-line react-refresh/only-export-components
 export function effectiveEnd(tp: TestPoint, tps: TestPoint[], dataEnd: number): number {
   if (tp.end_s !== null) return tp.end_s;
   const nexts = tps
@@ -48,8 +56,9 @@ export default function SplitPlot(props: Props) {
   const [win, setWin] = useState<DataWindow | null>(null);
   const [box, setBox] = useState<OverlayBox | null>(null);
   const [chartTick, setChartTick] = useState(0); // bumps when chart rebuilt
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(Boolean(test && cols.length));
   const [error, setError] = useState('');
+  const [retryVersion, setRetryVersion] = useState(0);
   const dragRef = useRef<{ id: number; which: 'start' | 'end'; overLeft: number } | null>(null);
 
   // measure plot area after layout settles (sync measure returns 0x0)
@@ -66,10 +75,15 @@ export default function SplitPlot(props: Props) {
 
   // fetch window
   useEffect(() => {
-    if (!test || cols.length === 0) return;
+    if (!test || cols.length === 0) {
+      setLoading(false);
+      setError('');
+      return;
+    }
     let dead = false;
     const controller = new AbortController();
     setLoading(true);
+    setError('');
     const px = containerRef.current?.clientWidth ?? 1500;
     fetchWindow(test, cols, range?.[0] ?? null, range?.[1] ?? null, px, controller.signal)
       .then((w) => { if (!dead) { setWin(w); setError(''); } })
@@ -82,7 +96,7 @@ export default function SplitPlot(props: Props) {
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [test, cols.join(','), range?.[0], range?.[1]]);
+  }, [test, cols.join(','), range?.[0], range?.[1], retryVersion]);
 
   // (re)build chart
   useEffect(() => {
@@ -93,7 +107,7 @@ export default function SplitPlot(props: Props) {
     const series: uPlot.Series[] = [{}];
     const bands: uPlot.Band[] = [];
     const scales: uPlot.Scales = { x: { time: false } };
-    const axes: uPlot.Axis[] = [{ ...AXIS_STYLE }];
+    const axes: uPlot.Axis[] = [{ ...TIME_AXIS_STYLE }];
     const data: (number | null)[][] = [win.t];
 
     cols.forEach((c, i) => {
@@ -219,6 +233,23 @@ export default function SplitPlot(props: Props) {
   };
   void chartTick; // overlay depends on chart rebuild
 
+  const hasData =
+    Boolean(test && cols.length > 0 && win && win.t.length > 0) &&
+    cols.some((column) => {
+      const series = win?.series[column];
+      if (!series) return false;
+      if (win?.mode === 'envelope') {
+        const envelope = series as { min: (number | null)[]; max: (number | null)[] };
+        return (
+          envelope.min.some((value) => value !== null && Number.isFinite(value)) ||
+          envelope.max.some((value) => value !== null && Number.isFinite(value))
+        );
+      }
+      return (series as (number | null)[]).some(
+        (value) => value !== null && Number.isFinite(value)
+      );
+    });
+
   return (
     <div className="panel" style={{ position: 'relative' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
@@ -228,13 +259,15 @@ export default function SplitPlot(props: Props) {
             {win.mode === 'raw' ? 'raw' : `envelope 1:${win.level}`}
           </span>
         )}
-        {loading && <span style={{ color: '#569cd6', fontSize: 11 }}>⟳</span>}
         <span style={{ flex: 1 }} />
         <button className="btn" onClick={() => onRangeChange(null)}>reset zoom</button>
       </div>
-      {error && <div style={{ color: '#f48771', fontSize: 11 }}>{error}</div>}
-      <div ref={wrapperRef} style={{ position: 'relative' }}>
-        <div ref={containerRef} onDoubleClick={() => onRangeChange(null)} />
+      <div ref={wrapperRef} style={{ position: 'relative', height: 340, overflow: 'hidden' }}>
+        <div
+          ref={containerRef}
+          style={{ width: '100%', height: 340 }}
+          onDoubleClick={() => onRangeChange(null)}
+        />
         {u && box && (
           <div
             style={{
@@ -314,6 +347,21 @@ export default function SplitPlot(props: Props) {
           })}
           </div>
         )}
+        <PlotStateOverlay
+          loading={loading}
+          hasData={hasData}
+          error={error}
+          emptyState={{
+            title: 'No samples in this range',
+            detail: range
+              ? 'Reset the zoom or choose a wider time range.'
+              : 'The selected signals contain no plottable values.',
+          }}
+          onRetry={() => setRetryVersion((version) => version + 1)}
+          loadingLabel="Loading split preview"
+          updatingLabel="Updating split preview"
+          errorTitle="Could not load the split preview"
+        />
       </div>
       <div style={{ fontSize: 10, color: '#909090' }}>
         drag to zoom · double-click reset · click TP label to select · drag handles to move edges

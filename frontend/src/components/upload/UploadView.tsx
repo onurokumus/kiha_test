@@ -1,11 +1,15 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   deleteTest,
   rawCsvUrl,
   rebuildTpStats,
   restoreTest,
 } from '../../services/api';
-import { cancelUploadSession } from '../../services/resumableUpload';
+import {
+  cancelUploadSession,
+  UploadDataOptions,
+  UploadTimeMode,
+} from '../../services/resumableUpload';
 import { removeUploadRecord } from '../../services/uploadPersistence';
 import { TestInfo, UploadItem } from '../../types';
 import { isBusyStatus } from '../../constants/status';
@@ -13,10 +17,15 @@ import { isBusyStatus } from '../../constants/status';
 interface Props {
   tests: TestInfo[];
   uploads: UploadItem[];
-  onUploadFiles: (files: File[]) => void;
+  pendingFiles: File[];
+  defaultFsHz?: number;
+  onStageUploadFiles: (files: File[]) => void;
+  onStartUpload: (files: File[], options: UploadDataOptions) => void;
+  onClearPendingFiles: () => void;
   onDismissUpload: (id: number) => void;
   onPauseUpload: (id: number) => void;
   onResumeUpload: (id: number, file?: File) => void;
+  onAdoptServerUpload: (test: TestInfo, file: File) => Promise<void>;
   onCancelUpload: (id: number) => void;
   /** Open a ready test in the Analyze tab. */
   onOpenTest: (name: string) => void;
@@ -118,6 +127,55 @@ const tdRight: React.CSSProperties = {
   fontVariantNumeric: 'tabular-nums',
 };
 
+const HEADER_SNIFF_BYTES = 64 * 1024;
+
+function parseHeaderLine(line: string, separator: string): string[] {
+  const fields: string[] = [];
+  let value = '';
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') {
+      if (quoted && line[index + 1] === '"') {
+        value += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (char === separator && !quoted) {
+      fields.push(value);
+      value = '';
+    } else {
+      value += char;
+    }
+  }
+  fields.push(value);
+  return fields;
+}
+
+async function readCsvHeader(file: File): Promise<string[]> {
+  const sample = await file.slice(0, HEADER_SNIFF_BYTES).text();
+  const firstLine = sample.split(/\r?\n/).find((line) => line.trim());
+  if (!firstLine) return [];
+  const candidates = [';', '\t', '|', ','];
+  let best = [firstLine];
+  for (const separator of candidates) {
+    const parsed = parseHeaderLine(firstLine, separator);
+    if (parsed.length > best.length) best = parsed;
+  }
+  return best
+    .map((field, index) =>
+      index === 0 ? field.replace(/^\uFEFF/, '') : field
+    )
+    .filter((field) => field.length > 0);
+}
+
+const likelyTimeColumn = (columns: string[]): string =>
+  columns.find((column) => {
+    const name = column.trim().toLowerCase();
+    return name.startsWith('time') || ['t', 't_s', 'zaman'].includes(name);
+  }) ?? '';
+
 /** Uploads tab: drop zone + full upload history with live status.
  *  Server rows come from the 2 s test-list poll (App polls while this tab
  *  is open). In-flight browser uploads and orphaned server sessions live in
@@ -125,10 +183,15 @@ const tdRight: React.CSSProperties = {
 export default function UploadView({
   tests,
   uploads,
-  onUploadFiles,
+  pendingFiles,
+  defaultFsHz,
+  onStageUploadFiles,
+  onStartUpload,
+  onClearPendingFiles,
   onDismissUpload,
   onPauseUpload,
   onResumeUpload,
+  onAdoptServerUpload,
   onCancelUpload,
   onOpenTest,
   onTestDeleted,
@@ -136,11 +199,126 @@ export default function UploadView({
   onStatsRebuilt,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const setupRef = useRef<HTMLElement>(null);
   // Names deleted from this page and still restorable (session-local undo).
   const [restorable, setRestorable] = useState<string[]>([]);
   const [busyRow, setBusyRow] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
   const [actionNote, setActionNote] = useState('');
+  const [timeMode, setTimeMode] = useState<UploadTimeMode>('auto');
+  const [timeColumn, setTimeColumn] = useState('');
+  const [generatedColumn, setGeneratedColumn] = useState('time_s');
+  const [fsInput, setFsInput] = useState(
+    defaultFsHz ? String(defaultFsHz) : ''
+  );
+  const [commonColumns, setCommonColumns] = useState<string[]>([]);
+  const [headerNote, setHeaderNote] = useState('');
+  const [headersLoading, setHeadersLoading] = useState(false);
+
+  useEffect(() => {
+    if (!fsInput && defaultFsHz) setFsInput(String(defaultFsHz));
+  }, [defaultFsHz, fsInput]);
+
+  useEffect(() => {
+    let alive = true;
+    if (pendingFiles.length === 0) {
+      setTimeMode('auto');
+      setTimeColumn('');
+      setGeneratedColumn('time_s');
+      setFsInput(defaultFsHz ? String(defaultFsHz) : '');
+      setCommonColumns([]);
+      setHeaderNote('');
+      setHeadersLoading(false);
+      return () => {
+        alive = false;
+      };
+    }
+    setHeadersLoading(true);
+    void Promise.all(pendingFiles.map(readCsvHeader))
+      .then((headers) => {
+        if (!alive) return;
+        const first = headers[0] ?? [];
+        const shared = first.filter((column) =>
+          headers.every((columns) => columns.includes(column))
+        );
+        setCommonColumns(shared);
+        setHeaderNote(
+          shared.length
+            ? pendingFiles.length > 1
+              ? `${shared.length} columns are shared by all selected files.`
+              : `${shared.length} columns found in the CSV header.`
+            : 'No shared header columns could be detected; use Auto or Generated time.'
+        );
+        setTimeColumn((current) =>
+          shared.includes(current) ? current : likelyTimeColumn(shared)
+        );
+        setHeadersLoading(false);
+      })
+      .catch((error) => {
+        if (!alive) return;
+        setCommonColumns([]);
+        setHeaderNote(
+          `Could not inspect the CSV header: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+        setHeadersLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [defaultFsHz, pendingFiles]);
+
+  useEffect(() => {
+    if (pendingFiles.length === 0) return;
+    const frame = window.requestAnimationFrame(() => setupRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [pendingFiles]);
+
+  const parsedFs = Number(fsInput);
+  const validFs = Number.isFinite(parsedFs) && parsedFs > 0;
+  const selectedTimeColumn = timeColumn;
+  const workingTimeColumn =
+    timeMode === 'generated' ? generatedColumn.trim() : selectedTimeColumn;
+  const pyramidFieldSource = commonColumns.find(
+    (column) =>
+      column !== workingTimeColumn &&
+      (workingTimeColumn === `${column}__min` ||
+        workingTimeColumn === `${column}__max`)
+  );
+  const setupError =
+    pendingFiles.length === 0
+      ? ''
+      : headersLoading
+        ? 'Inspecting the selected CSV headers…'
+        : timeMode === 'column' && !selectedTimeColumn.trim()
+        ? 'Choose the CSV column that contains time.'
+        : timeMode === 'column' &&
+            !commonColumns.includes(selectedTimeColumn)
+          ? `'${selectedTimeColumn}' is not present in every selected CSV header.`
+        : timeMode === 'generated' && !generatedColumn.trim()
+          ? 'Enter a name for the generated time column.'
+          : pyramidFieldSource
+            ? `'${workingTimeColumn}' conflicts with analysis fields for ` +
+              `'${pyramidFieldSource}'; choose another time-column name.`
+          : timeMode === 'generated' && !validFs
+            ? 'Enter a sample rate greater than 0 Hz.'
+            : fsInput && !validFs
+              ? 'Sample rate must be a number greater than 0.'
+              : '';
+
+  const beginConfiguredUpload = () => {
+    if (setupError || pendingFiles.length === 0) return;
+    onStartUpload(pendingFiles, {
+      timeMode,
+      ...(validFs ? { fsHz: parsedFs } : {}),
+      ...(timeMode === 'column'
+        ? { timeColumn: selectedTimeColumn }
+        : timeMode === 'generated'
+          ? { timeColumn: generatedColumn.trim() }
+          : {}),
+    });
+  };
 
   const sortedTests = useMemo(
     () =>
@@ -204,6 +382,24 @@ export default function UploadView({
     } catch (error) {
       setActionError(
         `cancel '${test.name}' failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    } finally {
+      setBusyRow(null);
+    }
+  };
+
+  const handleResumeReceiving = async (test: TestInfo, file: File) => {
+    setBusyRow(test.name);
+    setActionError('');
+    setActionNote('');
+    try {
+      await onAdoptServerUpload(test, file);
+      setActionNote(`${test.name}: original CSV accepted; resuming upload`);
+    } catch (error) {
+      setActionError(
+        `resume '${test.name}' failed: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
@@ -412,38 +608,199 @@ export default function UploadView({
   return (
     <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
       <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {/* Drop zone / picker */}
-        <div
-          onClick={() => fileRef.current?.click()}
-          style={{
-            border: '2px dashed #555',
-            borderRadius: 6,
-            padding: '28px 16px',
-            textAlign: 'center',
-            cursor: 'pointer',
-            background: '#232324',
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv"
+          multiple
+          style={{ display: 'none' }}
+          onChange={(event) => {
+            const files = Array.from(event.target.files ?? []);
+            if (files.length) onStageUploadFiles(files);
+            event.target.value = '';
           }}
-          onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#569cd6')}
-          onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#555')}
-        >
-          <div style={{ fontSize: 15, color: '#569cd6', marginBottom: 6 }}>⬆ Upload test CSV</div>
-          <div style={{ fontSize: 11, color: '#909090' }}>
-            Click to choose files, or drop .csv files anywhere in this window.
-            The test name is taken from the file name.
-          </div>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv"
-            multiple
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? []);
-              if (files.length) onUploadFiles(files);
-              e.target.value = '';
+        />
+
+        {pendingFiles.length === 0 ? (
+          <div
+            className="upload-drop-zone"
+            role="button"
+            tabIndex={0}
+            onClick={() => fileRef.current?.click()}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                fileRef.current?.click();
+              }
             }}
-          />
-        </div>
+          >
+            <div className="upload-drop-title">⬆ Choose test CSV</div>
+            <div className="upload-drop-copy">
+              Choose files here, or drop .csv files anywhere in this window.
+              You will confirm time and sampling settings before upload.
+            </div>
+          </div>
+        ) : (
+          <section
+            ref={setupRef}
+            className="panel upload-setup-panel"
+            aria-label="Import setup"
+            tabIndex={-1}
+          >
+            <div className="upload-setup-heading">
+              <div>
+                <div className="section-title">Time setup</div>
+                <div className="upload-setup-subtitle">
+                  Every imported test uses elapsed seconds beginning at 0.
+                </div>
+              </div>
+              <div className="upload-setup-files">
+                {pendingFiles.map((file) => (
+                  <span key={`${file.name}-${file.lastModified}`} className="badge">
+                    {file.name} · {fmtBytes(file.size)}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="upload-setup-grid">
+              <label className="upload-setup-field">
+                <span>Time basis</span>
+                <select
+                  className="input"
+                  value={timeMode}
+                  onChange={(event) =>
+                    setTimeMode(event.target.value as UploadTimeMode)
+                  }
+                >
+                  <option value="auto">Auto-detect</option>
+                  <option value="column">Use CSV column</option>
+                  <option value="generated">Generate from sample rate</option>
+                </select>
+              </label>
+
+              {timeMode === 'column' && (
+                <label className="upload-setup-field">
+                  <span>CSV time column</span>
+                  <input
+                    className="input"
+                    list="upload-time-columns"
+                    value={timeColumn}
+                    placeholder="e.g. TIME"
+                    aria-invalid={!!setupError && timeMode === 'column'}
+                    aria-describedby="upload-setup-feedback"
+                    onChange={(event) => setTimeColumn(event.target.value)}
+                  />
+                </label>
+              )}
+
+              {timeMode === 'generated' && (
+                <label className="upload-setup-field">
+                  <span>Working time column (creates or replaces)</span>
+                  <input
+                    className="input"
+                    value={generatedColumn}
+                    placeholder="time_s"
+                    aria-invalid={
+                      !!setupError &&
+                      timeMode === 'generated' &&
+                      (!generatedColumn.trim() || !!pyramidFieldSource)
+                    }
+                    aria-describedby="upload-setup-feedback"
+                    onChange={(event) => setGeneratedColumn(event.target.value)}
+                  />
+                </label>
+              )}
+
+              <label className="upload-setup-field">
+                <span>
+                  {timeMode === 'generated'
+                    ? 'Sample rate (Hz)'
+                    : 'Fallback rate (Hz)'}
+                </span>
+                <input
+                  className="input"
+                  type="number"
+                  min="0"
+                  step="any"
+                  inputMode="decimal"
+                  value={fsInput}
+                  placeholder="2048"
+                  aria-invalid={
+                    !!setupError &&
+                    (setupError.includes('rate') ||
+                      setupError.includes('number'))
+                  }
+                  aria-describedby="upload-setup-feedback"
+                  onChange={(event) => setFsInput(event.target.value)}
+                />
+              </label>
+            </div>
+
+            <datalist id="upload-time-columns">
+              {commonColumns.map((column) => (
+                <option key={column} value={column} />
+              ))}
+            </datalist>
+
+            <div className="upload-time-preview">
+              <span className="upload-time-preview-label">Result</span>
+              <code>
+                {timeMode === 'generated'
+                  ? `${generatedColumn.trim() || 'time_s'}: 0.000000 s, ${
+                      (1 / (validFs ? parsedFs : 2048)).toFixed(6)
+                    } s, …`
+                  : `${
+                      timeMode === 'column'
+                        ? timeColumn || 'selected column'
+                        : timeColumn
+                          ? `${timeColumn} (auto-detected)`
+                          : 'time_s (generated fallback)'
+                    } → elapsed seconds from 0`}
+              </code>
+              <span>
+                {timeMode === 'auto'
+                  ? timeColumn
+                    ? 'The measured spacing is preserved; an unusable clock falls back to the selected rate.'
+                    : 'No time-like header was found, so time_s will be generated from the fallback rate.'
+                  : timeMode === 'column'
+                    ? 'Clock strings and numeric seconds keep their measured spacing.'
+                    : commonColumns.includes(generatedColumn.trim())
+                      ? `The existing '${generatedColumn.trim()}' source column will be replaced by sample index ÷ Hz.`
+                      : 'The working axis is generated exactly as sample index ÷ Hz.'}
+              </span>
+            </div>
+
+            <div className="upload-setup-footer">
+              <span
+                id="upload-setup-feedback"
+                className={setupError ? 'upload-setup-error' : ''}
+                role={setupError ? 'alert' : 'status'}
+                aria-live="polite"
+              >
+                {setupError || headerNote}
+              </span>
+              <div className="upload-setup-actions">
+                <button className="btn" onClick={() => fileRef.current?.click()}>
+                  Change files
+                </button>
+                <button
+                  className="btn"
+                  onClick={onClearPendingFiles}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary"
+                  disabled={!!setupError}
+                  onClick={beginConfiguredUpload}
+                >
+                  Start upload
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
 
         {transferCount > 0 && (
           <section className="panel upload-transfers-panel" aria-label="Active transfers">
@@ -484,6 +841,30 @@ export default function UploadView({
                   </div>
                   <div className="upload-transfer-progress">{serverProgressCell(test)}</div>
                   <div className="upload-transfer-actions">
+                    <label
+                      className="btn"
+                      aria-disabled={busyRow === test.name}
+                      style={{
+                        cursor:
+                          busyRow === test.name ? 'default' : 'pointer',
+                        opacity: busyRow === test.name ? 0.6 : 1,
+                      }}
+                    >
+                      {busyRow === test.name
+                        ? 'checking...'
+                        : 'Select original CSV'}
+                      <input
+                        type="file"
+                        accept=".csv"
+                        disabled={busyRow === test.name}
+                        style={{ display: 'none' }}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) void handleResumeReceiving(test, file);
+                          event.target.value = '';
+                        }}
+                      />
+                    </label>
                     <button
                       className="btn"
                       disabled={busyRow === test.name}
@@ -638,6 +1019,23 @@ export default function UploadView({
                           {fmtDuration(t.duration_s)} · {t.fs_hz ?? '—'} Hz ·{' '}
                           {t.ingest_seconds != null ? `${t.ingest_seconds} s ingest` : '— ingest'}
                         </div>
+                        {t.time_column && (
+                          <div className="upload-history-metrics-secondary">
+                            {t.time_column} · {t.time_source ?? 'time'} · seconds from 0
+                          </div>
+                        )}
+                        {(t.missing_rows_inserted ?? 0) > 0 && (
+                          <div
+                            className="upload-history-metrics-secondary"
+                            style={{ color: '#dcdcaa' }}
+                            title="Missing timestamps were represented by NaN signal rows"
+                          >
+                            {fmtCount(t.missing_rows_inserted)} missing row
+                            {t.missing_rows_inserted === 1 ? '' : 's'} ·{' '}
+                            {fmtCount(t.time_gap_count)} time gap
+                            {t.time_gap_count === 1 ? '' : 's'}
+                          </div>
+                        )}
                       </td>
                       <td
                         className="upload-history-actions-cell"

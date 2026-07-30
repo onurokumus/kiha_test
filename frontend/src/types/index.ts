@@ -10,6 +10,13 @@ export interface TestInfo {
   fs_hz?: number | null;
   duration_s?: number | null;
   n_columns?: number | null;
+  time_column?: string | null;
+  time_source?: 'measured' | 'generated' | null;
+  time_unit?: string | null;
+  source_n_rows?: number | null;
+  time_gap_count?: number | null;
+  missing_rows_inserted?: number | null;
+  time_gap_seconds?: number | null;
   source_file?: string | null;
   /** UTC ISO; from meta.json, or dir creation time while receiving/ingesting
    *  (same format — lexicographic sort is chronological). */
@@ -65,6 +72,14 @@ export interface TestMeta {
   n_columns: number;
   columns: string[];
   time_column: string;
+  time_unit?: string;
+  time_source?: 'measured' | 'generated';
+  source_time_origin_s?: number | null;
+  source_n_rows?: number;
+  time_gap_count?: number;
+  missing_rows_inserted?: number;
+  time_gap_seconds?: number;
+  time_gap_ranges?: Array<[number, number]>;
   duration_s: number;
   t_start?: number | null;
   source_file?: string;
@@ -75,6 +90,51 @@ export interface TestMeta {
   user_meta?: Record<string, string>;
 }
 
+/** One materialized derived-variable equation. Expressions use
+ * Tecplot-style `{column name}` references. */
+export interface FormulaSpec {
+  name: string;
+  expression: string;
+  /** Existing data columns are protected unless replacement is explicit. */
+  replace?: boolean;
+}
+
+export interface FormulaPreviewItem extends FormulaSpec {
+  dependencies: string[];
+  replaces_existing: boolean;
+  stats: {
+    count: number;
+    valid_count: number;
+    nan_count: number;
+    min: number | null;
+    max: number | null;
+    mean: number | null;
+  };
+  values: (number | null)[];
+}
+
+/** POST /api/tests/{name}/formulas/preview */
+export interface FormulaPreview {
+  valid: true;
+  sample_size: number;
+  row_indices: number[];
+  time: (number | null)[];
+  formulas: FormulaPreviewItem[];
+}
+
+/** One reusable, server-stored equation recipe. */
+export interface FormulaRecipe {
+  name: string;
+  description?: string;
+  formulas: FormulaSpec[];
+  updated_at?: string | null;
+}
+
+export interface FormulaRecipeList {
+  version: 1;
+  recipes: FormulaRecipe[];
+}
+
 /** POST /api/tests/{name}/edit — destructive rebuild operations */
 export interface EditOps {
   rename?: Record<string, string>;
@@ -82,6 +142,7 @@ export interface EditOps {
   trim_t0?: number | null;
   trim_t1?: number | null;
   nan_policy?: string | null;
+  formulas?: FormulaSpec[];
 }
 
 /** GET /api/tests/{name}/xy — NaN pairs already dropped server-side */
@@ -130,7 +191,7 @@ export interface Trace {
 }
 
 /** GET /api/tests/{name}/data — windowed full-test read.
- *  Raw when the viewport spans few samples, min/max envelope otherwise. */
+ *  `mode` is the resolved representation after applying the display request. */
 export interface RawWindow {
   mode: 'raw';
   level: number;
@@ -152,6 +213,7 @@ export interface EnvelopeWindow {
 }
 
 export type DataWindow = RawWindow | EnvelopeWindow;
+export type WindowDisplayMode = 'auto' | 'line' | 'envelope';
 
 /** GET /api/tests/{name}/testpoints/{tp_id}/data */
 export interface TpTraceResponse {
@@ -258,6 +320,7 @@ export type FilterKind =
   | 'bandpass'
   | 'bandstop'
   | 'moving_avg'
+  | 'despike'
   | 'detrend';
 
 export interface FilterSpec {
@@ -266,10 +329,18 @@ export interface FilterSpec {
   f1?: number;
   f2?: number;
   windowS?: number;
+  maxSpikeS?: number;
+  threshold?: number;
+  absFloor?: number;
+  replacement?: 'linear' | 'median';
 }
 
 /** GET /api/tests/{name}/filter — same window shapes as /data plus warnings */
 export type FilteredWindow = DataWindow & {
   nan_counts: Record<string, number>;
+  replacement_counts?: Record<string, number>;
+  spike_event_counts?: Record<string, number>;
   boundary_warning?: boolean;
+  time_gap_count?: number;
+  gap_segment_warning?: boolean;
 };

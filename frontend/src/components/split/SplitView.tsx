@@ -7,6 +7,7 @@ import {
   putTestPoints,
   uploadTestPoints,
 } from '../../services/api';
+import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { IdCandidate, TestInfo, TestMeta, TestPoint, TestPointsFile } from '../../types';
 import { round3 } from '../../utils/formatters';
 import { TestOptions } from '../controls/TestOptions';
@@ -17,17 +18,54 @@ interface Props {
   meta: TestMeta;
   columns: string[]; // plottable columns (no time column)
   tests: TestInfo[];
-  onTestChange: (test: string) => void;
+  onTestChange: (test: string) => boolean | void;
+  /** Reports whether this view has test-point changes that are not saved. */
+  onDirtyChange?: (isDirty: boolean) => void;
+  /** Test-point definitions were persisted and dependent caches are stale. */
+  onSaved?: () => void;
+  /** Reports a save/upload that must finish before navigation. */
+  onBusyChange?: (isBusy: boolean) => void;
+}
+
+function sameTestPoints(left: TestPoint[], right: TestPoint[]): boolean {
+  const comparable = (points: TestPoint[]) =>
+    [...points]
+      .sort((a, b) => a.id - b.id)
+      .map(({ id, name, label, start_s, end_s, notes }) => ({
+        id,
+        name,
+        label,
+        start_s,
+        end_s,
+        notes: notes ?? '',
+      }));
+
+  return JSON.stringify(comparable(left)) === JSON.stringify(comparable(right));
 }
 
 /** Split editor: define/adjust test points over the full test.
  *  Auto-split proposes TPs from an ID-like column; nothing persists until
  *  Save (PUT /testpoints with the full TestPointsFile wrapper). */
-export default function SplitView({ test, meta, columns, tests, onTestChange }: Props) {
+export default function SplitView({
+  test,
+  meta,
+  columns,
+  tests,
+  onTestChange,
+  onDirtyChange,
+  onSaved,
+  onBusyChange,
+}: Props) {
   const [tps, setTps] = useState<TestPoint[]>([]);
+  const [savedTps, setSavedTps] = useState<TestPoint[] | null>(null);
+  const [tpLoadState, setTpLoadState] = useState<'loading' | 'ready' | 'error'>(
+    'loading'
+  );
+  const [tpLoadError, setTpLoadError] = useState('');
+  const [tpLoadRetry, setTpLoadRetry] = useState(0);
+  const [saving, setSaving] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [range, setRange] = useState<TimeRange>(null);
-  const [dirty, setDirty] = useState(false);
   const [candidates, setCandidates] = useState<IdCandidate[]>([]);
   const [candCol, setCandCol] = useState('');
   const [ignoreZero, setIgnoreZero] = useState(true);
@@ -38,22 +76,33 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
 
   const dataStart = meta.t_start ?? 0;
   const dataEnd = dataStart + meta.duration_s;
+  const dirty = savedTps !== null && !sameTestPoints(tps, savedTps);
 
   // load saved test points + ID-column candidates
   useEffect(() => {
     let dead = false;
+    setTps([]);
+    setSavedTps(null);
+    setTpLoadState('loading');
+    setTpLoadError('');
     fetchTestPoints(test)
       .then((f) => {
         if (dead) return;
         setTps(f.test_points);
-        setDirty(false);
+        setSavedTps(f.test_points);
+        setTpLoadState('ready');
       })
-      .catch((e) => !dead && console.error(e));
+      .catch((e) => {
+        if (dead) return;
+        console.error(e);
+        setTpLoadError(e instanceof Error ? e.message : String(e));
+        setTpLoadState('error');
+      });
     fetchSplitCandidates(test)
       .then((c) => {
         if (dead) return;
         setCandidates(c);
-        if (c.length) setCandCol(c[0].col);
+        setCandCol(c[0]?.col ?? '');
       })
       .catch((e) => !dead && console.error(e));
     setSelectedId(null);
@@ -61,7 +110,12 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
     return () => {
       dead = true;
     };
-  }, [test]);
+  }, [test, tpLoadRetry]);
+
+  useEffect(() => {
+    onBusyChange?.(saving);
+    return () => onBusyChange?.(false);
+  }, [onBusyChange, saving]);
 
   useEffect(() => {
     setDisplayCol((prev) => (columns.includes(prev) ? prev : columns[0] || ''));
@@ -69,7 +123,6 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
 
   const patchTp = (id: number, patch: Partial<TestPoint>) => {
     setTps((list) => list.map((tp) => (tp.id === id ? { ...tp, ...patch } : tp)));
-    setDirty(true);
   };
 
   const addTp = () => {
@@ -88,24 +141,21 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
     };
     setTps((l) => [...l, tp]);
     setSelectedId(id);
-    setDirty(true);
   };
 
   const removeTp = (id: number) => {
     setTps((l) => l.filter((tp) => tp.id !== id));
     if (selectedId === id) setSelectedId(null);
-    setDirty(true);
   };
 
   const runAutoSplit = async () => {
-    if (!candCol) return;
+    if (!candCol || tpLoadState !== 'ready' || saving) return;
     if (tps.length && !confirm(`Replace ${tps.length} existing test points?`)) return;
     setStatus('splitting…');
     try {
       const result = await autoSplit(test, candCol, ignoreZero, minLen);
       setTps(result);
       setSelectedId(null);
-      setDirty(true);
       setStatus(`auto-split: ${result.length} test points from ${candCol} — unsaved`);
     } catch (e) {
       setStatus(String(e instanceof Error ? e.message : e));
@@ -113,6 +163,7 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
   };
 
   const save = async () => {
+    if (!dirty || tpLoadState !== 'ready' || saving) return;
     const fs = meta.fs_hz;
     const bad = tps.find((tp) => tp.end_s !== null && tp.end_s <= tp.start_s);
     if (bad) {
@@ -134,12 +185,16 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
     };
     setStatus('saving…');
     try {
+      setSaving(true);
       await putTestPoints(test, payload);
       setTps(withIdx);
-      setDirty(false);
+      setSavedTps(withIdx);
+      onSaved?.();
       setStatus(`saved ${withIdx.length} test points`);
     } catch (e) {
       setStatus(String(e instanceof Error ? e.message : e));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -162,15 +217,20 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
   };
 
   const handleUpload = async (f: File) => {
+    if (tpLoadState !== 'ready' || saving) return;
     setStatus('uploading…');
     try {
+      setSaving(true);
       await uploadTestPoints(test, f);
+      onSaved?.();
       const file = await fetchTestPoints(test);
       setTps(file.test_points);
-      setDirty(false);
+      setSavedTps(file.test_points);
       setStatus(`loaded ${file.test_points.length} test points from file`);
     } catch (e) {
       setStatus(String(e instanceof Error ? e.message : e));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -181,14 +241,90 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
     setSelectedId(tp.id);
   };
 
+  const discardChanges = (announce = true) => {
+    if (savedTps !== null) {
+      setTps(savedTps.map((tp) => ({ ...tp })));
+    }
+    setSelectedId(null);
+    setRange(null);
+    if (announce) setStatus('discarded unsaved test-point changes');
+  };
+
+  const { confirmContextChange } = useUnsavedChanges({
+    isDirty: dirty,
+    onDirtyChange,
+    confirmOnContextChange: true,
+    message: `Replace unsaved test-point changes for '${test}'?`,
+  });
+
+  const changeTest = (nextTest: string) => {
+    if (nextTest === test) return;
+    if (onTestChange(nextTest) === false) return;
+    discardChanges(false);
+  };
+
   return (
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto', padding: 12 }}>
+      {tpLoadState === 'loading' && (
+        <div className="panel" role="status" aria-live="polite" style={{ color: '#9fc7df' }}>
+          Loading saved test-point definitions…
+        </div>
+      )}
+      {tpLoadState === 'error' && (
+        <div
+          className="panel"
+          role="alert"
+          style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#f4a08e' }}
+        >
+          <span style={{ flex: 1 }}>
+            Could not load saved test-point definitions. Editing is disabled to protect the
+            existing file. {tpLoadError}
+          </span>
+          <select
+            className="input"
+            aria-label="Choose another test"
+            value={test}
+            onChange={(event) => changeTest(event.target.value)}
+          >
+            <TestOptions tests={tests} />
+          </select>
+          <button className="btn" onClick={() => setTpLoadRetry((attempt) => attempt + 1)}>
+            Retry
+          </button>
+        </div>
+      )}
+      <fieldset
+        disabled={tpLoadState !== 'ready' || saving}
+        aria-busy={tpLoadState === 'loading' || saving}
+        style={{
+          display: 'flex',
+          minWidth: 0,
+          flexDirection: 'column',
+          gap: 8,
+          margin: 0,
+          padding: 0,
+          border: 0,
+          pointerEvents: tpLoadState !== 'ready' || saving ? 'none' : undefined,
+          opacity: tpLoadState !== 'ready' || saving ? 0.72 : 1,
+        }}
+      >
       {/* toolbar */}
-      <div className="panel" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <div
+        className="panel"
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 5,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+        }}
+      >
         <span style={{ fontSize: 11, color: '#909090' }}>test:</span>
         <select
           className="input" style={{ width: 150 }}
-          value={test} onChange={(e) => onTestChange(e.target.value)}
+          value={test} onChange={(e) => changeTest(e.target.value)}
         >
           <TestOptions tests={tests} />
         </select>
@@ -246,14 +382,17 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
           onClick={save}
           disabled={!dirty}
         >
-          save{dirty ? ' *' : ''}
+          {saving ? 'saving…' : `save${dirty ? ' *' : ''}`}
+        </button>
+        <button className="btn" onClick={() => discardChanges()} disabled={!dirty}>
+          reset
         </button>
         <input
           ref={fileRef} type="file" accept=".json"
           style={{ display: 'none' }}
           onChange={(e) => {
             const f = e.target.files?.[0];
-            if (f) handleUpload(f);
+            if (f && confirmContextChange()) handleUpload(f);
             e.target.value = '';
           }}
         />
@@ -262,6 +401,7 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
 
       {displayCol && (
         <SplitPlot
+          key={`${test}:${displayCol}`}
           test={test}
           cols={[displayCol]}
           range={range}
@@ -309,6 +449,7 @@ export default function SplitView({ test, meta, columns, tests, onTestChange }: 
           </div>
         )}
       </div>
+      </fieldset>
     </div>
   );
 }

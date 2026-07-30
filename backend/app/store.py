@@ -35,6 +35,14 @@ def list_tests() -> list[dict]:
                     "n_rows": meta.get("n_rows"), "fs_hz": meta.get("fs_hz"),
                     "duration_s": meta.get("duration_s"),
                     "n_columns": meta.get("n_columns"),
+                    "time_column": meta.get("time_column"),
+                    "time_source": meta.get("time_source"),
+                    "time_unit": meta.get("time_unit"),
+                    "source_n_rows": meta.get("source_n_rows"),
+                    "time_gap_count": meta.get("time_gap_count"),
+                    "missing_rows_inserted":
+                        meta.get("missing_rows_inserted"),
+                    "time_gap_seconds": meta.get("time_gap_seconds"),
                     # Upload-history fields.  created_at falls back to the
                     # directory creation time so receiving/ingesting/failed
                     # tests (no meta.json yet) still sort chronologically.
@@ -198,6 +206,29 @@ def pick_pyramid_level(n_raw: int, budget: int) -> int:
     return PYRAMID_LEVELS[-1]
 
 
+def resolve_window_display(n_raw: int, budget: int,
+                           display: str = "auto") -> tuple[str, int]:
+    """Resolve a requested plot representation to ``(mode, level)``.
+
+    ``auto`` preserves the original zoom/sample-count switch. ``line`` always
+    returns one y-value per x-value; ranges above the response hard cap are
+    stride-sampled so a manual choice cannot send millions of browser points.
+    ``envelope`` always returns min/max buckets from the pyramid.
+    """
+    if display not in {"auto", "line", "envelope"}:
+        raise ValueError(
+            "display must be one of: auto, line, envelope")
+
+    if display == "line":
+        return "raw", max(1, math.ceil(n_raw / POINT_BUDGET_CAP))
+
+    raw_limit = max(MAX_POINTS_RAW, budget)
+    if display == "auto" and n_raw <= raw_limit:
+        return "raw", 1
+
+    return "envelope", pick_pyramid_level(n_raw, budget)
+
+
 def bucket_minmax(arr: np.ndarray, factor: int):
     """Per-bucket nanmin/nanmax. Pads the tail bucket with NaN. Used by the
     ingest pyramid build and by dsp's filtered/spectrum envelope reductions."""
@@ -253,8 +284,9 @@ def window_bounds(meta: dict, t0: float | None,
 
 
 def read_window(name: str, cols: list[str], t0: float | None,
-                t1: float | None, px: int) -> dict:
-    """Serve a plot window: raw when zoomed in, min/max envelope otherwise."""
+                t1: float | None, px: int,
+                display: str = "auto") -> dict:
+    """Serve a plot window using the requested line/envelope representation."""
     meta = get_meta(name)
     if meta is None:
         raise FileNotFoundError(name)
@@ -264,18 +296,21 @@ def read_window(name: str, cols: list[str], t0: float | None,
 
     budget = plot_budget(px)
     test_dir = TESTS_DIR / name
+    resolved_mode, level = resolve_window_display(n_raw, budget, display)
 
-    if n_raw <= max(MAX_POINTS_RAW, budget):
-        df = (pl.scan_parquet(test_dir / "data.parquet")
-              .slice(i0, n_raw).select([tcol] + cols).collect())
+    if resolved_mode == "raw":
+        query = pl.scan_parquet(test_dir / "data.parquet").slice(i0, n_raw)
+        if level > 1:
+            query = query.gather_every(level)
+        df = query.select([tcol] + cols).collect()
         return {
-            "mode": "raw", "level": 1, "n_raw": n_raw, "i0": i0, "i1": i1,
+            "mode": "raw", "level": level, "n_raw": n_raw,
+            "i0": i0, "i1": i1,
             "t": to_json_list(df[tcol].to_numpy()),
             "series": {c: to_json_list(df[c].to_numpy().astype(np.float64))
                        for c in cols},
         }
 
-    level = pick_pyramid_level(n_raw, budget)
     b0, b1 = i0 // level, -(-i1 // level)
     lvl_cols = [tcol]
     for c in cols:

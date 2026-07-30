@@ -1,7 +1,7 @@
-import React from 'react';
-import { SelectStyle } from '../../constants/styles';
+import React, { useEffect, useId, useRef, useState } from 'react';
+import styles from './AxisControls.module.css';
 
-interface AxisControlsProps {
+export interface AxisControlsProps {
   columns: string[];
   xAxis: string;
   yAxis: string;
@@ -11,6 +11,9 @@ interface AxisControlsProps {
   onResetZoom: () => void;
   onReloadData: () => void;
   isLoading: boolean;
+  clusteringAvailable: boolean;
+  clusteringEnabled: boolean;
+  onClusteringChange: (enabled: boolean) => void;
 }
 
 export const AxisControls: React.FC<AxisControlsProps> = ({
@@ -23,67 +26,165 @@ export const AxisControls: React.FC<AxisControlsProps> = ({
   onResetZoom,
   onReloadData,
   isLoading,
+  clusteringAvailable,
+  clusteringEnabled,
+  onClusteringChange,
 }) => {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const popoverId = useId();
+
+  useEffect(() => {
+    if (!moreOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setMoreOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setMoreOpen(false);
+      moreButtonRef.current?.focus();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [moreOpen]);
+
+  const reloadData = () => {
+    onReloadData();
+    setMoreOpen(false);
+  };
+
   return (
-    <div
-      style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}
-    >
-      <span style={{ color: '#a0a0a0', fontSize: 12 }}>
-        TP mean scatter — X:
-      </span>
-      <select value={xAxis} onChange={(e) => onXAxisChange(e.target.value)} style={SelectStyle}>
-        {columns.map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
-      </select>
-      <span style={{ color: '#a0a0a0', fontSize: 12 }}>Y:</span>
-      <select value={yAxis} onChange={(e) => onYAxisChange(e.target.value)} style={SelectStyle}>
-        {columns.map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
-      </select>
-      {mainZoom && (
+    <div ref={rootRef} className={styles.root}>
+      <div className={styles.commandBar}>
+        <span className={styles.contextLabel}>TP mean scatter</span>
+
+        <div className={styles.axisFields}>
+          <label className={styles.axisField}>
+            <span className={styles.axisLabel}>X</span>
+            <select
+              value={xAxis}
+              onChange={(event) => onXAxisChange(event.target.value)}
+              className={styles.axisSelect}
+              aria-label="Scatter plot X axis"
+            >
+              {columns.map((column) => (
+                <option key={column} value={column}>
+                  {column}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={styles.axisField}>
+            <span className={styles.axisLabel}>Y</span>
+            <select
+              value={yAxis}
+              onChange={(event) => onYAxisChange(event.target.value)}
+              className={styles.axisSelect}
+              aria-label="Scatter plot Y axis"
+            >
+              {columns.map((column) => (
+                <option key={column} value={column}>
+                  {column}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {mainZoom && (
+          <button type="button" onClick={onResetZoom} className={styles.resetButton}>
+            Reset zoom
+          </button>
+        )}
+
         <button
-          onClick={onResetZoom}
-          style={{
-            background: '#3c3c3c',
-            color: '#e0e0e0',
-            border: 'none',
-            borderRadius: 3,
-            padding: '4px 8px',
-            cursor: 'pointer',
-            fontSize: 11,
-          }}
+          ref={moreButtonRef}
+          type="button"
+          className={`${styles.moreButton} ${moreOpen ? styles.moreButtonOpen : ''}`}
+          aria-expanded={moreOpen}
+          aria-controls={popoverId}
+          onClick={() => setMoreOpen((open) => !open)}
         >
-          Reset Zoom
+          <span>More</span>
+          <span className={styles.moreGlyph} aria-hidden="true">
+            •••
+          </span>
         </button>
+      </div>
+
+      {moreOpen && (
+        <div
+          id={popoverId}
+          className={styles.popover}
+          role="group"
+          aria-label="Scatter plot options"
+        >
+          <button
+            type="button"
+            className={styles.reloadButton}
+            onClick={reloadData}
+            disabled={isLoading}
+            title={isLoading ? 'Loading data…' : 'Reload data'}
+          >
+            <span className={styles.reloadIcon} aria-hidden="true">
+              ↻
+            </span>
+            <span className={styles.actionCopy}>
+              <strong>{isLoading ? 'Reloading data…' : 'Reload data'}</strong>
+              <small>Refresh test-point statistics and traces</small>
+            </span>
+          </button>
+
+          {clusteringAvailable && (
+            <div className={styles.optionRow}>
+              <span className={styles.actionCopy}>
+                <strong>Cluster overlaps</strong>
+                <small>Group nearby points to keep dense runs legible</small>
+              </span>
+              <button
+                type="button"
+                className={styles.switch}
+                role="switch"
+                aria-label="Cluster overlapping scatter points"
+                aria-checked={clusteringEnabled}
+                onClick={() => onClusteringChange(!clusteringEnabled)}
+              >
+                <span aria-hidden="true" />
+              </button>
+            </div>
+          )}
+
+          <div className={styles.gestureHelp}>
+            <span className={styles.gestureTitle}>Scatter gestures</span>
+            <ul>
+              <li>
+                <kbd>Click</kbd>
+                <span>Select or deselect a point</span>
+              </li>
+              <li>
+                <kbd>Scroll</kbd>
+                <span>Zoom around the pointer</span>
+              </li>
+              <li>
+                <kbd>Drag</kbd>
+                <span>Pan the current view</span>
+              </li>
+            </ul>
+          </div>
+        </div>
       )}
-      <div style={{ flex: 1 }} />
-      <button
-        onClick={onReloadData}
-        disabled={isLoading}
-        title={isLoading ? 'Loading...' : 'Reload Data'}
-        style={{
-          background: isLoading ? '#2d2d2d' : '#1e5a2e',
-          color: isLoading ? '#666' : '#e0e0e0',
-          border: isLoading ? '1px solid #3c3c3c' : '1px solid #2d8a4a',
-          borderRadius: 3,
-          padding: '4px 8px',
-          cursor: isLoading ? 'not-allowed' : 'pointer',
-          fontSize: 14,
-          width: 28,
-          height: 24,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        ↻
-      </button>
     </div>
   );
 };

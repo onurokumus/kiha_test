@@ -4,8 +4,11 @@ import { PLOT_INSET, PLOT_INSET_X, PLOT_INSET_Y } from '../constants/scatterGeom
 
 type ZoomDomain = [number, number, number, number] | null;
 
-export const useMainPlotZoom = (scatterData: ScatterDataPoint[]) => {
-  const [mainZoom, setMainZoom] = useState<ZoomDomain>(null);
+export const useMainPlotZoom = (
+  scatterData: ScatterDataPoint[],
+  initialZoom: ZoomDomain = null
+) => {
+  const [mainZoom, setMainZoom] = useState<ZoomDomain>(initialZoom);
 
   // Calculate default bounds - reused for consistency
   const defaultBounds = useMemo(() => {
@@ -91,6 +94,7 @@ export const useMainPlotZoom = (scatterData: ScatterDataPoint[]) => {
 
   return {
     mainZoom,
+    setMainZoom,
     handleMainWheel,
     handlePan,
     resetZoom,

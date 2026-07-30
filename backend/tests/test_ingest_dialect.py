@@ -66,8 +66,15 @@ class IngestDialectTests(DataDirTestCase):
         self.assertTrue(meta["time_quantized"])
         # coarse-but-uniform clock time is NOT flagged as jitter
         self.assertFalse(meta["jitter_warning"])
-        # clock start 19:39,2 -> 1179.2 s
-        self.assertAlmostEqual(meta["t_start"], 1179.2, places=3)
+        # Working time is elapsed seconds; the source clock origin is retained
+        # only as traceability metadata.
+        self.assertEqual(meta["t_start"], 0.0)
+        self.assertEqual(meta["time_unit"], "s")
+        self.assertAlmostEqual(
+            meta["source_time_origin_s"], 1179.2, places=3)
+        stored = pl.read_parquet(
+            self.tests / "kiha" / "data.parquet", columns=["TIME"])
+        self.assertEqual(stored["TIME"][0], 0.0)
 
     def test_non_numeric_column_is_skipped_not_fatal(self):
         meta = ingest.ingest_csv(self.src, "kiha")
@@ -129,6 +136,292 @@ class IngestDialectTests(DataDirTestCase):
         meta = ingest.ingest_csv(garbage, "garbage", assume_fs=100.0)
         self.assertEqual(meta["time_source"], "generated")
         self.assertEqual(meta["fs_hz"], 100.0)
+
+    def test_backward_time_step_falls_back_to_a_uniform_axis(self):
+        backward = Path(self.temp.name) / "backward.csv"
+        backward.write_text(
+            "TIME,rpm\n10,100\n12,101\n11,102\n13,103\n",
+            encoding="utf-8",
+        )
+        meta = ingest.ingest_csv(
+            backward, "backward", assume_fs=50.0,
+            time_mode="column", time_column="TIME")
+        self.assertEqual(meta["time_source"], "generated")
+        self.assertEqual(meta["fs_hz"], 50.0)
+        stored = pl.read_parquet(
+            self.tests / "backward" / "data.parquet")
+        np.testing.assert_allclose(
+            stored["TIME"].to_numpy(), [0.0, 0.02, 0.04, 0.06])
+
+    def test_missing_measured_rows_keep_nominal_rate_and_become_nan_gaps(self):
+        missing = Path(self.temp.name) / "missing-rows.csv"
+        missing.write_text(
+            "TIME,signal,rpm\n"
+            "0.0,10,100\n"
+            "0.5,11,101\n"
+            "1.0,12,102\n"
+            "3.5,13,103\n"
+            "4.0,14,104\n",
+            encoding="utf-8",
+        )
+        meta = ingest.ingest_csv(
+            missing, "missing-rows",
+            time_mode="column", time_column="TIME")
+
+        self.assertEqual(meta["fs_hz"], 2.0)
+        self.assertEqual(meta["source_n_rows"], 5)
+        self.assertEqual(meta["n_rows"], 9)
+        self.assertEqual(meta["time_gap_count"], 1)
+        self.assertEqual(meta["missing_rows_inserted"], 4)
+        self.assertEqual(meta["time_gap_seconds"], 2.0)
+        self.assertEqual(meta["time_gap_ranges"], [[3, 7]])
+        self.assertTrue(meta["jitter_warning"])
+        self.assertEqual(meta["nan_counts"]["signal"], 4)
+        self.assertEqual(meta["nan_counts"]["rpm"], 4)
+        listed = next(
+            test for test in store.list_tests()
+            if test["name"] == "missing-rows"
+        )
+        self.assertEqual(listed["time_gap_count"], 1)
+        self.assertEqual(listed["missing_rows_inserted"], 4)
+
+        stored = pl.read_parquet(
+            self.tests / "missing-rows" / "data.parquet")
+        np.testing.assert_allclose(
+            stored["TIME"].to_numpy(),
+            np.arange(9, dtype=np.float64) / 2.0,
+        )
+        signal = stored["signal"].to_numpy()
+        np.testing.assert_allclose(signal[[0, 1, 2, 7, 8]],
+                                   [10, 11, 12, 13, 14])
+        self.assertTrue(np.isnan(signal[3:7]).all())
+
+        self.assertEqual(store.window_bounds(meta, 3.5, 4.0), (7, 9))
+        window = store.read_window(
+            "missing-rows", ["signal"], None, None, 1000)
+        self.assertEqual(window["t"], [i / 2.0 for i in range(9)])
+        self.assertEqual(window["series"]["signal"][3:7],
+                         [None, None, None, None])
+
+    def test_generated_time_cannot_infer_missing_source_rows(self):
+        missing = Path(self.temp.name) / "generated-missing.csv"
+        missing.write_text(
+            "TIME,signal\n"
+            "0.0,10\n"
+            "0.5,11\n"
+            "1.0,12\n"
+            "3.5,13\n"
+            "4.0,14\n",
+            encoding="utf-8",
+        )
+        meta = ingest.ingest_csv(
+            missing, "generated-missing", assume_fs=2.0,
+            time_mode="generated", time_column="TIME")
+        self.assertEqual(meta["n_rows"], 5)
+        self.assertEqual(meta["source_n_rows"], 5)
+        self.assertEqual(meta["time_gap_count"], 0)
+        self.assertEqual(meta["missing_rows_inserted"], 0)
+        stored = pl.read_parquet(
+            self.tests / "generated-missing" / "data.parquet")
+        np.testing.assert_allclose(
+            stored["TIME"].to_numpy(), [0.0, 0.5, 1.0, 1.5, 2.0])
+
+    def test_very_low_measured_rate_keeps_usable_precision(self):
+        slow = Path(self.temp.name) / "slow.csv"
+        slow.write_text(
+            "TIME,rpm\n0,100\n3000,101\n6000,102\n",
+            encoding="utf-8",
+        )
+        meta = ingest.ingest_csv(
+            slow, "slow", time_mode="column", time_column="TIME")
+        self.assertAlmostEqual(meta["fs_hz"], 1.0 / 3000.0)
+        self.assertGreater(meta["fs_hz"], 0)
+        self.assertEqual(meta["duration_s"], 9000.0)
+
+    def test_high_generated_rate_keeps_sub_millisecond_duration(self):
+        fast = Path(self.temp.name) / "fast.csv"
+        fast.write_text("rpm\n100\n101\n", encoding="utf-8")
+        meta = ingest.ingest_csv(
+            fast, "fast", assume_fs=10_000.0,
+            time_mode="generated", time_column="time_s")
+        self.assertEqual(meta["fs_hz"], 10_000.0)
+        self.assertAlmostEqual(meta["duration_s"], 0.0002)
+        self.assertGreater(meta["duration_s"], 0)
+
+    def test_tiny_positive_generated_rate_is_not_rounded_to_zero(self):
+        tiny = Path(self.temp.name) / "tiny-rate.csv"
+        tiny.write_text("rpm\n100\n101\n", encoding="utf-8")
+        meta = ingest.ingest_csv(
+            tiny, "tiny-rate", assume_fs=4e-7,
+            time_mode="generated", time_column="time_s")
+        self.assertEqual(meta["fs_hz"], 4e-7)
+        self.assertGreater(meta["duration_s"], 0)
+
+    def test_hh_mm_ss_millisecond_clock_starts_at_zero_seconds(self):
+        screenshot = Path(self.temp.name) / "screenshot-clock.csv"
+        screenshot.write_text(
+            "TIME;RPM_L\n"
+            "11:00:19.687;100\n"
+            "11:00:19.687;101\n"
+            "11:00:19.688;102\n"
+            "11:00:19.688;103\n"
+            "11:00:19.689;104\n",
+            encoding="utf-8",
+        )
+        meta = ingest.ingest_csv(screenshot, "screenshot-clock")
+        self.assertEqual(meta["time_source"], "measured")
+        self.assertEqual(meta["t_start"], 0.0)
+        self.assertAlmostEqual(meta["source_time_origin_s"], 39619.687)
+        self.assertAlmostEqual(meta["fs_hz"], 2000.0, places=2)
+        self.assertTrue(meta["time_quantized"])
+        stored = pl.read_parquet(
+            self.tests / "screenshot-clock" / "data.parquet")
+        np.testing.assert_allclose(
+            stored["TIME"].to_numpy(),
+            [0.0, 0.0, 0.001, 0.001, 0.002],
+            atol=1e-9,
+        )
+
+    def test_numeric_time_origin_is_normalized_too(self):
+        numeric = Path(self.temp.name) / "numeric-origin.csv"
+        numeric.write_text(
+            "elapsed,rpm\n100.0,10\n100.1,11\n100.2,12\n",
+            encoding="utf-8",
+        )
+        meta = ingest.ingest_csv(
+            numeric, "numeric-origin",
+            time_mode="column", time_column="elapsed")
+        self.assertEqual(meta["t_start"], 0.0)
+        self.assertAlmostEqual(meta["source_time_origin_s"], 100.0)
+        stored = pl.read_parquet(
+            self.tests / "numeric-origin" / "data.parquet")
+        np.testing.assert_allclose(
+            stored["elapsed"].to_numpy(), [0.0, 0.1, 0.2])
+
+    def test_padded_time_header_is_detected_and_selectable_exactly(self):
+        padded = Path(self.temp.name) / "padded-header.csv"
+        padded.write_text(
+            " force , TIME ,rpm\n"
+            "12,11:00:19.687,100\n"
+            "13,11:00:19.688,101\n"
+            "14,11:00:19.689,102\n",
+            encoding="utf-8",
+        )
+        auto = ingest.ingest_csv(padded, "padded-auto")
+        self.assertEqual(auto["time_column"], " TIME ")
+        self.assertEqual(auto["time_source"], "measured")
+        auto_stored = pl.read_parquet(
+            self.tests / "padded-auto" / "data.parquet")
+        np.testing.assert_allclose(
+            auto_stored[" TIME "].to_numpy(), [0.0, 0.001, 0.002],
+            atol=1e-9,
+        )
+
+        explicit = ingest.ingest_csv(
+            padded, "padded-explicit",
+            time_mode="column", time_column=" TIME ")
+        self.assertEqual(explicit["time_column"], " TIME ")
+        self.assertIn(" force ", explicit["columns"])
+
+    def test_explicit_existing_time_column_preserves_first_signal(self):
+        custom = Path(self.temp.name) / "custom-column.csv"
+        custom.write_text(
+            "force,RigClock,rpm\n"
+            "12.0,50.00,100\n"
+            "13.0,50.01,101\n"
+            "14.0,50.02,102\n",
+            encoding="utf-8",
+        )
+        meta = ingest.ingest_csv(
+            custom, "custom-column",
+            time_mode="column", time_column="RigClock")
+        self.assertEqual(meta["time_column"], "RigClock")
+        self.assertEqual(meta["columns"], ["RigClock", "force", "rpm"])
+        stored = pl.read_parquet(
+            self.tests / "custom-column" / "data.parquet")
+        np.testing.assert_allclose(
+            stored["RigClock"].to_numpy(), [0.0, 0.01, 0.02])
+        self.assertEqual(stored["force"].to_list(), [12.0, 13.0, 14.0])
+
+    def test_generated_custom_time_column_uses_requested_rate(self):
+        custom = Path(self.temp.name) / "generated-column.csv"
+        custom.write_text(
+            "force,rpm\n12,100\n13,101\n14,102\n",
+            encoding="utf-8",
+        )
+        meta = ingest.ingest_csv(
+            custom, "generated-column", assume_fs=500.0,
+            time_mode="generated", time_column="elapsed_s")
+        self.assertEqual(meta["time_source"], "generated")
+        self.assertEqual(meta["time_column"], "elapsed_s")
+        self.assertEqual(meta["fs_hz"], 500.0)
+        self.assertEqual(meta["columns"], ["elapsed_s", "force", "rpm"])
+        stored = pl.read_parquet(
+            self.tests / "generated-column" / "data.parquet")
+        np.testing.assert_allclose(
+            stored["elapsed_s"].to_numpy(), [0.0, 0.002, 0.004])
+        self.assertEqual(stored["force"].to_list(), [12.0, 13.0, 14.0])
+
+    def test_time_column_cannot_collide_with_pyramid_field_names(self):
+        custom = Path(self.temp.name) / "pyramid-name-collision.csv"
+        custom.write_text(
+            "force,force__min,rpm\n"
+            "12,0.0,100\n"
+            "13,0.1,101\n"
+            "14,0.2,102\n",
+            encoding="utf-8",
+        )
+        cases = (
+            ("generated", "force__min"),
+            ("column", "force__min"),
+        )
+        for mode, column in cases:
+            with self.subTest(mode=mode):
+                with self.assertRaisesRegex(
+                        ValueError, "conflicts with pyramid fields"):
+                    ingest.ingest_csv(
+                        custom, f"collision-{mode}", assume_fs=500.0,
+                        time_mode=mode, time_column=column)
+
+    def test_generated_mode_overrides_a_valid_clock_rate(self):
+        forced = Path(self.temp.name) / "forced-rate.csv"
+        forced.write_text(
+            "TIME,rpm\n10.0,1\n10.1,2\n10.2,3\n",
+            encoding="utf-8",
+        )
+        meta = ingest.ingest_csv(
+            forced, "forced-rate", assume_fs=20.0,
+            time_mode="generated", time_column="TIME")
+        self.assertEqual(meta["fs_hz"], 20.0)
+        self.assertEqual(meta["source_time_origin_s"], None)
+        stored = pl.read_parquet(
+            self.tests / "forced-rate" / "data.parquet")
+        np.testing.assert_allclose(
+            stored["TIME"].to_numpy(), [0.0, 0.05, 0.1])
+
+    def test_auto_mode_adds_time_without_dropping_a_signal(self):
+        no_time = Path(self.temp.name) / "no-time.csv"
+        no_time.write_text(
+            "force,rpm\n12,100\n13,101\n14,102\n",
+            encoding="utf-8",
+        )
+        meta = ingest.ingest_csv(
+            no_time, "no-time", assume_fs=100.0)
+        self.assertEqual(meta["time_column"], "time_s")
+        self.assertEqual(meta["columns"], ["time_s", "force", "rpm"])
+        self.assertEqual(meta["time_source"], "generated")
+
+    def test_unknown_explicit_time_column_fails_clearly(self):
+        missing = Path(self.temp.name) / "missing-column.csv"
+        missing.write_text(
+            "force,rpm\n12,100\n13,101\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(
+                ValueError, "time column 'RigClock' was not found"):
+            ingest.ingest_csv(
+                missing, "missing-column",
+                time_mode="column", time_column="RigClock")
 
 
 class AutoSplitRoundTripTests(DataDirTestCase):
@@ -198,6 +491,11 @@ class ReadRobustnessTests(DataDirTestCase):
     def test_data_with_only_the_time_column_is_400(self):
         r = self.client.get("/api/tests/alpha/data?cols=time")
         self.assertEqual(r.status_code, 400)
+
+    def test_data_rejects_an_unknown_display_mode(self):
+        r = self.client.get(
+            "/api/tests/alpha/data?cols=rpm&display=unknown")
+        self.assertEqual(r.status_code, 422)
 
     def test_xy_rejects_a_zero_point_budget(self):
         r = self.client.get(

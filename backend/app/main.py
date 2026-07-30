@@ -26,10 +26,10 @@ from fastapi import (BackgroundTasks, FastAPI, HTTPException, Query, Request,
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from . import dsp, edit, split, store, uploads
+from . import dsp, edit, formula, recipes, split, store, uploads
 from .config import (CORS_ORIGINS, POINT_BUDGET_CAP, TESTS_DIR, TRASH_DIR,
                      TRASH_MAX_AGE_S)
 from .locks import (catalog_read, catalog_write, data_read, drop_test_lock,
@@ -334,12 +334,42 @@ class UserMetaPatch(BaseModel):
     user_meta: dict[str, str] = Field(default_factory=dict)
 
 
+class FormulaSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=255)
+    expression: str = Field(
+        min_length=1, max_length=formula.MAX_EXPRESSION_LENGTH)
+    replace: bool = False
+
+
+class FormulaPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    formulas: list[FormulaSpec] = Field(
+        min_length=1, max_length=formula.MAX_FORMULAS)
+    sample_size: int = Field(default=64, ge=1, le=256)
+
+
+class FormulaRecipePut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    description: str = Field(
+        default="", max_length=recipes.MAX_DESCRIPTION_LENGTH)
+    formulas: list[FormulaSpec] = Field(
+        min_length=1, max_length=formula.MAX_FORMULAS)
+
+
 class EditOps(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     rename: dict[str, str] = Field(default_factory=dict)
     drop: list[str] = Field(default_factory=list)
     trim_t0: float | None = None
     trim_t1: float | None = None
     nan_policy: str | None = None
+    formulas: list[FormulaSpec] = Field(
+        default_factory=list, max_length=formula.MAX_FORMULAS)
 
 
 @app.patch("/api/tests/{name}/meta")
@@ -360,11 +390,36 @@ def api_patch_meta(name: str, payload: UserMetaPatch):
         return meta
 
 
+@app.post("/api/tests/{name}/formulas/preview")
+def api_preview_formulas(name: str, payload: FormulaPreviewRequest):
+    """Synchronously validate formulas and evaluate representative rows."""
+    _reject_if_busy(name)
+    with data_read(name):
+        meta = store.get_meta(name)
+        if meta is None:
+            raise HTTPException(
+                404, f"test '{name}' not found or not ready")
+        if store.get_status(name).get("status") != "ready":
+            raise HTTPException(409, f"test '{name}' is not ready")
+        try:
+            return formula.preview_formulas(
+                TESTS_DIR / name / "data.parquet",
+                meta,
+                payload.formulas,
+                payload.sample_size,
+            )
+        except formula.FormulaError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+
 @app.post("/api/tests/{name}/edit")
 def api_edit(name: str, ops: EditOps, background: BackgroundTasks):
-    """Schedule a destructive rebuild: column rename/drop, trim, NaN policy.
-    Validates against current meta, then runs like an ingest (status
-    'rebuilding' -> 'ready'/'error')."""
+    """Schedule a destructive rebuild.
+
+    Supports column rename/drop, trim, NaN policy, or a standalone ordered
+    formula batch. Validates against current meta, then runs like an ingest
+    (status 'rebuilding' -> 'ready'/'error').
+    """
     meta = store.get_meta(name)
     if meta is None:
         raise HTTPException(404, f"test '{name}' not found")
@@ -373,10 +428,25 @@ def api_edit(name: str, ops: EditOps, background: BackgroundTasks):
 
     tcol = meta["time_column"]
     columns = set(meta["columns"])
+    has_legacy_op = bool(
+        ops.rename or ops.drop or ops.nan_policy
+        or ops.trim_t0 is not None or ops.trim_t1 is not None)
+    if ops.formulas and has_legacy_op:
+        raise HTTPException(
+            400, "formulas cannot be combined with rename, drop, trim, or "
+                 "NaN-policy operations in one edit")
     has_op = bool(ops.rename or ops.drop or ops.nan_policy
-                  or ops.trim_t0 is not None or ops.trim_t1 is not None)
+                  or ops.trim_t0 is not None or ops.trim_t1 is not None
+                  or ops.formulas)
     if not has_op:
         raise HTTPException(400, "no edit operations given")
+
+    if ops.formulas:
+        try:
+            formula.compile_formula_batch(
+                ops.formulas, meta["columns"], tcol)
+        except formula.FormulaError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     unknown = [c for c in list(ops.rename) + ops.drop if c not in columns]
     if unknown:
@@ -396,14 +466,16 @@ def api_edit(name: str, ops: EditOps, background: BackgroundTasks):
     if len(columns) - len(ops.drop) < 2:
         raise HTTPException(400, "cannot drop every data column")
 
-    t_start = meta.get("t_start") or 0.0
-    t_end = t_start + meta["duration_s"]
-    lo = t_start if ops.trim_t0 is None else ops.trim_t0
-    hi = t_end if ops.trim_t1 is None else ops.trim_t1
-    if not (t_start - 1e-9 <= lo < hi <= t_end + 1e-9) or hi - lo < 1.0:
-        raise HTTPException(
-            400, f"trim range must satisfy {t_start:g} <= t0 < t1 <= "
-                 f"{t_end:g} and keep at least 1 s of data")
+    if ops.trim_t0 is not None or ops.trim_t1 is not None:
+        t_start = meta.get("t_start") or 0.0
+        t_end = t_start + meta["duration_s"]
+        lo = t_start if ops.trim_t0 is None else ops.trim_t0
+        hi = t_end if ops.trim_t1 is None else ops.trim_t1
+        if (not (t_start - 1e-9 <= lo < hi <= t_end + 1e-9)
+                or hi - lo < 1.0):
+            raise HTTPException(
+                400, f"trim range must satisfy {t_start:g} <= t0 < t1 <= "
+                     f"{t_end:g} and keep at least 1 s of data")
 
     if ops.nan_policy is not None and ops.nan_policy not in edit.NAN_POLICIES:
         raise HTTPException(
@@ -421,6 +493,52 @@ def api_edit(name: str, ops: EditOps, background: BackgroundTasks):
     return {"name": name, "status": "rebuilding"}
 
 
+# ---------- global formula recipes ----------
+
+@app.get("/api/formula-recipes")
+def api_list_formula_recipes():
+    try:
+        return recipes.list_recipes()
+    except recipes.RecipeError as exc:
+        raise HTTPException(500, str(exc)) from None
+
+
+@app.get("/api/formula-recipes/{recipe_name}")
+def api_get_formula_recipe(recipe_name: str):
+    try:
+        recipe = recipes.get_recipe(recipe_name)
+    except recipes.RecipeError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if recipe is None:
+        raise HTTPException(
+            404, f"formula recipe '{recipe_name}' not found")
+    return recipe
+
+
+@app.put("/api/formula-recipes/{recipe_name}")
+def api_put_formula_recipe(
+    recipe_name: str,
+    payload: FormulaRecipePut,
+):
+    try:
+        return recipes.put_recipe(
+            recipe_name, payload.description, payload.formulas)
+    except recipes.RecipeError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.delete("/api/formula-recipes/{recipe_name}")
+def api_delete_formula_recipe(recipe_name: str):
+    try:
+        deleted = recipes.delete_recipe(recipe_name)
+    except recipes.RecipeError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if not deleted:
+        raise HTTPException(
+            404, f"formula recipe '{recipe_name}' not found")
+    return {"ok": True, "name": recipes.validate_recipe_name(recipe_name)}
+
+
 # ---------- data windows ----------
 
 @app.get("/api/tests/{name}/data")
@@ -428,12 +546,13 @@ def api_edit(name: str, ops: EditOps, background: BackgroundTasks):
 def api_data(name: str,
              cols: str = Query(..., description="comma-separated column names"),
              t0: float | None = None, t1: float | None = None,
-             px: int = 1500):
+             px: int = 1500,
+             display: Literal["auto", "line", "envelope"] = "auto"):
     meta = store.get_meta(name)
     if meta is None:
         raise HTTPException(404, f"test '{name}' not found or not ready")
     col_list = _data_columns(meta, cols)
-    return store.read_window(name, col_list, t0, t1, px)
+    return store.read_window(name, col_list, t0, t1, px, display)
 
 
 # ---------- csv export / raw download ----------
@@ -582,14 +701,23 @@ def api_filter(name: str,
                t0: float | None = None, t1: float | None = None,
                px: int = 1500, order: int = 4,
                f1: float | None = None, f2: float | None = None,
-               window_s: float | None = None):
+               window_s: float | None = None,
+               max_spike_s: float = dsp.DEFAULT_MAX_SPIKE_S,
+               threshold: float = dsp.DEFAULT_DESPIKE_THRESHOLD,
+               abs_floor: float = dsp.DEFAULT_DESPIKE_ABS_FLOOR,
+               replacement: Literal["linear", "median"] = "linear",
+               display: Literal["auto", "line", "envelope"] = "auto"):
     meta = store.get_meta(name)
     if meta is None:
         raise HTTPException(404, f"test '{name}' not found or not ready")
     col_list = _data_columns(meta, cols)
     try:
-        return dsp.filtered_window(name, col_list, kind, t0, t1, px,
-                                   order, f1, f2, window_s)
+        return dsp.filtered_window(
+            name, col_list, kind, t0, t1, px,
+            order=order, f1=f1, f2=f2, window_s=window_s,
+            display=display, max_spike_s=max_spike_s,
+            threshold=threshold, abs_floor=abs_floor,
+            replacement=replacement)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

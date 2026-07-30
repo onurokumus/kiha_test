@@ -13,6 +13,10 @@ import {
   EditOps,
   FilteredWindow,
   FilterSpec,
+  FormulaPreview,
+  FormulaRecipe,
+  FormulaRecipeList,
+  FormulaSpec,
   IdCandidate,
   SpectrumData,
   TestInfo,
@@ -21,6 +25,7 @@ import {
   TestPointsFile,
   TpStat,
   TpTraceResponse,
+  WindowDisplayMode,
   XYData,
 } from '../types';
 
@@ -87,19 +92,21 @@ export async function fetchTestPointTrace(
   );
 }
 
-/** Windowed full-test read: raw samples when the viewport is small enough,
- *  min/max envelope from the pyramid otherwise. Re-fetched on zoom/pan. */
+/** Windowed full-test read. Auto chooses line/envelope from the visible sample
+ *  count; callers can force either representation. Re-fetched on zoom/pan. */
 export async function fetchWindow(
   name: string,
   cols: string[],
   t0: number | null,
   t1: number | null,
   px: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  display: WindowDisplayMode = 'auto'
 ): Promise<DataWindow> {
   const params = new URLSearchParams({
     cols: cols.join(','),
     px: String(Math.max(200, Math.round(px))),
+    display,
   });
   if (t0 !== null) params.set('t0', String(t0));
   if (t1 !== null) params.set('t1', String(t1));
@@ -187,8 +194,8 @@ export async function fetchSpectrum(
   );
 }
 
-/** Server-side filtered window, same raw/envelope shape as fetchWindow so it
- *  overlays on the raw series. Query gotcha: the filter kind is `type`. */
+/** Server-side filtered window, using the same requested representation as
+ *  fetchWindow so both arrays align. Query gotcha: filter kind is `type`. */
 export async function fetchFiltered(
   name: string,
   cols: string[],
@@ -196,17 +203,23 @@ export async function fetchFiltered(
   t0: number | null,
   t1: number | null,
   px: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  display: WindowDisplayMode = 'auto'
 ): Promise<FilteredWindow> {
   const params = new URLSearchParams({
     cols: cols.join(','),
     type: spec.kind,
     px: String(Math.max(200, Math.round(px))),
+    display,
   });
   if (spec.order !== undefined) params.set('order', String(spec.order));
   if (spec.f1 !== undefined) params.set('f1', String(spec.f1));
   if (spec.f2 !== undefined) params.set('f2', String(spec.f2));
   if (spec.windowS !== undefined) params.set('window_s', String(spec.windowS));
+  if (spec.maxSpikeS !== undefined) params.set('max_spike_s', String(spec.maxSpikeS));
+  if (spec.threshold !== undefined) params.set('threshold', String(spec.threshold));
+  if (spec.absFloor !== undefined) params.set('abs_floor', String(spec.absFloor));
+  if (spec.replacement !== undefined) params.set('replacement', spec.replacement);
   if (t0 !== null) params.set('t0', String(t0));
   if (t1 !== null) params.set('t1', String(t1));
   return getJson<FilteredWindow>(
@@ -237,6 +250,44 @@ export async function editTest(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(ops),
+  });
+}
+
+/** Validate equations against a test and return a small full-resolution sample
+ * without modifying the stored data. */
+export async function previewFormulas(
+  name: string,
+  formulas: FormulaSpec[],
+  sampleSize = 8
+): Promise<FormulaPreview> {
+  return sendJson(`/tests/${encodeURIComponent(name)}/formulas/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ formulas, sample_size: sampleSize }),
+  });
+}
+
+export async function fetchFormulaRecipes(): Promise<FormulaRecipeList> {
+  return getJson<FormulaRecipeList>('/formula-recipes');
+}
+
+export async function saveFormulaRecipe(
+  name: string,
+  formulas: FormulaSpec[],
+  description = ''
+): Promise<FormulaRecipe> {
+  return sendJson(`/formula-recipes/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ formulas, description }),
+  });
+}
+
+export async function deleteFormulaRecipe(
+  name: string
+): Promise<{ ok: true; name: string }> {
+  return sendJson(`/formula-recipes/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
   });
 }
 

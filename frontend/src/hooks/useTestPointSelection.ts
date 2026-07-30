@@ -70,6 +70,7 @@ export const useTestPointSelection = (maxPoints: number = 6) => {
     selectedTPs,
     setSelectedTPs,
     hiddenTPs,
+    setHiddenTPs,
     toggleTestPoint,
     toggleVisibility,
     removeTP,

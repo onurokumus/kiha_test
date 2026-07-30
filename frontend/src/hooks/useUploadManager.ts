@@ -5,6 +5,7 @@ import {
   createUploadSession,
   getUploadSession,
   runResumableUpload,
+  UploadDataOptions,
   UploadHttpError,
   UploadInit,
   UploadProgress,
@@ -116,15 +117,59 @@ function phaseForTransfer(phase: UploadTransferPhase): UploadPhase {
 function uploadInit(
   item: UploadItem,
   file: File,
-  fsHz: number | undefined
+  options: UploadDataOptions
 ): UploadInit {
+  const timeMode = options.timeMode ?? 'auto';
+  const rawTimeColumn = options.timeColumn ?? '';
+  const timeColumn =
+    timeMode === 'column'
+      ? rawTimeColumn
+      : rawTimeColumn.trim() || (timeMode === 'generated' ? 'time_s' : '');
   return {
     name: item.testName,
     source_file: file.name,
     size_bytes: file.size,
     last_modified_ms: file.lastModified,
-    ...(fsHz && fsHz > 0 ? { fs_hz: fsHz } : {}),
+    ...(options.fsHz && options.fsHz > 0 ? { fs_hz: options.fsHz } : {}),
+    time_mode: timeMode,
+    ...(timeColumn ? { time_column: timeColumn } : {}),
   };
+}
+
+function resolveUploadOptions(
+  selected: UploadDataOptions | undefined,
+  fallbackFsHz: number | undefined
+): UploadDataOptions {
+  const timeMode = selected?.timeMode ?? 'auto';
+  const rawTimeColumn = selected?.timeColumn ?? '';
+  const timeColumn =
+    timeMode === 'column' ? rawTimeColumn : rawTimeColumn.trim();
+  return {
+    fsHz: selected?.fsHz ?? fallbackFsHz,
+    timeMode,
+    ...(timeColumn.trim() ? { timeColumn } : {}),
+  };
+}
+
+function sameUploadOptions(
+  left: UploadDataOptions | undefined,
+  right: UploadDataOptions
+): boolean {
+  const leftMode = left?.timeMode ?? 'auto';
+  const rightMode = right.timeMode ?? 'auto';
+  const leftRawColumn = left?.timeColumn ?? '';
+  const rightRawColumn = right.timeColumn ?? '';
+  const leftColumn =
+    (leftMode === 'column' ? leftRawColumn : leftRawColumn.trim()) ||
+    (leftMode === 'generated' ? 'time_s' : '');
+  const rightColumn =
+    (rightMode === 'column' ? rightRawColumn : rightRawColumn.trim()) ||
+    (rightMode === 'generated' ? 'time_s' : '');
+  return (
+    leftMode === rightMode &&
+    leftColumn === rightColumn &&
+    left?.fsHz === right.fsHz
+  );
 }
 
 function validateDiscoveredSession(
@@ -157,12 +202,18 @@ export function useUploadManager({
   const itemsRef = useRef<UploadItem[]>(initialItems.current);
   const sequence = useRef(initialItems.current.length);
   const files = useRef(new Map<number, File>());
-  // Upload-init settings are immutable session identity. Keep the value used
-  // when each item was created instead of silently switching it if Settings
-  // changes before a retry/resume.
-  const uploadFsHz = useRef<Map<number, number | undefined>>(
+  // Upload-init interpretation is immutable session identity. Keep the exact
+  // values selected for each item instead of silently switching on retry.
+  const uploadOptions = useRef<Map<number, UploadDataOptions>>(
     new Map(
-      initialRecords.current.map((record, index) => [index + 1, record.fsHz])
+      initialRecords.current.map((record, index) => [
+        index + 1,
+        {
+          fsHz: record.fsHz,
+          timeMode: record.timeMode ?? 'auto',
+          timeColumn: record.timeColumn,
+        },
+      ])
     )
   );
   // React state can lag an onSession callback by one render. Cancellation must
@@ -220,7 +271,7 @@ export function useUploadManager({
       const prior = loadUploadRecords().find(
         (record) => record.uploadId === session.upload_id
       );
-      const itemFsHz = uploadFsHz.current.get(id);
+      const itemOptions = uploadOptions.current.get(id) ?? {};
       saveUploadRecord({
         version: 1,
         uploadId: session.upload_id,
@@ -228,7 +279,13 @@ export function useUploadManager({
         fileName: session.source_file,
         sizeBytes: session.size_bytes,
         lastModifiedMs: session.last_modified_ms,
-        ...(itemFsHz && itemFsHz > 0 ? { fsHz: itemFsHz } : {}),
+        ...(itemOptions.fsHz && itemOptions.fsHz > 0
+          ? { fsHz: itemOptions.fsHz }
+          : {}),
+        timeMode: itemOptions.timeMode ?? 'auto',
+        ...(itemOptions.timeColumn
+          ? { timeColumn: itemOptions.timeColumn }
+          : {}),
         chunkSize: session.chunk_size,
         totalChunks: session.total_chunks,
         createdAt: prior?.createdAt ?? new Date().toISOString(),
@@ -268,7 +325,7 @@ export function useUploadManager({
           return late.session;
         }
         const discovered = await createSessionWithTimeout(
-          uploadInit(item, file, uploadFsHz.current.get(id))
+          uploadInit(item, file, uploadOptions.current.get(id) ?? {})
         );
         validateDiscoveredSession(discovered, item, file);
         return discovered;
@@ -393,7 +450,7 @@ export function useUploadManager({
       });
 
       let uploadId = item.sessionId;
-      const itemFsHz = uploadFsHz.current.get(id);
+      const itemOptions = uploadOptions.current.get(id) ?? {};
       let sessionSettled = false;
       let settleSession: (session: UploadSession | undefined) => void =
         () => undefined;
@@ -410,7 +467,7 @@ export function useUploadManager({
       try {
         const result = await runResumableUpload(
           file,
-          uploadInit(item, file, itemFsHz),
+          uploadInit(item, file, itemOptions),
           uploadId,
           controller.signal,
           {
@@ -444,7 +501,7 @@ export function useUploadManager({
         );
         if (uploadId) removeUploadRecord(uploadId);
         files.current.delete(id);
-        uploadFsHz.current.delete(id);
+        uploadOptions.current.delete(id);
         sessionIds.current.delete(id);
         updateUploads((current) =>
           current.filter((candidate) => candidate.id !== id)
@@ -546,8 +603,11 @@ export function useUploadManager({
         return;
       }
       files.current.set(id, file);
-      if (!uploadFsHz.current.has(id)) {
-        uploadFsHz.current.set(id, fsHz);
+      if (!uploadOptions.current.has(id)) {
+        uploadOptions.current.set(
+          id,
+          resolveUploadOptions(undefined, fsHz)
+        );
       }
       paused.current.delete(id);
       canceled.current.delete(id);
@@ -561,8 +621,89 @@ export function useUploadManager({
     [enqueue, fsHz, updateItem]
   );
 
+  const adoptServerUpload = useCallback(
+    async (test: TestInfo, file: File) => {
+      if (!test.upload_id || test.status !== 'receiving') {
+        throw new Error('this upload is no longer available to resume');
+      }
+
+      const session = await getUploadSession(test.upload_id, test.name);
+      if (
+        session.upload_id !== test.upload_id ||
+        session.name !== test.name ||
+        session.state !== 'receiving'
+      ) {
+        throw new Error('the server upload changed before it could be resumed');
+      }
+      if (
+        session.source_file !== file.name ||
+        session.size_bytes !== file.size ||
+        session.last_modified_ms !== file.lastModified
+      ) {
+        throw new Error(
+          `selected file does not match the original upload: expected ` +
+            `${session.source_file} (${session.size_bytes.toLocaleString()} bytes)`
+        );
+      }
+
+      const authoritativeOptions: UploadDataOptions = {
+        ...(session.fs_hz !== null && session.fs_hz !== undefined
+          ? { fsHz: session.fs_hz }
+          : {}),
+        timeMode: session.time_mode ?? 'auto',
+        ...(session.time_column
+          ? { timeColumn: session.time_column }
+          : {}),
+      };
+      const existing = itemsRef.current.find(
+        (item) => item.sessionId === session.upload_id
+      );
+      if (existing) {
+        uploadOptions.current.set(existing.id, authoritativeOptions);
+        if (existing.phase === 'paused' || existing.phase === 'error') {
+          resumeUpload(existing.id, file);
+        }
+        return;
+      }
+      if (itemsRef.current.some((item) => item.testName === session.name)) {
+        throw new Error('this upload is already managed in this browser');
+      }
+
+      const id = ++sequence.current;
+      const item: UploadItem = {
+        id,
+        fileName: session.source_file,
+        testName: session.name,
+        progress:
+          session.size_bytes > 0
+            ? Math.min(1, session.received_bytes / session.size_bytes)
+            : 0,
+        phase: 'queued',
+        sessionId: session.upload_id,
+        committedBytes: session.received_bytes,
+        totalBytes: session.size_bytes,
+        completedChunks: session.received_chunks,
+        totalChunks: session.total_chunks,
+        requiresFile: false,
+      };
+      files.current.set(id, file);
+      uploadOptions.current.set(id, authoritativeOptions);
+      sessionIds.current.set(id, session.upload_id);
+      updateUploads((current) => [...current, item]);
+      rememberSession(id, session);
+      paused.current.delete(id);
+      canceled.current.delete(id);
+      enqueue(id, file);
+    },
+    [enqueue, rememberSession, resumeUpload, updateUploads]
+  );
+
   const startUploads = useCallback(
-    async (selectedFiles: File[]) => {
+    async (
+      selectedFiles: File[],
+      selectedOptions?: UploadDataOptions
+    ) => {
+      const resolvedOptions = resolveUploadOptions(selectedOptions, fsHz);
       let serverTests: TestInfo[];
       try {
         serverTests = await fetchTests();
@@ -613,6 +754,21 @@ export function useUploadManager({
             (item.phase === 'paused' || item.phase === 'error')
         );
         if (resumable) {
+          if (!sameUploadOptions(
+            uploadOptions.current.get(resumable.id),
+            resolvedOptions
+          )) {
+            updateItem(resumable.id, {
+              phase: 'error',
+              error:
+                'this paused upload uses different time settings; cancel it ' +
+                'before importing the file with the new setup',
+            });
+            onNotice(
+              `${file.name}: cancel the paused upload before changing its time setup`
+            );
+            continue;
+          }
           resumeUpload(resumable.id, file);
           continue;
         }
@@ -642,7 +798,7 @@ export function useUploadManager({
         localNames.add(testName);
         if (!item.error) {
           files.current.set(id, file);
-          uploadFsHz.current.set(id, fsHz);
+          uploadOptions.current.set(id, resolvedOptions);
           queued.push({ item, file });
         }
         updateUploads((current) => [...current, item]);
@@ -651,7 +807,7 @@ export function useUploadManager({
       // request limit; selecting many files cannot multiply server load.
       for (const entry of queued) enqueue(entry.item.id, entry.file);
     },
-    [enqueue, fsHz, onNotice, resumeUpload, tests, updateUploads]
+    [enqueue, fsHz, onNotice, resumeUpload, tests, updateItem, updateUploads]
   );
 
   const pauseUpload = useCallback(
@@ -734,7 +890,7 @@ export function useUploadManager({
       }
       if (!sessionId && !recovery) {
         files.current.delete(id);
-        uploadFsHz.current.delete(id);
+        uploadOptions.current.delete(id);
         updateUploads((current) =>
           current.filter((candidate) => candidate.id !== id)
         );
@@ -753,7 +909,7 @@ export function useUploadManager({
         await cancelUploadSession(sessionId, item.testName);
         removeUploadRecord(sessionId);
         files.current.delete(id);
-        uploadFsHz.current.delete(id);
+        uploadOptions.current.delete(id);
         sessionIds.current.delete(id);
         updateUploads((current) =>
           current.filter((candidate) => candidate.id !== id)
@@ -785,7 +941,7 @@ export function useUploadManager({
       // A server session must be canceled, not merely hidden/orphaned.
       if (!item || item.sessionId || sessionIds.current.has(id)) return;
       files.current.delete(id);
-      uploadFsHz.current.delete(id);
+      uploadOptions.current.delete(id);
       updateUploads((current) =>
         current.filter((candidate) => candidate.id !== id)
       );
@@ -816,6 +972,7 @@ export function useUploadManager({
     startUploads,
     pauseUpload,
     resumeUpload,
+    adoptServerUpload,
     cancelUpload,
     dismissUpload,
   };

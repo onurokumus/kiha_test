@@ -24,7 +24,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Literal
 from urllib.parse import parse_qs
 
 from fastapi import (APIRouter, BackgroundTasks, Header, HTTPException, Query,
@@ -74,6 +74,8 @@ class UploadInit(BaseModel):
     # numeric constraint path avoids FastAPI trying to echo an Infinity/NaN
     # input in a JSON validation error (which is itself non-serializable).
     fs_hz: float | None = None
+    time_mode: Literal["auto", "column", "generated"] = "auto"
+    time_column: str | None = Field(default=None, max_length=255)
 
 
 class _RequestBodyTooLarge(Exception):
@@ -271,6 +273,20 @@ def _validate_manifest(value: dict | None, name: str) -> dict:
         "receiving", "finalizing", "ingesting", "ready", "error"
     }:
         raise UploadStateError("upload manifest has invalid state")
+    time_mode = value.get("time_mode", "auto")
+    time_column = value.get("time_column")
+    if time_mode not in {"auto", "column", "generated"}:
+        raise UploadStateError("upload manifest has invalid time_mode")
+    if (time_column is not None
+            and (not isinstance(time_column, str)
+                 or not time_column.strip()
+                 or len(time_column) > 255)):
+        raise UploadStateError("upload manifest has invalid time_column")
+    if time_mode in {"column", "generated"} and not time_column:
+        raise UploadStateError("upload manifest is missing time_column")
+    if time_mode == "auto" and time_column is not None:
+        raise UploadStateError(
+            "upload manifest has time_column in automatic mode")
     return value
 
 
@@ -330,6 +346,9 @@ def _session_payload(manifest: dict) -> dict:
         "source_file": manifest["source_file"],
         "size_bytes": manifest["size_bytes"],
         "last_modified_ms": manifest["last_modified_ms"],
+        "fs_hz": manifest.get("fs_hz"),
+        "time_mode": manifest.get("time_mode", "auto"),
+        "time_column": manifest.get("time_column"),
         "chunk_size": manifest["chunk_size"],
         "total_chunks": manifest["total_chunks"],
         "state": manifest["state"],
@@ -387,6 +406,8 @@ def _identity_matches(manifest: dict, request: UploadInit) -> bool:
         and manifest["size_bytes"] == request.size_bytes
         and manifest["last_modified_ms"] == request.last_modified_ms
         and manifest.get("fs_hz") == request.fs_hz
+        and manifest.get("time_mode", "auto") == request.time_mode
+        and manifest.get("time_column") == request.time_column
     )
 
 
@@ -469,6 +490,23 @@ def _init_upload(request: UploadInit) -> tuple[dict, bool]:
             and (not math.isfinite(request.fs_hz) or request.fs_hz <= 0)):
         raise HTTPException(
             400, "fs_hz must be a finite number greater than zero")
+    raw_time_column = request.time_column or ""
+    if "\x00" in raw_time_column:
+        raise HTTPException(400, "time_column contains a NUL byte")
+    if request.time_mode == "column" and not raw_time_column.strip():
+        raise HTTPException(
+            400, "time_column is required when time_mode is 'column'")
+    if request.time_mode == "auto" and raw_time_column.strip():
+        raise HTTPException(
+            400, "time_column is only used with 'column' or 'generated' mode")
+    time_column = (
+        raw_time_column
+        if request.time_mode == "column"
+        else raw_time_column.strip()
+    )
+    if request.time_mode == "generated" and not time_column:
+        time_column = "time_s"
+    request.time_column = time_column or None
     if request.size_bytes > MAX_UPLOAD_BYTES:
         raise HTTPException(
             413,
@@ -528,6 +566,8 @@ def _init_upload(request: UploadInit) -> tuple[dict, bool]:
                 "size_bytes": request.size_bytes,
                 "last_modified_ms": request.last_modified_ms,
                 "fs_hz": request.fs_hz,
+                "time_mode": request.time_mode,
+                "time_column": request.time_column,
                 "chunk_size": UPLOAD_CHUNK_BYTES,
                 "total_chunks": total_chunks,
                 "state": "receiving",
@@ -868,12 +908,16 @@ def ingest_completed_upload(name: str, upload_id: str) -> None:
                     f"cannot ingest upload in state {manifest['state']}")
             source_file = manifest["source_file"]
             fs_hz = manifest.get("fs_hz")
+            time_mode = manifest.get("time_mode", "auto")
+            time_column = manifest.get("time_column")
             raw_path = _test_dir(name) / "raw.csv"
         ingest_csv(
             raw_path,
             name,
             source_name=source_file,
             assume_fs=fs_hz,
+            time_mode=time_mode,
+            time_column=time_column,
         )
     except Exception as exc:
         logger.exception("upload '%s': ingestion failed", name)

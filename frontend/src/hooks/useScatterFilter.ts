@@ -23,9 +23,10 @@ const INITIAL_FILTER_STATE: ScatterFilterState = {
 export const useScatterFilter = (
   rawData: ScatterDataPoint[],
   statsCache: StatsCache,
-  columnsByTest: Record<string, string[]>
+  columnsByTest: Record<string, string[]>,
+  initialState: ScatterFilterState = INITIAL_FILTER_STATE
 ) => {
-  const [filterState, setFilterState] = useState<ScatterFilterState>(INITIAL_FILTER_STATE);
+  const [filterState, setFilterState] = useState<ScatterFilterState>(initialState);
 
   const filterOptions: FilterOptions = useMemo(() => {
     const byTest = new Map<string, TestTreeNode>();
@@ -183,6 +184,7 @@ export const useScatterFilter = (
 
   return {
     filterState,
+    setFilterState,
     filterOptions,
     filterColumns,
     toggleTpKeys,

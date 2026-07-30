@@ -454,6 +454,53 @@ gotchas), not human onboarding.
       while the TP grid keeps tp_id, selection prioritization + axis-default
       rescue still green, 0 console errors; npm run build green.
 
+- [x] Elapsed-time import setup (2026-07-30, real KiHa data report) — clock
+      strings such as `11:00:19.687` were correctly parsed as seconds since
+      midnight but incorrectly plotted at ~39,620 s. Measured axes are now
+      normalized in Parquet before pyramid generation (`t - t[0]`,
+      `meta.t_start=0`, original origin retained as
+      `source_time_origin_s`). Every picker/drop path stages files on Uploads
+      before transfer and offers Auto / exact CSV column / generated `i/fs`
+      modes, a custom generated column name, and per-import Hz. These options
+      are immutable resumable-session identity and persist in the manifest and
+      browser resume record. Auto with no time-looking source now adds
+      `time_s` instead of sacrificing the first signal. Time plots explicitly
+      label the x-axis `Time (s)`. Follow-up: measured timestamp dropouts no
+      longer bias Hz because normal timing is inferred from continuous
+      intervals. Expected missing rows are inserted as NaN signal gaps,
+      recorded in `time_gap_ranges`; filters process each continuous region
+      independently and spectra reject ranges that cross a dropout. Generated
+      time remains consecutive because absent source rows are unknowable.
+
+- [x] Despike + filtered-only plots (2026-07-30, user request) — the per-plot
+      filter menu now includes a robust Hampel-style despike processor with a
+      time-based context window, maximum event duration, MAD threshold,
+      absolute change floor, and linear/local-median replacement. Candidate
+      samples are grouped so multi-sample plateaus are handled as one event;
+      runs longer than the configured maximum are preserved, window > 2× max
+      duration is enforced, NaNs are restored, and known acquisition gaps are
+      hard boundaries. `/filter` returns repaired-sample and event counts.
+      Filtered data now REPLACES the raw trace while active (solid line/band);
+      stale results are hidden during recompute, failure falls back to raw with
+      an explicit error, and the controls show labelled units, validation,
+      clear/reset, active state, and despike counts.
+
+- [x] Derived variables + formula recipes (2026-07-30, user request) —
+      Edit now has an ordered equation workbench with exact `{column}` insertion
+      at the caret, operator/function shortcuts, sampled server preview,
+      explicit existing-column replacement, and reusable global recipes stored
+      atomically in `data/formula_recipes.json`. Expressions are parsed through
+      a strict AST allowlist and translated to Polars expressions; no eval path
+      exists. Formula batches are standalone edits and materialize Float64
+      columns through the staged Parquet/pyramid rebuild, normalize infinities
+      to NaN, invalidate TP stats, and persist dependency provenance that stays
+      coherent through later rename/drop edits. The existing column table is
+      explicitly labelled for rename/remove and keeps the time column
+      protected. Backend: 168 tests + 62 subtests green. Frontend build/lint
+      green. Isolated Playwright coverage includes cursor insertion, preview,
+      recipe save/load/delete, materialization, derived-column rename,
+      provenance, and zero console/page errors.
+
 ## Windows gotchas (hard-won)
 
 - os.replace onto a file a reader holds open raises PermissionError

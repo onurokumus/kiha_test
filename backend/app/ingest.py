@@ -32,14 +32,21 @@ NULL_VALUES = ["", "nan", "NaN", "NAN", "null", "NULL", "None"]
 # (a decimal-comma file uses ';', so ',' must lose to ';' when both appear).
 CANDIDATE_SEPARATORS = [";", "\t", "|", ","]
 
+# Refuse pathological expansions while still covering long real acquisition
+# dropouts. Missing rows contain only a timestamp plus null signals and compress
+# well in Parquet, but an unbounded clock jump must not exhaust disk space.
+MAX_GAP_FILL_ROWS = 5_000_000
+
 logger = logging.getLogger("kiha.ingest")
 
 
-def detect_time_column(columns):
+def detect_time_column(columns) -> str | None:
     for c in columns:
-        if c.lower().startswith("time") or c.lower() in ("t", "t_s", "zaman"):
+        normalized = c.strip().lower()
+        if (normalized.startswith("time")
+                or normalized in ("t", "t_s", "zaman")):
             return c
-    return columns[0]
+    return None
 
 
 def sniff_dialect(csv_path: Path) -> tuple[str, bool]:
@@ -99,6 +106,166 @@ def _time_seconds_expr(col: str, decimal_comma: bool) -> pl.Expr:
         + groups.struct.field("m").cast(pl.Float64, strict=False) * 60.0
         + groups.struct.field("s").cast(pl.Float64, strict=False))
     return pl.coalesce(clock, text.cast(pl.Float64, strict=False)).alias(col)
+
+
+def _measured_timing(tvals: np.ndarray) -> dict | None:
+    """Infer nominal timing while excluding acquisition dropouts.
+
+    Zero deltas are deliberately included in the nominal mean after the
+    positive clock step is identified. This recovers rates above a timestamp's
+    resolution (for example paired 1 ms timestamps from a 2 kHz logger).
+    Positive steps larger than 1.5 times the robust normal step are interpreted
+    as missing sample intervals.
+    """
+    if len(tvals) < 2 or not np.isfinite(tvals).all():
+        return None
+    diffs = np.diff(tvals)
+    if np.any(diffs < 0):
+        return None
+    positive = diffs[diffs > 0]
+    if not positive.size:
+        return None
+
+    median_step = float(np.median(positive))
+    mad = float(np.median(np.abs(positive - median_step)))
+    lower_quartile = float(np.quantile(positive, 0.25))
+    typical_positive = max(lower_quartile, median_step - 3.0 * mad)
+    if not np.isfinite(typical_positive) or typical_positive <= 0:
+        return None
+
+    tolerance = max(
+        abs(typical_positive) * 1e-9,
+        np.finfo(np.float64).eps * 32,
+    )
+    normal_limit = 1.5 * typical_positive + tolerance
+    normal_mask = diffs <= normal_limit
+    normal_diffs = diffs[normal_mask]
+    if not normal_diffs.size:
+        return None
+    dt = float(np.mean(normal_diffs))
+    if not np.isfinite(dt) or dt <= 0:
+        return None
+
+    missing_before = np.zeros(len(tvals), dtype=np.int64)
+    total_missing = 0
+    for diff_index in np.flatnonzero(~normal_mask):
+        intervals = max(2, int(np.rint(float(diffs[diff_index]) / dt)))
+        missing = intervals - 1
+        total_missing += missing
+        if total_missing > MAX_GAP_FILL_ROWS:
+            raise ValueError(
+                "timestamp gaps imply more than "
+                f"{MAX_GAP_FILL_ROWS:,} missing rows; repair the source time "
+                "column or import with generated time")
+        missing_before[diff_index + 1] = missing
+
+    quantized = typical_positive > 1.5 * dt
+    if quantized:
+        jitter_warning = total_missing > 0
+    else:
+        jitter_warning = bool(
+            total_missing > 0
+            or np.any(np.abs(normal_diffs - dt) > 0.01 * dt)
+        )
+    return {
+        "dt": dt,
+        "quantized": quantized,
+        "jitter_warning": jitter_warning,
+        "missing_before": missing_before,
+        "gap_count": int(np.count_nonzero(missing_before)),
+        "missing_rows": int(total_missing),
+    }
+
+
+def _insert_missing_rows(
+    parquet_path: Path,
+    time_col: str,
+    tvals: np.ndarray,
+    missing_before: np.ndarray,
+) -> list[list[int]]:
+    """Stream NaN rows into measured timestamp gaps.
+
+    Ranges are returned as half-open row indices in the expanded Parquet. The
+    source rows and their timestamps remain unchanged; inserted timestamps are
+    evenly spaced between the surrounding measured samples.
+    """
+    if not np.any(missing_before):
+        return []
+
+    tmp_path = parquet_path.with_name(parquet_path.name + ".gaps.tmp")
+    gap_ranges: list[list[int]] = []
+    source_offset = 0
+    output_offset = 0
+    try:
+        with pq.ParquetFile(parquet_path) as reader:
+            schema = reader.schema_arrow
+            with pq.ParquetWriter(
+                    tmp_path, schema, compression="zstd") as writer:
+                for batch in reader.iter_batches(batch_size=INGEST_BATCH):
+                    batch_rows = batch.num_rows
+                    local_gaps = np.flatnonzero(
+                        missing_before[
+                            source_offset:source_offset + batch_rows
+                        ]
+                    )
+                    cursor = 0
+                    for local_index in local_gaps:
+                        local_index = int(local_index)
+                        if local_index > cursor:
+                            segment = batch.slice(cursor, local_index - cursor)
+                            writer.write_batch(
+                                segment, row_group_size=ROW_GROUP_SIZE)
+                            output_offset += segment.num_rows
+
+                        source_index = source_offset + local_index
+                        gap_rows = int(missing_before[source_index])
+                        gap_start = output_offset
+                        previous_time = float(tvals[source_index - 1])
+                        next_time = float(tvals[source_index])
+                        step = (next_time - previous_time) / (gap_rows + 1)
+
+                        written = 0
+                        while written < gap_rows:
+                            chunk_rows = min(
+                                ROW_GROUP_SIZE, gap_rows - written)
+                            ordinal = np.arange(
+                                written + 1,
+                                written + chunk_rows + 1,
+                                dtype=np.float64,
+                            )
+                            times = previous_time + ordinal * step
+                            arrays = [
+                                pa.array(times, type=field.type)
+                                if field.name == time_col
+                                else pa.nulls(chunk_rows, type=field.type)
+                                for field in schema
+                            ]
+                            writer.write_table(
+                                pa.Table.from_arrays(arrays, schema=schema),
+                                row_group_size=ROW_GROUP_SIZE,
+                            )
+                            written += chunk_rows
+                            output_offset += chunk_rows
+
+                        gap_ranges.append(
+                            [gap_start, gap_start + gap_rows])
+                        cursor = local_index
+
+                    if cursor < batch_rows:
+                        segment = batch.slice(cursor, batch_rows - cursor)
+                        writer.write_batch(
+                            segment, row_group_size=ROW_GROUP_SIZE)
+                        output_offset += segment.num_rows
+                    source_offset += batch_rows
+
+        expected_rows = len(tvals) + int(missing_before.sum())
+        if source_offset != len(tvals) or output_offset != expected_rows:
+            raise RuntimeError("gap expansion row count mismatch")
+        os.replace(tmp_path, parquet_path)
+        return gap_ranges
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 class _PyramidWriter:
@@ -193,21 +360,30 @@ def build_pyramid(parquet_path: Path, pyr_dir: Path, time_col: str):
 
 def ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
                source_name: str | None = None,
-               assume_fs: float | None = None) -> dict:
+               assume_fs: float | None = None,
+               time_mode: str = "auto",
+               time_column: str | None = None) -> dict:
     """Ingest one test while excluding lifecycle operations for that name.
 
     source_name: original file name for meta.source_file — API uploads
     stream into raw.csv, so csv_path.name would lose what the user sent.
     assume_fs: sample rate to assume when the time column is unusable; a
     perfect uniform axis is generated instead of failing (default DEFAULT_FS_HZ).
+    time_mode: ``auto`` detects a time column, ``column`` uses the exact
+    existing ``time_column``, and ``generated`` creates/replaces it from row
+    number and ``assume_fs``.
     """
     with test_write(name):
-        return _ingest_csv(csv_path, name, copy_raw, source_name, assume_fs)
+        return _ingest_csv(
+            csv_path, name, copy_raw, source_name, assume_fs,
+            time_mode, time_column)
 
 
 def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
                 source_name: str | None = None,
-                assume_fs: float | None = None) -> dict:
+                assume_fs: float | None = None,
+                time_mode: str = "auto",
+                time_column: str | None = None) -> dict:
     csv_path = Path(csv_path)
     test_dir = TESTS_DIR / name
     test_dir.mkdir(parents=True, exist_ok=True)
@@ -228,7 +404,32 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
         src_columns = list(src_schema.names())
         if not src_columns:
             raise ValueError("CSV appears to be empty")
-        time_col = detect_time_column(src_columns)
+        if time_mode not in {"auto", "column", "generated"}:
+            raise ValueError(
+                "time_mode must be 'auto', 'column', or 'generated'")
+        requested_time_col = time_column or ""
+        generate_axis = time_mode == "generated"
+        if time_mode == "column":
+            if not requested_time_col.strip():
+                raise ValueError(
+                    "time_column is required when time_mode='column'")
+            if requested_time_col not in src_columns:
+                preview = ", ".join(src_columns[:20])
+                raise ValueError(
+                    f"time column '{requested_time_col}' was not found; "
+                    f"available columns: {preview}")
+            time_col = requested_time_col
+        elif time_mode == "generated":
+            time_col = requested_time_col.strip() or "time_s"
+        else:
+            detected_time_col = detect_time_column(src_columns)
+            if detected_time_col is None:
+                # No source signal is silently sacrificed as a fake clock.
+                # Auto mode adds elapsed seconds using the fallback rate.
+                time_col = "time_s"
+                generate_axis = True
+            else:
+                time_col = detected_time_col
 
         # Keep the time column (parsed to seconds) + every numeric column.
         # Non-numeric columns (text notes, bool/datetime, an unparsed clock
@@ -240,10 +441,34 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
                         if c != time_col and src_schema[c].is_numeric()]
         skipped = {c: str(src_schema[c]) for c in src_columns
                    if c != time_col and c not in numeric_cols}
+        for data_col in numeric_cols:
+            if time_col in {f"{data_col}__min", f"{data_col}__max"}:
+                raise ValueError(
+                    f"time column '{time_col}' conflicts with pyramid fields "
+                    f"generated for data column '{data_col}'; choose another "
+                    "time-column name")
 
-        time_dtype = src_schema[time_col]
-        time_expr = (pl.col(time_col).cast(pl.Float64) if time_dtype.is_numeric()
-                     else _time_seconds_expr(time_col, decimal_comma))
+        generated_fs: float | None = None
+        if generate_axis:
+            generated_fs = float(
+                assume_fs if assume_fs is not None else DEFAULT_FS_HZ)
+            if not np.isfinite(generated_fs) or generated_fs <= 0:
+                raise ValueError(
+                    f"assumed sample rate must be > 0, got {generated_fs}")
+            row_index_col = "__ptt_row_index"
+            while row_index_col in src_columns:
+                row_index_col += "_"
+            lf = lf.with_row_index(row_index_col)
+            time_expr = (
+                pl.col(row_index_col).cast(pl.Float64) / generated_fs
+            ).alias(time_col)
+        else:
+            time_dtype = src_schema[time_col]
+            time_expr = (
+                pl.col(time_col).cast(pl.Float64)
+                if time_dtype.is_numeric()
+                else _time_seconds_expr(time_col, decimal_comma)
+            )
         lf = lf.select([time_expr]
                        + [pl.col(c).cast(pl.Float64) for c in numeric_cols])
 
@@ -253,32 +478,45 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
                         statistics=True)
 
         # 3) basic facts. The full (single) time column is read once: it is
-        #    the cheapest robust way to derive fs from the total span (immune
-        #    to per-sample quantization) and to scan the WHOLE file for jitter
-        #    rather than just the first seconds. Column order is exactly what
-        #    the select above wrote, so there is no need to reopen the parquet
-        #    (leaving a pq handle open blocks os.replace/rmtree on Windows).
+        #    the cheapest robust way to infer the normal sample interval,
+        #    identify acquisition gaps across the WHOLE file, and support
+        #    quantized clocks whose timestamp resolution is below the sample
+        #    rate. Column order is exactly what the select above wrote.
         columns = [time_col] + numeric_cols
         tvals = pl.read_parquet(parquet_path, columns=[time_col])[time_col] \
             .to_numpy()
         n_rows = len(tvals)
         if n_rows < 2:
             raise ValueError("need at least 2 samples to form a series")
+        source_n_rows = n_rows
 
-        # Derive dt from the total span (robust to per-sample quantization).
-        dt = None
-        if np.isfinite(tvals).all():
-            span_dt = float((tvals[-1] - tvals[0]) / (n_rows - 1))
-            if np.isfinite(span_dt) and span_dt > 0:
-                dt = span_dt
+        # Explicit generated time is always uniform. Measured time uses normal
+        # local intervals so one long dropout cannot bias the reported Hz.
+        measured_timing = (
+            None if generate_axis else _measured_timing(tvals)
+        )
+        dt = 1.0 / generated_fs if generated_fs is not None else None
+        if measured_timing is not None:
+            dt = measured_timing["dt"]
 
-        if dt is None:
+        source_time_origin_s: float | None = None
+        gap_ranges: list[list[int]] = []
+        gap_count = 0
+        missing_rows = 0
+        if generate_axis:
+            fs = generated_fs
+            t_start = 0.0
+            time_source = "generated"
+            quantized = False
+            jitter_warn = False
+        elif dt is None:
             # Time column is unusable — non-finite/unparseable, non-increasing,
             # or a single repeated coarse timestamp (the low-resolution clock
             # case, e.g. every row logged as ``19:39,2``). The bulk samples are
             # still good, so rather than fail the whole ingest, GENERATE a
             # perfect uniform axis at the assumed rate and mark it as such.
-            fs = round(float(assume_fs if assume_fs else DEFAULT_FS_HZ), 6)
+            fs = float(
+                assume_fs if assume_fs is not None else DEFAULT_FS_HZ)
             if not np.isfinite(fs) or fs <= 0:
                 raise ValueError(f"assumed sample rate must be > 0, got {fs}")
             dt = 1.0 / fs
@@ -302,24 +540,42 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
                            statistics=True))
             os.replace(tmp_parquet, parquet_path)
         else:
-            fs = round(1.0 / dt, 3)
-            t_start = float(tvals[0])
+            fs = float(1.0 / dt)
+            if not np.isfinite(fs) or fs <= 0:
+                raise ValueError(f"derived sample rate must be > 0, got {fs}")
+            source_time_origin_s = float(tvals[0])
+            t_start = 0.0
             time_source = "measured"
-            # Quantization-aware jitter: a clock column logged at coarse
-            # resolution (e.g. 0.1 s) makes per-sample diffs a 0/step staircase
-            # that is NOT real jitter. When the smallest positive step is well
-            # above dt, only flag backward time or gaps bigger than a few
-            # quantization steps; otherwise use the fine per-sample check.
-            diffs = np.diff(tvals)
-            positive = diffs[diffs > 0]
-            qstep = float(positive.min()) if positive.size else dt
-            quantized = qstep > 1.5 * dt
-            if quantized:
-                jitter_warn = bool(
-                    np.any(diffs < 0)
-                    or (positive.size and positive.max() > 3 * qstep))
-            else:
-                jitter_warn = bool(np.any(np.abs(diffs - dt) > 0.01 * dt))
+            quantized = measured_timing["quantized"]
+            jitter_warn = measured_timing["jitter_warning"]
+            gap_count = measured_timing["gap_count"]
+            missing_rows = measured_timing["missing_rows"]
+
+            # Clock and epoch values describe when acquisition happened, but
+            # every analysis/edit/export path uses elapsed seconds. Preserve
+            # the measured spacing while making the first sample exactly zero.
+            # The original origin remains in metadata for traceability.
+            tmp_parquet = parquet_path.with_name(parquet_path.name + ".tmp")
+            (pl.scan_parquet(parquet_path)
+             .with_columns(
+                 (pl.col(time_col) - source_time_origin_s).alias(time_col))
+             .sink_parquet(tmp_parquet, row_group_size=ROW_GROUP_SIZE,
+                           statistics=True))
+            os.replace(tmp_parquet, parquet_path)
+            tvals = tvals - source_time_origin_s
+            if missing_rows:
+                gap_ranges = _insert_missing_rows(
+                    parquet_path,
+                    time_col,
+                    tvals,
+                    measured_timing["missing_before"],
+                )
+                n_rows = source_n_rows + missing_rows
+                logger.warning(
+                    "ingest '%s': preserved %d timestamp gap(s) by inserting "
+                    "%d NaN rows at %.6g Hz",
+                    name, gap_count, missing_rows, fs,
+                )
 
         # 4) pyramid + NaN scan
         nan_counts, level_rows = build_pyramid(parquet_path, test_dir / "pyramid",
@@ -333,10 +589,17 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
             "n_columns": len(columns),
             "columns": columns,
             "time_column": time_col,
+            "time_unit": "s",
             "fs_hz": fs,
-            "duration_s": round(n_rows * dt, 3) if dt else None,
+            "duration_s": float(n_rows * dt) if dt else None,
             "t_start": t_start,
             "time_source": time_source,
+            "source_time_origin_s": source_time_origin_s,
+            "source_n_rows": source_n_rows,
+            "time_gap_count": gap_count,
+            "missing_rows_inserted": missing_rows,
+            "time_gap_seconds": float(missing_rows * dt),
+            "time_gap_ranges": gap_ranges,
             "csv_separator": separator,
             "decimal_comma": decimal_comma,
             "time_quantized": quantized,

@@ -119,8 +119,11 @@ The `dead`-flag + AbortController + 100 ms timer + `tpFingerprint` + per-TP
 
 **Data robustness** (CSV dialect sniffing, full-file jitter scan) — DONE (1.1 / 1.14).
 
+**Derived columns** — DONE (2026-07-30): ordered, safe user equations with
+sampled preview, cursor-aware variable insertion, reusable JSON recipes,
+materialized Parquet/pyramid output, explicit replacement, and provenance.
+
 **Analysis features (propeller-specific):**
-- Derived columns (user expressions: `P_mech = torque*rpm*2π/60`, `eff`, `g/W`).
 - Spectrogram / waterfall (STFT over time) for vibration columns.
 - RPM-order overlays on spectra (1P/2P/blade-pass cursor lines from an RPM column).
 - Cursor measurements (A/B markers: Δt, Δy, min/mean/max/RMS of the visible window).

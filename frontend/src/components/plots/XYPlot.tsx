@@ -5,7 +5,9 @@ import { fetchXY, isAbortError } from '../../services/api';
 import { SelectedTestPoint, TimePlotConfig } from '../../types';
 import { noSelect } from '../../constants/styles';
 import { ACCENT, AXIS_STYLE, safeRange } from '../../constants/uplotTheme';
+import { xyPanZoomPlugin } from '../../utils/uplotPanZoom';
 import { syncPlot, clearPlot } from '../../utils/uplotSync';
+import { PlotStateOverlay, PlotEmptyState } from './PlotState';
 import styles from './TimePlot.module.css';
 import type { PanelSource } from './SpectrumPlot';
 
@@ -76,8 +78,12 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   const structKeyRef = useRef('');
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [traces, setTraces] = useState<XYTrace[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(
+    Boolean(xCol && cfg.key && (source === 'full' ? test : selectedTPs.length))
+  );
   const [error, setError] = useState('');
+  const [partialMessage, setPartialMessage] = useState('');
+  const [retryVersion, setRetryVersion] = useState(0);
 
   const visibleTPs = selectedTPs.filter((s) => !hiddenTPs.has(s.id));
   const tpFingerprint = visibleTPs
@@ -95,10 +101,16 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!xCol || !cfg.key) return;
+    if (!xCol || !cfg.key) {
+      setLoading(false);
+      setError('');
+      return;
+    }
     let dead = false;
     const controller = new AbortController();
     setLoading(true);
+    setError('');
+    setPartialMessage('');
 
     const load = async () => {
       try {
@@ -107,7 +119,6 @@ export const XYPlot: React.FC<XYPlotProps> = ({
           const testCols = columnsByTest[test] ?? [];
           if (testCols.length && (!testCols.includes(xCol) || !testCols.includes(cfg.key))) {
             if (!dead) {
-              setTraces([]);
               setError(`${test} has no '${!testCols.includes(xCol) ? xCol : cfg.key}'`);
               setLoading(false);
             }
@@ -129,6 +140,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
             const cols = columnsByTest[s.test] ?? [];
             return cols.includes(cfg.key) && cols.includes(xCol);
           });
+          let failed = 0;
           const results = await Promise.all(
             eligible.map(async (s) => {
               try {
@@ -148,12 +160,24 @@ export const XYPlot: React.FC<XYPlotProps> = ({
               } catch (e) {
                 if (isAbortError(e)) throw e;
                 console.error(`xy failed for ${s.id}/${cfg.key}:`, e);
+                failed += 1;
                 return null;
               }
             })
           );
           if (dead) return;
-          setTraces(results.filter((r): r is XYTrace => r !== null));
+          const ok = results.filter((r): r is XYTrace => r !== null);
+          if (failed > 0 && ok.length === 0) {
+            throw new Error(
+              `XY data was unavailable for ${failed} selected test point${failed === 1 ? '' : 's'}.`
+            );
+          }
+          setTraces(ok);
+          setPartialMessage(
+            failed > 0
+              ? `${failed} of ${eligible.length} selected test point${eligible.length === 1 ? '' : 's'} could not be loaded.`
+              : ''
+          );
         }
         if (!dead) setError('');
       } catch (e) {
@@ -172,7 +196,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [test, xCol, cfg.key, range, source, tpFingerprint, columnsByTest]);
+  }, [test, xCol, cfg.key, range, source, tpFingerprint, columnsByTest, retryVersion]);
 
   // Destroy only on unmount; syncPlot reuses/rebuilds in place (perf 2.4).
   useEffect(() => () => clearPlot(plotRef, structKeyRef), []);
@@ -213,7 +237,8 @@ export const XYPlot: React.FC<XYPlotProps> = ({
       },
       axes: [{ ...AXIS_STYLE }, { ...AXIS_STYLE }],
       legend: { show: isExpanded, live: true },
-      cursor: { drag: { x: false, y: false } },
+      cursor: { drag: { x: true, y: true } },
+      plugins: [xyPanZoomPlugin()],
       series,
     });
 
@@ -253,10 +278,38 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   }`;
 
   const maxStride = traces.reduce((m, tr) => Math.max(m, tr.stride), 0);
-  const emptyHint =
-    source === 'tp' && visibleTPs.length === 0
-      ? 'Select test points on the scatter plot'
-      : undefined;
+  const eligibleTpCount = visibleTPs.filter((selected) => {
+    const columns = columnsByTest[selected.test] ?? [];
+    return columns.includes(cfg.key) && columns.includes(xCol);
+  }).length;
+  const hasData = traces.some((trace) =>
+    trace.x.some(
+      (x, index) =>
+        Number.isFinite(x) &&
+        trace.y[index] !== undefined &&
+        Number.isFinite(trace.y[index])
+    )
+  );
+  let emptyState: PlotEmptyState;
+  if (source === 'tp' && visibleTPs.length === 0) {
+    emptyState = {
+      title: 'Select test points to compare',
+      detail: 'Choose one or more points on the scatter plot to build an XY view.',
+    };
+  } else if (source === 'tp' && eligibleTpCount === 0) {
+    emptyState = {
+      title: 'No compatible test points',
+      detail: `The visible points need both ${cfg.label} and ${xCol}.`,
+    };
+  } else {
+    emptyState = {
+      title: 'No paired samples',
+      detail:
+        source === 'full' && range
+          ? 'Reset the time zoom or choose a wider range.'
+          : `No finite ${cfg.label} and ${xCol} pairs were found.`,
+    };
+  }
 
   return (
     <div className={containerClass} style={{ ...noSelect }}>
@@ -280,12 +333,17 @@ export const XYPlot: React.FC<XYPlotProps> = ({
               1:{maxStride}
             </span>
           )}
-          {loading && <span style={{ fontSize: 10, color: '#569cd6' }}>⟳</span>}
-          <button onClick={onToggleExpand} className={buttonClass}>
+          <button
+            type="button"
+            onClick={onToggleExpand}
+            className={buttonClass}
+            aria-label={`${isExpanded ? 'Minimize' : 'Expand'} ${cfg.label} versus ${xCol}`}
+            title={`${isExpanded ? 'Minimize' : 'Expand'} this plot`}
+          >
             <span className={styles.expandButtonIcon}>{isExpanded ? '▪' : '▣'}</span>
           </button>
         </div>
-        {isEditMode && !isExpanded && allConfigs.length > 0 && (
+        {isEditMode && allConfigs.length > 0 && (
           <div
             style={{
               position: 'absolute',
@@ -302,6 +360,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
               value={cfg.key}
               onChange={(e) => onConfigChange?.(e.target.value)}
               style={editSelectStyle}
+              aria-label="Y variable"
               title="Y column"
             >
               {allConfigs.map((config) => (
@@ -315,6 +374,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
               value={xCol}
               onChange={(e) => onXColChange?.(e.target.value)}
               style={editSelectStyle}
+              aria-label="X variable"
               title="X column (this plot only)"
             >
               {allConfigs.map((config) => (
@@ -326,11 +386,23 @@ export const XYPlot: React.FC<XYPlotProps> = ({
           </div>
         )}
       </div>
-      <div ref={chartRef} style={{ flex: 1, minHeight: 0, overflow: 'hidden' }} title={emptyHint}>
-        {error && <div style={{ color: '#f48771', fontSize: 11, padding: 8 }}>{error}</div>}
-        {!error && emptyHint && (
-          <div style={{ color: '#555', fontSize: 11, padding: 8 }}>no selection</div>
-        )}
+      <div className={styles.plotViewport}>
+        <div
+          ref={chartRef}
+          className={styles.plotCanvas}
+          title="Drag to zoom · Shift-drag or middle-drag to pan · Wheel to zoom · Double-click to reset"
+        />
+        <PlotStateOverlay
+          loading={loading}
+          hasData={hasData}
+          error={error}
+          emptyState={emptyState}
+          onRetry={() => setRetryVersion((version) => version + 1)}
+          loadingLabel="Loading paired samples"
+          updatingLabel="Updating XY view"
+          errorTitle="Could not load the XY view"
+          partialMessage={partialMessage}
+        />
       </div>
     </div>
   );

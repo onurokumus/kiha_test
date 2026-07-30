@@ -1,0 +1,381 @@
+.root {
+  position: relative;
+  z-index: 12;
+  margin-bottom: 8px;
+  container-type: inline-size;
+}
+
+.commandBar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 6px 5px 9px;
+  overflow: visible;
+  color: #d7dde3;
+  background: linear-gradient(90deg, rgba(86, 156, 214, 0.08), transparent 28%), #252526;
+  border: 1px solid #3b444d;
+  border-radius: 5px;
+  box-shadow: inset 2px 0 0 #569cd6;
+}
+
+.contextLabel {
+  flex: 0 0 auto;
+  padding: 0 4px 0 2px;
+  color: #95a0aa;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.axisFields {
+  display: flex;
+  flex: 1 1 224px;
+  align-items: center;
+  gap: 5px;
+  min-width: 150px;
+}
+
+.axisField {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  min-width: 0;
+  height: 32px;
+  overflow: hidden;
+  background: #1e1e1e;
+  border: 1px solid #424c55;
+  border-radius: 4px;
+}
+
+.axisField:focus-within {
+  border-color: #569cd6;
+  box-shadow: 0 0 0 2px rgba(86, 156, 214, 0.2);
+}
+
+.axisLabel {
+  align-self: stretch;
+  display: inline-grid;
+  flex: 0 0 27px;
+  place-items: center;
+  color: #8ec8ec;
+  background: #263746;
+  border-right: 1px solid #3c5263;
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.axisSelect {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 24px 0 7px;
+  overflow: hidden;
+  color: #d7dde3;
+  background-color: #1e1e1e;
+  border: 0;
+  outline: 0;
+  font-family: 'Segoe UI', sans-serif;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  color-scheme: dark;
+}
+
+.resetButton,
+.moreButton {
+  flex: 0 0 auto;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 9px;
+  color: #bfc7ce;
+  background: #303033;
+  border: 1px solid #4b5258;
+  border-radius: 4px;
+  font-family: 'Segoe UI', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.resetButton:hover,
+.moreButton:hover,
+.moreButtonOpen {
+  color: #f0f5f8;
+  background: #36434e;
+  border-color: #5f8199;
+}
+
+.moreButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.moreGlyph {
+  color: #71b5df;
+  font-size: 9px;
+  letter-spacing: 1px;
+  transform: translateY(-1px);
+}
+
+.popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  gap: 5px;
+  width: 294px;
+  max-width: min(calc(100vw - 24px), 100cqw);
+  padding: 6px;
+  color: #d7dde3;
+  background: rgba(37, 37, 38, 0.98);
+  border: 1px solid #4a5a67;
+  border-radius: 6px;
+  box-shadow:
+    0 14px 34px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(142, 200, 236, 0.08);
+  animation: reveal 110ms ease-out;
+}
+
+.reloadButton,
+.optionRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 7px 8px;
+  color: #d7dde3;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+}
+
+.reloadButton {
+  width: 100%;
+  text-align: left;
+  font-family: 'Segoe UI', sans-serif;
+  cursor: pointer;
+}
+
+.reloadButton:hover:not(:disabled) {
+  background: #2d353b;
+  border-color: #435563;
+}
+
+.reloadButton:disabled {
+  color: #737b82;
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.reloadIcon {
+  display: inline-grid;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  color: #8ec8ec;
+  background: #263746;
+  border: 1px solid #3c5263;
+  border-radius: 4px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.actionCopy {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.actionCopy strong {
+  color: currentColor;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.actionCopy small {
+  color: #8d979f;
+  font-size: 9px;
+  line-height: 1.3;
+}
+
+.optionRow {
+  border-top-color: #343c42;
+  border-radius: 0;
+}
+
+.switch {
+  position: relative;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.switch::before {
+  position: absolute;
+  top: 8px;
+  right: 2px;
+  bottom: 8px;
+  left: 2px;
+  content: '';
+  background: #4a4f54;
+  border: 1px solid #626970;
+  border-radius: 999px;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.switch span {
+  position: absolute;
+  top: 10px;
+  left: 5px;
+  width: 12px;
+  height: 12px;
+  background: #b7bec4;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  transition:
+    left 120ms ease,
+    background 120ms ease;
+}
+
+.switch[aria-checked='true']::before {
+  background: #28506a;
+  border-color: #569cd6;
+}
+
+.switch[aria-checked='true'] span {
+  left: 21px;
+  background: #a8ddff;
+}
+
+.gestureHelp {
+  padding: 9px 8px 7px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(86, 156, 214, 0.035) 0,
+      rgba(86, 156, 214, 0.035) 1px,
+      transparent 1px,
+      transparent 14px
+    ),
+    #202326;
+  border: 1px solid #343e46;
+  border-radius: 4px;
+}
+
+.gestureTitle {
+  display: block;
+  margin-bottom: 7px;
+  color: #91a0ab;
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.gestureHelp ul {
+  display: grid;
+  gap: 5px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.gestureHelp li {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  align-items: center;
+  gap: 8px;
+  color: #9da6ad;
+  font-size: 10px;
+}
+
+.gestureHelp kbd {
+  padding: 2px 4px;
+  color: #b9e2fb;
+  text-align: center;
+  background: #293945;
+  border: 1px solid #405868;
+  border-radius: 3px;
+  box-shadow: inset 0 -1px 0 #19242b;
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 9px;
+}
+
+.resetButton:focus-visible,
+.moreButton:focus-visible,
+.reloadButton:focus-visible,
+.switch:focus-visible {
+  outline: 2px solid #74c0ed;
+  outline-offset: 2px;
+}
+
+@container (max-width: 440px) {
+  .contextLabel {
+    display: none;
+  }
+
+  .commandBar {
+    padding-left: 6px;
+  }
+}
+
+@container (max-width: 330px) {
+  .commandBar {
+    flex-wrap: wrap;
+  }
+
+  .axisFields {
+    flex-basis: 100%;
+    order: 1;
+  }
+
+  .resetButton {
+    order: 2;
+  }
+
+  .moreButton {
+    order: 3;
+  }
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .popover {
+    animation: none;
+  }
+
+  .switch::before,
+  .switch span {
+    transition: none;
+  }
+}

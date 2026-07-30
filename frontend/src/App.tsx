@@ -1,9 +1,10 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { CSSProperties, useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { AppTab, Header } from './components/layout/Header';
 import { AxisControls } from './components/controls/AxisControls';
 import { FilterControls } from './components/controls/FilterControls';
 import { SelectedPointsPanel } from './components/controls/SelectedPointsPanel';
 import { MainScatterPlot } from './components/plots/MainScatterPlot';
+import { PlotStateOverlay } from './components/plots/PlotState';
 import { TimeSeriesGrid } from './components/plots/TimeSeriesGrid';
 import SplitView from './components/split/SplitView';
 import EditView from './components/edit/EditView';
@@ -14,6 +15,9 @@ import { useScatterFilter } from './hooks/useScatterFilter';
 import { useMainPlotZoom } from './hooks/useMainPlotZoom';
 import { useTimeZoom } from './hooks/useTimeZoom';
 import { useUploadManager } from './hooks/useUploadManager';
+import { UploadDataOptions } from './services/resumableUpload';
+import { useUnsavedChanges } from './hooks/useUnsavedChanges';
+import { assignColor } from './utils/colorManager';
 import {
   fetchTests,
   fetchMeta,
@@ -23,20 +27,23 @@ import {
 } from './services/api';
 import { noSelect } from './constants/styles';
 import { DEFAULT_FILTER_UI, FilterUi, buildFilterSpec } from './constants/filters';
-import {
-  AppSettings,
-  loadSettings,
-  saveSettings,
-  parseUploadFs,
-} from './constants/settings';
+import { AppSettings, loadSettings, saveSettings, parseUploadFs } from './constants/settings';
 import { isBusyStatus } from './constants/status';
 import {
+  hasSavedAnalysisSession,
+  loadAnalysisSession,
+  PlotDensity,
+  saveAnalysisSession,
+} from './services/analysisSession';
+import {
   ScatterDataPoint,
+  SelectedTestPoint,
   StatsCache,
   TestInfo,
   TestMeta,
   TestPoint,
   TpStat,
+  WindowDisplayMode,
 } from './types';
 import './App.css';
 
@@ -57,7 +64,7 @@ function bestAxisPair(columnsByTest: Record<string, string[]>): [string, string]
   const testCount = new Map<string, number>();
   testCols.forEach((s) => s.forEach((c) => testCount.set(c, (testCount.get(c) ?? 0) + 1)));
   const ranked = [...testCount.keys()].sort(
-    (a, b) => (testCount.get(b)! - testCount.get(a)!) || (a < b ? -1 : 1)
+    (a, b) => testCount.get(b)! - testCount.get(a)! || (a < b ? -1 : 1)
   );
 
   const x = ranked[0] ?? '';
@@ -77,15 +84,24 @@ function bestAxisPair(columnsByTest: Record<string, string[]>): [string, string]
 }
 
 function App() {
+  const [restoredSession] = useState(loadAnalysisSession);
+  const [hasRestoredSession] = useState(hasSavedAnalysisSession);
   const [tests, setTests] = useState<TestInfo[]>([]);
-  const [currentTest, setCurrentTest] = useState<string>('');
+  const [currentTest, setCurrentTest] = useState<string>(
+    hasRestoredSession ? restoredSession.currentTest : ''
+  );
   // Multi-test caches: the scatter shows every ready test at once (FMS-style,
   // with tests playing the role tail numbers played there).
   const [metaByTest, setMetaByTest] = useState<Record<string, TestMeta>>({});
   const [tpsByTest, setTpsByTest] = useState<Record<string, TestPoint[]>>({});
   const [statsCache, setStatsCache] = useState<StatsCache>({});
   const [loading, setLoading] = useState(true);
+  const [loadingStats, setLoadingStats] = useState<Set<string>>(new Set());
+  const [statsErrors, setStatsErrors] = useState<Record<string, string>>({});
+  const [statsRetry, setStatsRetry] = useState(0);
   const [loadingTestPointIds, setLoadingTestPointIds] = useState<Set<string>>(new Set());
+  const [traceErrors, setTraceErrors] = useState<Record<string, string>>({});
+  const [traceRetry, setTraceRetry] = useState(0);
   const [error, setError] = useState<string | null>(null);
   // Saved preferences (localStorage) — seed the defaults below and feed the
   // Settings tab. Declared first: several states initialize from it.
@@ -93,51 +109,103 @@ function App() {
   // Unsaved Settings-page edits (null = none). Hoisted here so switching tabs
   // doesn't silently discard them; nothing applies until Save.
   const [settingsDraft, setSettingsDraft] = useState<AppSettings | null>(null);
-  const [xAxis, setXAxis] = useState('');
-  const [yAxis, setYAxis] = useState('');
+  const [xAxis, setXAxis] = useState(hasRestoredSession ? restoredSession.xAxis : '');
+  const [yAxis, setYAxis] = useState(hasRestoredSession ? restoredSession.yAxis : '');
   // True once the user picks a scatter axis. While false, the axes auto-default
   // to the preferred/most-shared pair (recomputed as tests load); once the
   // user chooses, their pick is kept as long as it exists in any test.
-  const [axesUserSet, setAxesUserSet] = useState(false);
+  const [axesUserSet, setAxesUserSet] = useState(hasRestoredSession && restoredSession.axesUserSet);
   const [expandedPlot, setExpandedPlot] = useState<number | null>(null);
   const [clusteringEnabled, setClusteringEnabled] = useState(settings.clustering);
   const [isEditMode, setIsEditMode] = useState(false);
-  const [plotConfigs, setPlotConfigs] = useState<string[]>([]);
+  const [plotConfigs, setPlotConfigs] = useState<string[]>(
+    hasRestoredSession ? restoredSession.plotConfigs : []
+  );
   // True once the user picks columns via Edit Plots. While false, the grid
   // auto-(re)seeds from the selected test points (first-selected prioritized);
   // once true, those picks are preserved and only NEW columns fill empty cells.
-  const [plotsUserEdited, setPlotsUserEdited] = useState(false);
+  const [plotsUserEdited, setPlotsUserEdited] = useState(
+    hasRestoredSession && restoredSession.plotsUserEdited
+  );
   // Right-panel mode: 'tp' overlays selected TPs from t=0; 'full' browses the
   // active test with windowed pyramid reads; 'spectrum' FFT/Welch per column;
   // 'xy' scatters each column against that plot's own X column.
   const [viewMode, setViewMode] = useState<'tp' | 'full' | 'spectrum' | 'xy'>(
-    settings.defaultViewMode
+    hasRestoredSession ? restoredSession.viewMode : settings.defaultViewMode
   );
-  const [fullRange, setFullRange] = useState<[number, number] | null>(null);
-  const [specMode, setSpecMode] = useState<'fft' | 'welch'>(settings.specMode);
-  const [specLogY, setSpecLogY] = useState(settings.specLogY);
+  const [fullRange, setFullRange] = useState<[number, number] | null>(
+    hasRestoredSession ? restoredSession.fullRange : null
+  );
+  const [fullPlotMode, setFullPlotMode] = useState<WindowDisplayMode>(
+    hasRestoredSession ? restoredSession.fullPlotMode : 'auto'
+  );
+  const [specMode, setSpecMode] = useState<'fft' | 'welch'>(
+    hasRestoredSession ? restoredSession.specMode : settings.specMode
+  );
+  const [specLogY, setSpecLogY] = useState(
+    hasRestoredSession ? restoredSession.specLogY : settings.specLogY
+  );
   // Spectrum/XY data source: selected test points, or the active test
-  const [specSource, setSpecSource] = useState<'tp' | 'full'>('tp');
-  // Per-plot DSP filters (TP + Full test modes), dashed overlays. Each grid
+  const [specSource, setSpecSource] = useState<'tp' | 'full'>(
+    hasRestoredSession ? restoredSession.specSource : 'tp'
+  );
+  // Per-plot DSP filters (TP + Full test modes), shown instead of raw data
+  // while active. Each grid
   // cell has a ≈ button (next to expand) that opens its own filter row —
   // there is no shared/broadcast filter control.
   const [plotFilters, setPlotFilters] = useState<FilterUi[]>(() =>
-    Array.from({ length: 9 }, () => DEFAULT_FILTER_UI)
+    hasRestoredSession
+      ? restoredSession.plotFilters
+      : Array.from({ length: 9 }, () => ({ ...DEFAULT_FILTER_UI }))
   );
-  const [xySource, setXYSource] = useState<'tp' | 'full'>('tp');
+  const [xySource, setXYSource] = useState<'tp' | 'full'>(
+    hasRestoredSession ? restoredSession.xySource : 'tp'
+  );
   // XY mode is per-plot on BOTH axes, index-aligned with plotConfigs: its own
   // plotted (Y) column ('' = follow the shared grid slot) and its own X. Each
   // XY cell edits both in Edit Plots mode — editing an XY Y never disturbs the
   // time/spectrum grids.
-  const [xyYCols, setXYYCols] = useState<string[]>([]);
-  const [xyXCols, setXYXCols] = useState<string[]>([]);
+  const [xyYCols, setXYYCols] = useState<string[]>(
+    hasRestoredSession ? restoredSession.xyYCols : []
+  );
+  const [xyXCols, setXYXCols] = useState<string[]>(
+    hasRestoredSession ? restoredSession.xyXCols : []
+  );
   const [tab, setTab] = useState<AppTab>('analyze');
   const [notice, setNotice] = useState('');
+  const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
+  const [splitDirty, setSplitDirty] = useState(false);
+  const [editDirty, setEditDirty] = useState(false);
+  const [splitBusy, setSplitBusy] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
+  useUnsavedChanges({
+    isDirty:
+      settingsDraft !== null ||
+      splitBusy ||
+      editBusy ||
+      pendingUploadFiles.length > 0,
+  });
+  const [scatterRatio, setScatterRatio] = useState(
+    hasRestoredSession ? restoredSession.scatterRatio : 40
+  );
+  const [scatterCollapsed, setScatterCollapsed] = useState(
+    hasRestoredSession && restoredSession.scatterCollapsed
+  );
+  const [plotDensity, setPlotDensity] = useState<PlotDensity>(
+    hasRestoredSession ? restoredSession.plotDensity : 'nine'
+  );
+  const [isResizingWorkspace, setIsResizingWorkspace] = useState(false);
+  const [isStackedWorkspace, setIsStackedWorkspace] = useState(
+    () => window.matchMedia('(max-width: 980px)').matches
+  );
+  const analyzeWorkspaceRef = useRef<HTMLDivElement>(null);
+  const initialCurrentTestRef = useRef(currentTest);
   const {
     uploads,
     startUploads: handleUploadFiles,
     pauseUpload,
     resumeUpload,
+    adoptServerUpload,
     cancelUpload,
     dismissUpload,
   } = useUploadManager({
@@ -155,6 +223,11 @@ function App() {
   const metaInFlight = useRef<Set<string>>(new Set());
   const statsInFlight = useRef<Set<string>>(new Set()); // `${test}|${col}`
   const tracesInFlight = useRef<Set<string>>(new Set()); // `${id}|${col}`
+  const statsRequestEpoch = useRef(0);
+  const statsTestEpoch = useRef<Map<string, number>>(new Map());
+  const traceRequestEpoch = useRef(0);
+  const traceTestEpoch = useRef<Map<string, number>>(new Map());
+  const resetMainZoomRef = useRef<() => void>(() => {});
 
   // Per-test generation, bumped by invalidateTest. A meta/tp_stats fetch that
   // started before an invalidation (e.g. a rebuild landing) captures the gen at
@@ -177,10 +250,26 @@ function App() {
 
   const MAX_SELECTED_POINTS = 6;
 
-  const { selectedTPs, hiddenTPs, toggleTestPoint, toggleVisibility, removeTP, clearAll, setSelectedTPs } =
-    useTestPointSelection(MAX_SELECTED_POINTS);
+  const {
+    selectedTPs,
+    hiddenTPs,
+    toggleTestPoint,
+    toggleVisibility,
+    removeTP,
+    clearAll,
+    setSelectedTPs,
+    setHiddenTPs,
+  } = useTestPointSelection(MAX_SELECTED_POINTS);
+  const [selectionSessionHydrated, setSelectionSessionHydrated] = useState(
+    !hasRestoredSession || restoredSession.selections.length === 0
+  );
+  const [pendingRestoredSelections, setPendingRestoredSelections] = useState(
+    hasRestoredSession ? restoredSession.selections : []
+  );
 
-  const { timeZoom, setTimeZoom, resetTimeZoom } = useTimeZoom();
+  const { timeZoom, setTimeZoom, resetTimeZoom } = useTimeZoom(
+    hasRestoredSession ? restoredSession.timeZoom : null
+  );
 
   /** Per-plot filter specs (null while 'none' or params incomplete). */
   const plotFilterSpecs = useMemo(() => plotFilters.map(buildFilterSpec), [plotFilters]);
@@ -250,12 +339,22 @@ function App() {
     return [...selectionColumns, ...dataColumns.filter((c) => !seen.has(c))];
   }, [selectionDriven, selectionColumns, dataColumns]);
 
+  const traceColumns = useMemo(() => {
+    if (viewMode !== 'tp') return [];
+    if (expandedPlot !== null) {
+      return plotConfigs[expandedPlot] ? [plotConfigs[expandedPlot]] : [];
+    }
+    const limit = plotDensity === 'single' ? 1 : plotDensity === 'quad' ? 4 : 9;
+    return plotConfigs.slice(0, limit);
+  }, [expandedPlot, plotConfigs, plotDensity, viewMode]);
+
   /** Drop every cache for one test (after rebuild/rename/delete/split-save). */
   const invalidateTest = useCallback(
     (name: string) => {
       // Bump the generation first so any in-flight fetch for this test drops
       // its result instead of writing pre-invalidation data back (1.11).
       testGen.current.set(name, (testGen.current.get(name) ?? 0) + 1);
+      traceTestEpoch.current.set(name, (traceTestEpoch.current.get(name) ?? 0) + 1);
       setMetaByTest((prev) => {
         const next = { ...prev };
         delete next[name];
@@ -271,15 +370,35 @@ function App() {
         delete next[name];
         return next;
       });
+      setStatsErrors((prev) =>
+        Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${name}|`)))
+      );
+      setLoadingStats(
+        (prev) => new Set(Array.from(prev).filter((key) => !key.startsWith(`${name}|`)))
+      );
+      setTraceErrors((prev) =>
+        Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${name}:`)))
+      );
+      setLoadingTestPointIds((prev) => {
+        const next = new Set(
+          Array.from(prev).filter((selectionId) => !selectionId.startsWith(`${name}:`))
+        );
+        return next.size === prev.size ? prev : next;
+      });
       setSelectedTPs((prev) => prev.filter((s) => s.test !== name));
+      setPendingRestoredSelections((prev) => prev.filter((selection) => selection.test !== name));
+      if (name === currentTest) setFullRange(null);
       // Clear the in-flight guards so the loaders can immediately start a FRESH
       // fetch (the stale one, now a lower generation, will be discarded).
       metaInFlight.current.delete(name);
       Array.from(statsInFlight.current)
         .filter((k) => k.startsWith(`${name}|`))
         .forEach((k) => statsInFlight.current.delete(k));
+      Array.from(tracesInFlight.current)
+        .filter((k) => k.startsWith(`${name}:`))
+        .forEach((k) => tracesInFlight.current.delete(k));
     },
-    [setSelectedTPs]
+    [currentTest, setSelectedTPs]
   );
 
   // Fetch test list on mount, select the first ready test
@@ -289,9 +408,17 @@ function App() {
         setLoading(true);
         setError(null);
         const list = await fetchTests();
+        const initialTest = initialCurrentTestRef.current;
+        const restoredTestStillExists =
+          initialTest && list.some((test) => test.name === initialTest && test.status === 'ready');
+        if (initialTest && !restoredTestStillExists) setFullRange(null);
         setTests(list);
-        const firstReady = list.find((t) => t.status === 'ready');
-        if (firstReady) setCurrentTest(firstReady.name);
+        setCurrentTest((previous) => {
+          const restoredStillExists =
+            previous && list.some((test) => test.name === previous && test.status === 'ready');
+          if (restoredStillExists) return previous;
+          return list.find((test) => test.status === 'ready')?.name ?? '';
+        });
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch tests');
         console.error('Error fetching tests:', err);
@@ -349,6 +476,88 @@ function App() {
     });
   }, [tests, metaByTest, metaRetry, scheduleMetaRetry]);
 
+  // Rebuild lightweight saved selections as each referenced test becomes
+  // available. Busy tests stay pending without blocking persistence for the
+  // rest of the workspace, and restored points merge with any selections the
+  // user made while metadata was loading.
+  useEffect(() => {
+    if (loading) return;
+
+    const restored: SelectedTestPoint[] = [];
+    const hidden = new Set<string>();
+    const stillPending: typeof pendingRestoredSelections = [];
+    const selectedIds = new Set(selectedTPs.map((selection) => selection.id));
+    let remainingSlots = Math.max(0, MAX_SELECTED_POINTS - selectedTPs.length);
+
+    pendingRestoredSelections.forEach(({ test, tpId, hidden: wasHidden }) => {
+      const info = tests.find((candidate) => candidate.name === test);
+      if (!info) return; // deleted since the session was saved
+      if (info.status !== 'ready') {
+        stillPending.push({ test, tpId, hidden: wasHidden });
+        return;
+      }
+      if (!(test in metaByTest) || !(test in tpsByTest)) {
+        stillPending.push({ test, tpId, hidden: wasHidden });
+        return;
+      }
+      const point = tpsByTest[test]?.find((candidate) => candidate.id === tpId);
+      const testMeta = metaByTest[test];
+      if (!point || !testMeta) return;
+      const siblings = tpsByTest[test] ?? [];
+      const dataEnd = (testMeta.t_start ?? 0) + (testMeta.duration_s ?? 0);
+      const nextStart = siblings
+        .filter((candidate) => candidate.id !== point.id && candidate.start_s > point.start_s)
+        .reduce<
+          number | null
+        >((nearest, candidate) => (nearest === null || candidate.start_s < nearest ? candidate.start_s : nearest), null);
+      const id = `${test}:${point.id}`;
+      if (selectedIds.has(id)) {
+        return;
+      }
+      if (remainingSlots === 0) {
+        stillPending.push({ test, tpId, hidden: wasHidden });
+        return;
+      }
+      restored.push({
+        id,
+        test,
+        tpId: point.id,
+        name: point.name,
+        label: point.label,
+        color: assignColor([...selectedTPs, ...restored]),
+        tp: point,
+        endS: point.end_s ?? nextStart ?? dataEnd,
+        traces: {},
+      });
+      selectedIds.add(id);
+      remainingSlots -= 1;
+      if (wasHidden) hidden.add(id);
+    });
+    if (restored.length > 0) {
+      setSelectedTPs((current) => [...current, ...restored]);
+    }
+    if (hidden.size > 0) {
+      setHiddenTPs((current) => new Set([...current, ...hidden]));
+    }
+    const pendingKey = pendingRestoredSelections
+      .map(({ test, tpId, hidden: isHidden }) => `${test}:${tpId}:${isHidden}`)
+      .join('|');
+    const nextPendingKey = stillPending
+      .map(({ test, tpId, hidden: isHidden }) => `${test}:${tpId}:${isHidden}`)
+      .join('|');
+    if (pendingKey !== nextPendingKey) setPendingRestoredSelections(stillPending);
+    setSelectionSessionHydrated(true);
+  }, [
+    loading,
+    metaByTest,
+    pendingRestoredSelections,
+    selectedTPs,
+    setHiddenTPs,
+    setSelectedTPs,
+    tests,
+    tpsByTest,
+  ]);
+
   // If the active test vanishes (deleted/renamed from another window), fall
   // back to a ready test instead of wedging on the loading screen with a
   // dangling currentTest whose meta was just pruned (1.9). A rebuild keeps the
@@ -357,15 +566,13 @@ function App() {
     if (!currentTest || !tests.length) return;
     if (tests.some((t) => t.name === currentTest)) return;
     const firstReady = tests.find((t) => t.status === 'ready');
+    setFullRange(null);
     setCurrentTest(firstReady ? firstReady.name : '');
   }, [tests, currentTest]);
 
   /** X/Y pair that maximizes how many tests can plot a point (see bestAxisPair).
    *  Drives the scatter defaults so a narrow test can't hide the rest. */
-  const [defaultXAxis, defaultYAxis] = useMemo(
-    () => bestAxisPair(columnsByTest),
-    [columnsByTest]
-  );
+  const [defaultXAxis, defaultYAxis] = useMemo(() => bestAxisPair(columnsByTest), [columnsByTest]);
 
   // Scatter axis defaults across the WHOLE library (not just the active test).
   // Precedence: in-session pick (axesUserSet) > saved preference (while its
@@ -376,14 +583,34 @@ function App() {
       settings.scatterX && unionColumns.includes(settings.scatterX) ? settings.scatterX : '';
     const prefY =
       settings.scatterY && unionColumns.includes(settings.scatterY) ? settings.scatterY : '';
+    const nextX = !axesUserSet
+      ? prefX || defaultXAxis
+      : unionColumns.includes(xAxis)
+        ? xAxis
+        : prefX || defaultXAxis;
+    const nextY = !axesUserSet
+      ? prefY || defaultYAxis
+      : unionColumns.includes(yAxis)
+        ? yAxis
+        : prefY || defaultYAxis;
+    if (nextX !== xAxis || nextY !== yAxis) resetMainZoomRef.current();
     if (!axesUserSet) {
-      setXAxis(prefX || defaultXAxis);
-      setYAxis(prefY || defaultYAxis);
+      setXAxis(nextX);
+      setYAxis(nextY);
       return;
     }
-    setXAxis((prev) => (unionColumns.includes(prev) ? prev : prefX || defaultXAxis));
-    setYAxis((prev) => (unionColumns.includes(prev) ? prev : prefY || defaultYAxis));
-  }, [defaultXAxis, defaultYAxis, axesUserSet, unionColumns, settings.scatterX, settings.scatterY]);
+    setXAxis(nextX);
+    setYAxis(nextY);
+  }, [
+    defaultXAxis,
+    defaultYAxis,
+    axesUserSet,
+    unionColumns,
+    settings.scatterX,
+    settings.scatterY,
+    xAxis,
+    yAxis,
+  ]);
 
   // Seed the 3x3 grid from the ordered gridColumns universe (selection-first).
   // Precedence per slot: in-session Edit Plots pick (plotsUserEdited) > saved
@@ -407,9 +634,7 @@ function App() {
       const used = new Set(slots.filter(Boolean));
       const filler = gridColumns.filter((c) => !used.has(c));
       let fi = 0;
-      return slots
-        .map((c) => c || (fi < filler.length ? filler[fi++] : ''))
-        .filter(Boolean);
+      return slots.map((c) => c || (fi < filler.length ? filler[fi++] : '')).filter(Boolean);
     });
     // XY Y/X columns are per-slot too; a session pick (still-valid prev) wins.
     // Y falls back to '' = follow the shared grid slot for that cell.
@@ -429,19 +654,11 @@ function App() {
     );
   }, [gridColumns, plotsUserEdited, settings.gridColumns, settings.xyYCols, settings.xyXCols]);
 
-  // A fresh selection session starts un-edited, so it re-prioritizes to its
-  // first test point's columns instead of clinging to the previous picks.
-  useEffect(() => {
-    if (selectedTPs.length === 0) setPlotsUserEdited(false);
-  }, [selectedTPs.length]);
-
   // Poll the test list while any ingest or rebuild runs, or while the
   // Uploads page is open (its whole point is live status); auto-select the
   // first ready test if none is selected, and reload the current test when
   // its rebuild completes.
-  const uploadsActive = uploads.some(
-    (u) => u.phase !== 'paused' && u.phase !== 'error'
-  );
+  const uploadsActive = uploads.some((u) => u.phase !== 'paused' && u.phase !== 'error');
   useEffect(() => {
     const busy = tests.some((t) => isBusyStatus(t.status));
     // uploadsActive: while a body is still streaming up, the new test only
@@ -516,22 +733,65 @@ function App() {
 
   // Switching back from the split editor: the active test's TP definitions
   // may have changed — refetch it (and its stats).
-  const handleTabChange = (next: AppTab) => {
-    if (next === tab) return;
-    setTab(next);
-    if (next === 'analyze' && currentTest) {
-      invalidateTest(currentTest);
+  const confirmDiscardActiveDraft = useCallback(() => {
+    const busy = tab === 'split' ? splitBusy : tab === 'edit' ? editBusy : false;
+    if (busy) {
+      window.alert(
+        tab === 'split'
+          ? 'Test-point changes are still being saved. Wait for the save to finish before leaving Split.'
+          : 'A data change is still being submitted. Wait for it to finish before leaving Edit.'
+      );
+      return false;
     }
+    const dirty =
+      tab === 'split'
+        ? splitDirty
+        : tab === 'edit'
+          ? editDirty
+          : tab === 'uploads'
+            ? pendingUploadFiles.length > 0
+            : false;
+    if (!dirty) return true;
+    const label =
+      tab === 'split'
+        ? 'test-point changes'
+        : tab === 'edit'
+          ? 'data-edit changes'
+          : 'CSV import setup';
+    const discard = window.confirm(
+      `Discard unsaved ${label}?\n\nYour saved test data will not be changed.`
+    );
+    if (discard) {
+      if (tab === 'split') setSplitDirty(false);
+      if (tab === 'edit') setEditDirty(false);
+      if (tab === 'uploads') setPendingUploadFiles([]);
+    }
+    return discard;
+  }, [
+    editBusy,
+    editDirty,
+    pendingUploadFiles.length,
+    splitBusy,
+    splitDirty,
+    tab,
+  ]);
+
+  const handleTabChange = (next: AppTab) => {
+    if (next === tab) return true;
+    if (!confirmDiscardActiveDraft()) return false;
+    setTab(next);
     if (next === 'uploads') {
       // Fresh history immediately; the 2 s poller takes over while open.
-      fetchTests().then(setTests).catch(() => {});
+      fetchTests()
+        .then(setTests)
+        .catch(() => {});
     }
+    return true;
   };
 
   // -- Uploads tab callbacks --
   const handleOpenTest = (name: string) => {
-    handleTestChange(name);
-    setTab('analyze');
+    if (handleTestChange(name)) setTab('analyze');
   };
 
   const handleTestDeleted = async (name: string) => {
@@ -563,6 +823,7 @@ function App() {
   // for that test (NOT selection/meta/TPs) so the scatter refetches the fresh
   // numbers on its next render.
   const handleStatsRebuilt = useCallback((name: string) => {
+    statsTestEpoch.current.set(name, (statsTestEpoch.current.get(name) ?? 0) + 1);
     setStatsCache((prev) => {
       if (!(name in prev)) return prev;
       const next = { ...prev };
@@ -572,9 +833,78 @@ function App() {
     Array.from(statsInFlight.current)
       .filter((k) => k.startsWith(`${name}|`))
       .forEach((k) => statsInFlight.current.delete(k));
+    setStatsErrors((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${name}|`)))
+    );
+    setLoadingStats((prev) => {
+      const next = new Set(Array.from(prev).filter((key) => !key.startsWith(`${name}|`)));
+      return next.size === prev.size ? prev : next;
+    });
   }, []);
 
-  // Whole-window drag-and-drop CSV upload
+  const handleTestPointsSaved = useCallback(
+    (name: string) => {
+      const generation = (testGen.current.get(name) ?? 0) + 1;
+      testGen.current.set(name, generation);
+      resetTimeZoom();
+      traceTestEpoch.current.set(name, (traceTestEpoch.current.get(name) ?? 0) + 1);
+      handleStatsRebuilt(name);
+      setSelectedTPs((prev) => prev.filter((selection) => selection.test !== name));
+      setPendingRestoredSelections((prev) => prev.filter((selection) => selection.test !== name));
+      setHiddenTPs((prev) => {
+        const next = new Set(
+          Array.from(prev).filter((selectionId) => !selectionId.startsWith(`${name}:`))
+        );
+        return next.size === prev.size ? prev : next;
+      });
+      setTraceErrors((prev) =>
+        Object.fromEntries(Object.entries(prev).filter(([key]) => !key.startsWith(`${name}:`)))
+      );
+      setLoadingTestPointIds((prev) => {
+        const next = new Set(
+          Array.from(prev).filter((selectionId) => !selectionId.startsWith(`${name}:`))
+        );
+        return next.size === prev.size ? prev : next;
+      });
+      Array.from(tracesInFlight.current)
+        .filter((key) => key.startsWith(`${name}:`))
+        .forEach((key) => tracesInFlight.current.delete(key));
+      fetchTestPoints(name)
+        .then((file) => {
+          if ((testGen.current.get(name) ?? 0) !== generation) return;
+          setTpsByTest((prev) => ({ ...prev, [name]: file.test_points }));
+          setNotice(`${name}: test points refreshed`);
+        })
+        .catch((refreshError) => {
+          console.error(`test-point refresh failed for ${name}:`, refreshError);
+          setNotice(`${name}: saved; refresh the analysis to load the new points`);
+        });
+    },
+    [handleStatsRebuilt, resetTimeZoom, setHiddenTPs, setSelectedTPs]
+  );
+
+  const stageUploadFiles = (files: File[]) => {
+    const csvFiles = files.filter((file) =>
+      file.name.toLowerCase().endsWith('.csv')
+    );
+    if (csvFiles.length === 0) {
+      setNotice('Choose one or more .csv files to import');
+      return;
+    }
+    if (!handleTabChange('uploads')) return;
+    setPendingUploadFiles(csvFiles);
+  };
+
+  const startConfiguredUploads = (
+    files: File[],
+    options: UploadDataOptions
+  ) => {
+    setPendingUploadFiles([]);
+    void handleUploadFiles(files, options);
+  };
+
+  // Whole-window drag-and-drop routes through the same import setup as the
+  // Uploads-page picker, so no path silently bypasses time/Hz choices.
   const dragHandlers = {
     onDragEnter: (e: React.DragEvent) => {
       if (!e.dataTransfer.types.includes('Files')) return;
@@ -594,7 +924,7 @@ function App() {
       dragDepth.current = 0;
       setIsDragging(false);
       const files = Array.from(e.dataTransfer.files ?? []);
-      if (files.length) handleUploadFiles(files);
+      if (files.length) stageUploadFiles(files);
     },
   };
 
@@ -658,7 +988,12 @@ function App() {
     clearFilters,
     hasActiveFilters,
     applyFilters,
-  } = useScatterFilter(rawScatterData, statsCache, columnsByTest);
+  } = useScatterFilter(
+    rawScatterData,
+    statsCache,
+    columnsByTest,
+    hasRestoredSession ? restoredSession.filterState : undefined
+  );
 
   // Fetch tp_stats per (test, column) for scatter axes and active filters
   useEffect(() => {
@@ -673,10 +1008,23 @@ function App() {
         if (!testCols.includes(col)) return;
         if (statsCache[test]?.[col] || statsInFlight.current.has(key)) return;
         statsInFlight.current.add(key);
+        setLoadingStats((prev) => new Set(prev).add(key));
+        setStatsErrors((prev) => {
+          if (!(key in prev)) return prev;
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
         const gen = testGen.current.get(test) ?? 0;
+        const requestEpoch = statsRequestEpoch.current;
+        const testEpoch = statsTestEpoch.current.get(test) ?? 0;
+        const requestIsCurrent = () =>
+          (testGen.current.get(test) ?? 0) === gen &&
+          statsRequestEpoch.current === requestEpoch &&
+          (statsTestEpoch.current.get(test) ?? 0) === testEpoch;
         fetchTpStats(test, col)
           .then((stats) => {
-            if ((testGen.current.get(test) ?? 0) !== gen) return; // invalidated mid-flight
+            if (!requestIsCurrent()) return;
             const byId: Record<number, TpStat> = {};
             stats.forEach((s) => {
               byId[s.id] = s;
@@ -687,14 +1035,25 @@ function App() {
             }));
           })
           .catch((err) => {
+            if (!requestIsCurrent()) return;
             console.error(`tp_stats failed for ${test}/${col}:`, err);
+            setStatsErrors((prev) => ({
+              ...prev,
+              [key]: err instanceof Error ? err.message : String(err),
+            }));
           })
           .finally(() => {
+            if (!requestIsCurrent()) return;
             statsInFlight.current.delete(key);
+            setLoadingStats((prev) => {
+              const next = new Set(prev);
+              next.delete(key);
+              return next;
+            });
           });
       });
     });
-  }, [tpsByTest, columnsByTest, xAxis, yAxis, filterColumns, statsCache]);
+  }, [tpsByTest, columnsByTest, xAxis, yAxis, filterColumns, statsCache, statsRetry]);
 
   // Fetch missing traces for selected test points (columns shown in the grid,
   // restricted to what each TP's own test actually has)
@@ -703,7 +1062,7 @@ function App() {
 
     selectedTPs.forEach((s) => {
       const testCols = columnsByTest[s.test] ?? [];
-      const missing = plotConfigs.filter(
+      const missing = traceColumns.filter(
         (col) =>
           testCols.includes(col) &&
           !(col in s.traces) &&
@@ -712,20 +1071,46 @@ function App() {
       if (missing.length === 0) return;
 
       missing.forEach((col) => tracesInFlight.current.add(`${s.id}|${col}`));
+      setTraceErrors((prev) => {
+        const next = { ...prev };
+        missing.forEach((col) => delete next[`${s.id}|${col}`]);
+        return next;
+      });
       setLoadingTestPointIds((prev) => new Set(prev).add(s.id));
+      const generation = testGen.current.get(s.test) ?? 0;
+      const requestEpoch = traceRequestEpoch.current;
+      const testEpoch = traceTestEpoch.current.get(s.test) ?? 0;
+      const requestIsCurrent = () =>
+        (testGen.current.get(s.test) ?? 0) === generation &&
+        traceRequestEpoch.current === requestEpoch &&
+        (traceTestEpoch.current.get(s.test) ?? 0) === testEpoch;
 
       fetchTestPointTrace(s.test, s.tpId, missing)
         .then((resp) => {
+          if (!requestIsCurrent()) return;
+          setTraceErrors((prev) => {
+            const next = { ...prev };
+            missing.forEach((col) => delete next[`${s.id}|${col}`]);
+            return next;
+          });
           setSelectedTPs((prev) =>
-            prev.map((p) =>
-              p.id === s.id ? { ...p, traces: { ...p.traces, ...resp.series } } : p
-            )
+            prev.map((p) => (p.id === s.id ? { ...p, traces: { ...p.traces, ...resp.series } } : p))
           );
         })
         .catch((err) => {
+          if (!requestIsCurrent()) return;
           console.error(`traces failed for ${s.id}:`, err);
+          const message = err instanceof Error ? err.message : String(err);
+          setTraceErrors((prev) => {
+            const next = { ...prev };
+            missing.forEach((col) => {
+              next[`${s.id}|${col}`] = message;
+            });
+            return next;
+          });
         })
         .finally(() => {
+          if (!requestIsCurrent()) return;
           missing.forEach((col) => tracesInFlight.current.delete(`${s.id}|${col}`));
           setLoadingTestPointIds((prev) => {
             const next = new Set(prev);
@@ -734,22 +1119,211 @@ function App() {
           });
         });
     });
-  }, [selectedTPs, plotConfigs, columnsByTest, setSelectedTPs]);
+  }, [selectedTPs, traceColumns, columnsByTest, setSelectedTPs, traceRetry]);
+
+  const retryTestPointTraces = useCallback(() => {
+    traceRequestEpoch.current += 1;
+    tracesInFlight.current.clear();
+    setLoadingTestPointIds(new Set());
+    setTraceErrors({});
+    setTraceRetry((attempt) => attempt + 1);
+  }, []);
 
   // Apply filters to get final scatter data
   const scatterData = useMemo(() => {
     return applyFilters(rawScatterData);
   }, [applyFilters, rawScatterData]);
 
-  const { mainZoom, handleMainWheel, handlePan, resetZoom } = useMainPlotZoom(scatterData);
+  const requiredStatsKeys = useMemo(() => {
+    const columns = Array.from(new Set([xAxis, yAxis, ...filterColumns])).filter(Boolean);
+    const keys: string[] = [];
+    Object.entries(tpsByTest).forEach(([test, points]) => {
+      if (points.length === 0) return;
+      const available = columnsByTest[test] ?? [];
+      columns.forEach((column) => {
+        if (available.includes(column)) keys.push(`${test}|${column}`);
+      });
+    });
+    return keys;
+  }, [columnsByTest, filterColumns, tpsByTest, xAxis, yAxis]);
+  const visibleStatsErrors = requiredStatsKeys.filter((key) => statsErrors[key]);
+  const scatterStatsLoading = requiredStatsKeys.some((key) => loadingStats.has(key));
+  const scatterErrorText =
+    visibleStatsErrors.length > 0
+      ? `${visibleStatsErrors.length} statistic request${
+          visibleStatsErrors.length === 1 ? '' : 's'
+        } failed. ${statsErrors[visibleStatsErrors[0]]}`
+      : null;
+  const retryScatterStats = useCallback(() => {
+    statsRequestEpoch.current += 1;
+    statsInFlight.current.clear();
+    setLoadingStats(new Set());
+    setStatsErrors((prev) => {
+      const next = { ...prev };
+      requiredStatsKeys.forEach((key) => delete next[key]);
+      return next;
+    });
+    setStatsRetry((attempt) => attempt + 1);
+  }, [requiredStatsKeys]);
+  const scatterEmptyState = useMemo(() => {
+    const pointCount = Object.values(tpsByTest).reduce((count, points) => count + points.length, 0);
+    if (!xAxis || !yAxis) {
+      return {
+        title: 'Choose two variables',
+        detail: 'The scatter compares test-point means across the loaded test library.',
+      };
+    }
+    if (hasActiveFilters && rawScatterData.length > 0 && scatterData.length === 0) {
+      return {
+        title: 'No points match these filters',
+        detail: 'Adjust or clear the active filters to bring test points back into view.',
+      };
+    }
+    if (pointCount === 0) {
+      return {
+        title: 'No test points defined',
+        detail: 'Open Split to define test points before comparing their mean values.',
+      };
+    }
+    return {
+      title: 'No comparable points',
+      detail: 'The loaded tests do not contain usable values for both selected variables.',
+    };
+  }, [hasActiveFilters, rawScatterData.length, scatterData.length, tpsByTest, xAxis, yAxis]);
+
+  const { mainZoom, handleMainWheel, handlePan, resetZoom } = useMainPlotZoom(
+    scatterData,
+    hasRestoredSession ? restoredSession.mainZoom : null
+  );
+  resetMainZoomRef.current = resetZoom;
+
+  // Persist the working analysis, not fetched samples. A short debounce keeps
+  // rapid zoom/pan updates from turning into synchronous storage churn.
+  useEffect(() => {
+    if (loading || !selectionSessionHydrated) return;
+    const id = window.setTimeout(() => {
+      saveAnalysisSession({
+        version: 1,
+        currentTest,
+        xAxis,
+        yAxis,
+        axesUserSet,
+        selections: [
+          ...selectedTPs.map((selection) => ({
+            test: selection.test,
+            tpId: selection.tpId,
+            hidden: hiddenTPs.has(selection.id),
+          })),
+          ...pendingRestoredSelections.filter(
+            (pending) =>
+              !selectedTPs.some(
+                (selection) => selection.test === pending.test && selection.tpId === pending.tpId
+              )
+          ),
+        ].slice(0, MAX_SELECTED_POINTS),
+        filterState,
+        mainZoom,
+        timeZoom,
+        fullRange,
+        viewMode,
+        fullPlotMode,
+        specMode,
+        specLogY,
+        specSource,
+        xySource,
+        plotConfigs: plotConfigs.slice(0, 9),
+        plotsUserEdited,
+        plotFilters,
+        xyYCols: xyYCols.slice(0, 9),
+        xyXCols: xyXCols.slice(0, 9),
+        scatterRatio,
+        scatterCollapsed,
+        plotDensity,
+      });
+    }, 250);
+    return () => window.clearTimeout(id);
+  }, [
+    axesUserSet,
+    currentTest,
+    filterState,
+    fullPlotMode,
+    fullRange,
+    hiddenTPs,
+    loading,
+    mainZoom,
+    plotConfigs,
+    plotDensity,
+    plotFilters,
+    plotsUserEdited,
+    scatterCollapsed,
+    scatterRatio,
+    selectedTPs,
+    pendingRestoredSelections,
+    selectionSessionHydrated,
+    specLogY,
+    specMode,
+    specSource,
+    timeZoom,
+    viewMode,
+    xAxis,
+    xySource,
+    xyXCols,
+    xyYCols,
+    yAxis,
+  ]);
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 980px)');
+    const updateLayoutMode = () => setIsStackedWorkspace(media.matches);
+    updateLayoutMode();
+    media.addEventListener('change', updateLayoutMode);
+    return () => media.removeEventListener('change', updateLayoutMode);
+  }, []);
+
+  useEffect(() => {
+    if (!isResizingWorkspace) return;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = isStackedWorkspace ? 'row-resize' : 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const resize = (event: PointerEvent) => {
+      const workspace = analyzeWorkspaceRef.current;
+      if (!workspace) return;
+      const bounds = workspace.getBoundingClientRect();
+      const available = isStackedWorkspace ? bounds.height : bounds.width;
+      if (available <= 0) return;
+      const pointer = isStackedWorkspace ? event.clientY - bounds.top : event.clientX - bounds.left;
+      const ratio = (pointer / available) * 100;
+      setScatterRatio(Math.min(62, Math.max(24, ratio)));
+    };
+    const stop = () => setIsResizingWorkspace(false);
+    window.addEventListener('pointermove', resize);
+    window.addEventListener('pointerup', stop, { once: true });
+    window.addEventListener('pointercancel', stop, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', resize);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [isResizingWorkspace, isStackedWorkspace]);
+
+  const handlePlotDensityChange = (density: PlotDensity) => {
+    setPlotDensity(density);
+    setExpandedPlot(null);
+  };
 
   // The scatter is global now — switching the active test only affects the
   // per-test views (grid modes, split/edit tabs).
-  const handleTestChange = (test: string) => {
-    if (test === currentTest) return;
+  const handleTestChange = (test: string): boolean => {
+    if (test === currentTest) return true;
+    if (!confirmDiscardActiveDraft()) return false;
     setCurrentTest(test);
     setFullRange(null);
     setExpandedPlot(null);
+    return true;
   };
 
   // The active time zoom depends on the right-panel mode
@@ -781,6 +1355,9 @@ function App() {
 
   const handleScatterToggle = useCallback(
     (point: ScatterDataPoint) => {
+      // An explicit selection action supersedes any still-unavailable points
+      // from the restored session; they must not appear later against intent.
+      setPendingRestoredSelections([]);
       // Resolve an open-ended TP to a concrete end time (next TP start, or
       // end of data) — TP-sourced spectra/XY need a real range.
       const m = metaByTest[point.test];
@@ -852,10 +1429,15 @@ function App() {
     <UploadView
       tests={tests}
       uploads={uploads}
-      onUploadFiles={handleUploadFiles}
+      pendingFiles={pendingUploadFiles}
+      defaultFsHz={parseUploadFs(settings)}
+      onStageUploadFiles={stageUploadFiles}
+      onStartUpload={startConfiguredUploads}
+      onClearPendingFiles={() => setPendingUploadFiles([])}
       onDismissUpload={dismissUpload}
       onPauseUpload={pauseUpload}
       onResumeUpload={resumeUpload}
+      onAdoptServerUpload={adoptServerUpload}
       onCancelUpload={cancelUpload}
       onOpenTest={handleOpenTest}
       onTestDeleted={handleTestDeleted}
@@ -892,7 +1474,7 @@ function App() {
         pointerEvents: 'none',
       }}
     >
-      Drop CSV file(s) to upload
+      Drop CSV file(s) to configure import
     </div>
   );
 
@@ -945,7 +1527,15 @@ function App() {
           <div style={{ color: '#909090', fontSize: 12, marginBottom: 20 }}>{error}</div>
           <div style={{ color: '#909090', fontSize: 11, lineHeight: 1.6 }}>
             <div>Make sure the backend is running:</div>
-            <div style={{ marginTop: 8, background: '#252526', padding: 8, borderRadius: 4, fontFamily: 'Consolas, monospace' }}>
+            <div
+              style={{
+                marginTop: 8,
+                background: '#252526',
+                padding: 8,
+                borderRadius: 4,
+                fontFamily: 'Consolas, monospace',
+              }}
+            >
               backend\run_backend.bat
             </div>
           </div>
@@ -975,7 +1565,7 @@ function App() {
           tests={tests}
           tab={tab}
           onTabChange={handleTabChange}
-          onUploadFiles={handleUploadFiles}
+          onImportFiles={stageUploadFiles}
           uploads={uploads}
           onDismissUpload={dismissUpload}
           onPauseUpload={pauseUpload}
@@ -992,7 +1582,8 @@ function App() {
             <div style={{ textAlign: 'center', maxWidth: 500 }}>
               <div style={{ marginBottom: 12, fontSize: 16 }}>No test data available</div>
               <div style={{ color: '#909090', fontSize: 12 }}>
-                Upload a test CSV with the button above, or drop a .csv file anywhere in this window.
+                Upload a test CSV with the button above, or drop a .csv file anywhere in this
+                window.
               </div>
             </div>
           </div>
@@ -1020,7 +1611,7 @@ function App() {
         tests={tests}
         tab={tab}
         onTabChange={handleTabChange}
-        onUploadFiles={handleUploadFiles}
+        onImportFiles={stageUploadFiles}
         uploads={uploads}
         onDismissUpload={dismissUpload}
         onPauseUpload={pauseUpload}
@@ -1040,6 +1631,9 @@ function App() {
           columns={dataColumns}
           tests={tests}
           onTestChange={handleTestChange}
+          onDirtyChange={setSplitDirty}
+          onBusyChange={setSplitBusy}
+          onSaved={() => handleTestPointsSaved(currentTest)}
         />
       ) : tab === 'edit' && meta ? (
         <EditView
@@ -1050,174 +1644,227 @@ function App() {
           onRebuildStarted={handleRebuildStarted}
           onTestGone={handleTestGone}
           onMetaSaved={handleMetaSaved}
+          onDirtyChange={setEditDirty}
+          onBusyChange={setEditBusy}
         />
       ) : (
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
-        {/* Left Panel - Main Scatter Plot (all ready tests) */}
-        <div style={{ width: '40%', padding: 12, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div
-            style={{
-              background: '#252526',
-              borderRadius: 4,
-              border: '1px solid #3c3c3c',
-              display: 'flex',
-              flexDirection: 'column',
-              flex: 1,
-              minHeight: 0,
-              overflow: 'hidden',
-              padding: 12,
-            }}
-          >
-            <AxisControls
-              columns={unionColumns}
-              xAxis={xAxis}
-              yAxis={yAxis}
-              onXAxisChange={handleXAxisChange}
-              onYAxisChange={handleYAxisChange}
-              mainZoom={mainZoom}
-              onResetZoom={resetZoom}
-              onReloadData={reloadData}
-              isLoading={loading}
-            />
-            <FilterControls
-              filterState={filterState}
-              filterOptions={filterOptions}
-              columns={unionColumns}
-              onToggleTpKeys={toggleTpKeys}
-              onToggleLabel={toggleLabel}
-              onAddParameterFilter={() => addParameterFilter(unionColumns[0] || '')}
-              onUpdateParameterFilter={updateParameterFilter}
-              onRemoveParameterFilter={removeParameterFilter}
-              onClearFilters={clearFilters}
-              hasActiveFilters={hasActiveFilters}
-              filteredCount={scatterData.length}
-              totalCount={rawScatterData.length}
-            />
-            <div style={{ fontSize: 11, color: '#909090', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span>Click to select/deselect • Scroll to zoom • Drag to pan</span>
-              {rawScatterData.length >= 2 && (
-                <button
-                  onClick={() => setClusteringEnabled(!clusteringEnabled)}
-                  style={{
-                    fontSize: 10,
-                    padding: '3px 8px',
-                    background: clusteringEnabled ? '#1e3a52' : '#3c3c3c',
-                    color: clusteringEnabled ? '#569cd6' : '#909090',
-                    border: clusteringEnabled ? '1px solid #569cd6' : '1px solid #555',
-                    borderRadius: 3,
-                    cursor: 'pointer',
-                    fontFamily: 'Segoe UI, sans-serif',
-                  }}
-                >
-                  {clusteringEnabled ? '✓ Clustering ON' : 'Clustering OFF'}
-                </button>
-              )}
+        <div
+          ref={analyzeWorkspaceRef}
+          className={[
+            'analyze-workspace',
+            scatterCollapsed ? 'scatter-collapsed' : '',
+            isResizingWorkspace ? 'is-resizing' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          style={
+            {
+              '--scatter-size': scatterCollapsed ? '0px' : `${scatterRatio}%`,
+            } as CSSProperties
+          }
+        >
+          {/* Left Panel - Main Scatter Plot (all ready tests) */}
+          <div className="analyze-scatter-pane" aria-hidden={scatterCollapsed}>
+            <div className="analyze-scatter-panel">
+              <AxisControls
+                columns={unionColumns}
+                xAxis={xAxis}
+                yAxis={yAxis}
+                onXAxisChange={handleXAxisChange}
+                onYAxisChange={handleYAxisChange}
+                mainZoom={mainZoom}
+                onResetZoom={resetZoom}
+                onReloadData={reloadData}
+                isLoading={loading}
+                clusteringAvailable={rawScatterData.length >= 2}
+                clusteringEnabled={clusteringEnabled}
+                onClusteringChange={setClusteringEnabled}
+              />
+              <FilterControls
+                filterState={filterState}
+                filterOptions={filterOptions}
+                columns={unionColumns}
+                onToggleTpKeys={toggleTpKeys}
+                onToggleLabel={toggleLabel}
+                onAddParameterFilter={() => addParameterFilter(unionColumns[0] || '')}
+                onUpdateParameterFilter={updateParameterFilter}
+                onRemoveParameterFilter={removeParameterFilter}
+                onClearFilters={clearFilters}
+                hasActiveFilters={hasActiveFilters}
+                filteredCount={scatterData.length}
+                totalCount={rawScatterData.length}
+              />
+              <div className="scatter-plot-stage">
+                <MainScatterPlot
+                  scatterData={scatterData}
+                  rawDataCount={rawScatterData.length}
+                  xLabel={xLabel}
+                  yLabel={yLabel}
+                  mainZoom={mainZoom}
+                  onToggleTestPoint={handleScatterToggle}
+                  onWheel={handleMainWheel}
+                  onPan={handlePan}
+                  clusteringEnabled={clusteringEnabled}
+                />
+                <PlotStateOverlay
+                  loading={scatterStatsLoading}
+                  hasData={scatterData.length > 0}
+                  error={scatterData.length === 0 ? scatterErrorText : null}
+                  emptyState={scatterEmptyState}
+                  onRetry={retryScatterStats}
+                  loadingLabel="Loading test-point statistics"
+                  updatingLabel="Updating comparison"
+                  partialMessage={
+                    scatterData.length > 0 && scatterErrorText
+                      ? `${visibleStatsErrors.length} data source${
+                          visibleStatsErrors.length === 1 ? '' : 's'
+                        } could not update`
+                      : null
+                  }
+                />
+              </div>
             </div>
-            <MainScatterPlot
-              scatterData={scatterData}
-              rawDataCount={rawScatterData.length}
-              xLabel={xLabel}
-              yLabel={yLabel}
-              mainZoom={mainZoom}
-              onToggleTestPoint={handleScatterToggle}
-              onWheel={handleMainWheel}
-              onPan={handlePan}
-              clusteringEnabled={clusteringEnabled}
+          </div>
+
+          <div
+            className="analyze-resize-rail"
+            role="separator"
+            aria-label="Resize scatter and plot panels"
+            aria-orientation={isStackedWorkspace ? 'horizontal' : 'vertical'}
+            aria-valuemin={24}
+            aria-valuemax={62}
+            aria-valuenow={Math.round(scatterRatio)}
+            tabIndex={scatterCollapsed ? -1 : 0}
+            onPointerDown={(event) => {
+              if (event.button !== 0 || scatterCollapsed) return;
+              event.preventDefault();
+              setIsResizingWorkspace(true);
+            }}
+            onKeyDown={(event) => {
+              if (scatterCollapsed) return;
+              const decreaseKey = isStackedWorkspace ? 'ArrowUp' : 'ArrowLeft';
+              const increaseKey = isStackedWorkspace ? 'ArrowDown' : 'ArrowRight';
+              if (event.key === decreaseKey || event.key === increaseKey) {
+                event.preventDefault();
+                const step = event.shiftKey ? 5 : 2;
+                setScatterRatio((ratio) =>
+                  Math.min(62, Math.max(24, ratio + (event.key === increaseKey ? step : -step)))
+                );
+              } else if (event.key === 'Home') {
+                event.preventDefault();
+                setScatterRatio(24);
+              } else if (event.key === 'End') {
+                event.preventDefault();
+                setScatterRatio(62);
+              }
+            }}
+            onDoubleClick={() => setScatterRatio(40)}
+          >
+            <span className="analyze-resize-grip" aria-hidden="true" />
+            <button
+              type="button"
+              className="analyze-collapse-button"
+              aria-label={scatterCollapsed ? 'Show scatter panel' : 'Hide scatter panel'}
+              title={scatterCollapsed ? 'Show scatter panel' : 'Hide scatter panel'}
+              onPointerDown={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              onClick={() => setScatterCollapsed((collapsed) => !collapsed)}
+            >
+              {scatterCollapsed ? '›' : '‹'}
+            </button>
+          </div>
+
+          {/* Right Panel - Time Series Plots */}
+          <div className="analyze-plots-pane">
+            <SelectedPointsPanel
+              selectedTPs={selectedTPs}
+              hiddenTPs={hiddenTPs}
+              onToggleVisibility={toggleVisibility}
+              onRemoveTP={removeTP}
+              onClearAll={() => {
+                setPendingRestoredSelections([]);
+                clearAll();
+                resetTimeZoom();
+              }}
+              timeZoom={activeTimeZoom}
+              onResetTimeZoom={resetActiveTimeZoom}
+              maxPoints={MAX_SELECTED_POINTS}
+              loadingTestPointIds={loadingTestPointIds}
+              isEditMode={isEditMode}
+              onToggleEditMode={() => setIsEditMode(!isEditMode)}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              specMode={specMode}
+              onSpecModeChange={setSpecMode}
+              specLogY={specLogY}
+              onSpecLogYChange={setSpecLogY}
+              tests={tests}
+              currentTest={currentTest}
+              onTestChange={handleTestChange}
+              fullPlotMode={fullPlotMode}
+              onFullPlotModeChange={setFullPlotMode}
+              specSource={specSource}
+              onSpecSourceChange={setSpecSource}
+              xySource={xySource}
+              onXYSourceChange={setXYSource}
+              plotDensity={plotDensity}
+              onPlotDensityChange={handlePlotDensityChange}
+            />
+            <TimeSeriesGrid
+              viewMode={viewMode}
+              density={plotDensity}
+              test={currentTest}
+              columns={gridColumns}
+              selectedTPs={selectedTPs}
+              hiddenTPs={hiddenTPs}
+              expandedPlot={expandedPlot}
+              onToggleExpand={handleToggleExpand}
+              timeZoom={activeTimeZoom}
+              onTimeZoomChange={handleActiveTimeZoom}
+              onTimeZoomReset={resetActiveTimeZoom}
+              fullPlotMode={fullPlotMode}
+              specMode={specMode}
+              specLogY={specLogY}
+              specSource={specSource}
+              fs={meta?.fs_hz ?? null}
+              plotFilters={plotFilters}
+              plotFilterSpecs={plotFilterSpecs}
+              onPlotFilterChange={(i, patch) =>
+                setPlotFilters((prev) => {
+                  const next = [...prev];
+                  next[i] = { ...(next[i] ?? DEFAULT_FILTER_UI), ...patch };
+                  return next;
+                })
+              }
+              xySource={xySource}
+              xyYCols={xyYCols}
+              onXYYColChange={(i, c) =>
+                setXYYCols((prev) => {
+                  const next = [...prev];
+                  next[i] = c;
+                  return next;
+                })
+              }
+              xyXCols={xyXCols}
+              onXYXColChange={(i, c) =>
+                setXYXCols((prev) => {
+                  const next = [...prev];
+                  next[i] = c;
+                  return next;
+                })
+              }
+              columnsByTest={columnsByTest}
+              traceErrors={traceErrors}
+              onRetryTraces={retryTestPointTraces}
+              isEditMode={isEditMode}
+              plotConfigs={plotConfigs}
+              onPlotConfigChange={(configs) => {
+                setPlotConfigs(configs);
+                setPlotsUserEdited(true);
+              }}
             />
           </div>
         </div>
-
-        {/* Right Panel - Time Series Plots */}
-        <div
-          style={{
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            padding: '12px 12px 12px 0',
-            minHeight: 0,
-            overflow: 'hidden',
-          }}
-        >
-          <SelectedPointsPanel
-            selectedTPs={selectedTPs}
-            hiddenTPs={hiddenTPs}
-            onToggleVisibility={toggleVisibility}
-            onRemoveTP={removeTP}
-            onClearAll={() => {
-              clearAll();
-              resetTimeZoom();
-            }}
-            timeZoom={activeTimeZoom}
-            onResetTimeZoom={resetActiveTimeZoom}
-            maxPoints={MAX_SELECTED_POINTS}
-            loadingTestPointIds={loadingTestPointIds}
-            isEditMode={isEditMode}
-            onToggleEditMode={() => setIsEditMode(!isEditMode)}
-            viewMode={viewMode}
-            onViewModeChange={setViewMode}
-            specMode={specMode}
-            onSpecModeChange={setSpecMode}
-            specLogY={specLogY}
-            onSpecLogYChange={setSpecLogY}
-            tests={tests}
-            currentTest={currentTest}
-            onTestChange={handleTestChange}
-            specSource={specSource}
-            onSpecSourceChange={setSpecSource}
-            xySource={xySource}
-            onXYSourceChange={setXYSource}
-          />
-          <TimeSeriesGrid
-            viewMode={viewMode}
-            test={currentTest}
-            columns={gridColumns}
-            selectedTPs={selectedTPs}
-            hiddenTPs={hiddenTPs}
-            expandedPlot={expandedPlot}
-            onToggleExpand={handleToggleExpand}
-            timeZoom={activeTimeZoom}
-            onTimeZoomChange={handleActiveTimeZoom}
-            onTimeZoomReset={resetActiveTimeZoom}
-            specMode={specMode}
-            specLogY={specLogY}
-            specSource={specSource}
-            fs={meta?.fs_hz ?? null}
-            plotFilters={plotFilters}
-            plotFilterSpecs={plotFilterSpecs}
-            onPlotFilterChange={(i, patch) =>
-              setPlotFilters((prev) => {
-                const next = [...prev];
-                next[i] = { ...(next[i] ?? DEFAULT_FILTER_UI), ...patch };
-                return next;
-              })
-            }
-            xySource={xySource}
-            xyYCols={xyYCols}
-            onXYYColChange={(i, c) =>
-              setXYYCols((prev) => {
-                const next = [...prev];
-                next[i] = c;
-                return next;
-              })
-            }
-            xyXCols={xyXCols}
-            onXYXColChange={(i, c) =>
-              setXYXCols((prev) => {
-                const next = [...prev];
-                next[i] = c;
-                return next;
-              })
-            }
-            columnsByTest={columnsByTest}
-            isEditMode={isEditMode}
-            plotConfigs={plotConfigs}
-            onPlotConfigChange={(configs) => {
-              setPlotConfigs(configs);
-              setPlotsUserEdited(true);
-            }}
-          />
-        </div>
-      </div>
       )}
     </div>
   );

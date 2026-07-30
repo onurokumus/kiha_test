@@ -14,6 +14,8 @@ export interface UploadResumeRecord {
   sizeBytes: number;
   lastModifiedMs: number;
   fsHz?: number;
+  timeMode?: 'auto' | 'column' | 'generated';
+  timeColumn?: string;
   chunkSize: number;
   totalChunks: number;
   createdAt: string;
@@ -36,6 +38,11 @@ function isRecord(value: unknown): value is UploadResumeRecord {
     Number.isFinite(item.lastModifiedMs) &&
     (item.fsHz === undefined ||
       (Number.isFinite(item.fsHz) && (item.fsHz ?? 0) > 0)) &&
+    (item.timeMode === undefined ||
+      item.timeMode === 'auto' ||
+      item.timeMode === 'column' ||
+      item.timeMode === 'generated') &&
+    (item.timeColumn === undefined || typeof item.timeColumn === 'string') &&
     Number.isFinite(item.chunkSize) &&
     (item.chunkSize ?? 0) > 0 &&
     Number.isInteger(item.totalChunks) &&

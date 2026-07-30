@@ -1,0 +1,142 @@
+.row {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 4px 6px;
+  min-width: 0;
+  color: #c7cdd2;
+  font-family: 'Segoe UI', sans-serif;
+}
+
+.field {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.field > span {
+  color: #929ca3;
+  font-size: 8px;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: 0.035em;
+  white-space: nowrap;
+}
+
+.field input,
+.field select,
+.clearButton {
+  box-sizing: border-box;
+  height: 26px;
+  min-width: 0;
+  color: #e2e7ea;
+  background: #373a3d;
+  border: 1px solid #555d63;
+  border-radius: 3px;
+  outline: 0;
+  font: inherit;
+  font-size: 11px;
+  color-scheme: dark;
+}
+
+.field input {
+  width: 100%;
+  padding: 2px 6px;
+  font-family: Consolas, 'Cascadia Mono', monospace;
+}
+
+.field select {
+  width: 100%;
+  padding: 2px 22px 2px 6px;
+}
+
+.kindField {
+  width: 104px;
+}
+
+.orderField {
+  width: 48px;
+}
+
+.frequencyField {
+  width: 78px;
+}
+
+.durationField {
+  width: 72px;
+}
+
+.sensitivityField {
+  width: 92px;
+}
+
+.floorField {
+  width: 86px;
+}
+
+.fillField {
+  width: 102px;
+}
+
+.nyquist {
+  align-self: end;
+  min-height: 26px;
+  box-sizing: border-box;
+  padding: 7px 2px 0;
+  color: #88939a;
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.explanation,
+.validation {
+  flex: 1 1 210px;
+  align-self: end;
+  min-width: 170px;
+  padding: 0 2px 3px;
+  font-size: 9px;
+  line-height: 1.25;
+}
+
+.explanation {
+  color: #8fa8b7;
+}
+
+.validation {
+  color: #e7c16f;
+}
+
+.clearButton {
+  align-self: end;
+  padding: 0 8px;
+  color: #aeb7bd;
+  cursor: pointer;
+}
+
+.field input:hover,
+.field select:hover,
+.clearButton:hover {
+  background: #404448;
+  border-color: #69747b;
+}
+
+.field input:focus-visible,
+.field select:focus-visible,
+.clearButton:focus-visible {
+  border-color: #74c0ed;
+  box-shadow: 0 0 0 2px rgba(86, 156, 214, 0.24);
+}
+
+.field input[aria-invalid='true'] {
+  border-color: #b6924d;
+}
+
+@media (max-width: 520px) {
+  .explanation,
+  .validation {
+    flex-basis: 100%;
+  }
+}

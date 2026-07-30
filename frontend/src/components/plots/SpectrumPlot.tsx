@@ -7,6 +7,7 @@ import { noSelect } from '../../constants/styles';
 import { ACCENT, AXIS_STYLE, safeRange } from '../../constants/uplotTheme';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
 import { syncPlot, clearPlot } from '../../utils/uplotSync';
+import { PlotStateOverlay, PlotEmptyState } from './PlotState';
 import styles from './TimePlot.module.css';
 
 export type PanelSource = 'tp' | 'full';
@@ -63,8 +64,12 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [traces, setTraces] = useState<SpectrumTrace[]>([]);
   const [meta, setMeta] = useState<{ mode: string; n: number; nan: number } | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(
+    Boolean(cfg.key && (source === 'full' ? test : selectedTPs.length))
+  );
   const [error, setError] = useState('');
+  const [partialMessage, setPartialMessage] = useState('');
+  const [retryVersion, setRetryVersion] = useState(0);
 
   const visibleTPs = selectedTPs.filter((s) => !hiddenTPs.has(s.id));
   const tpFingerprint = visibleTPs
@@ -82,10 +87,16 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!cfg.key) return;
+    if (!cfg.key) {
+      setLoading(false);
+      setError('');
+      return;
+    }
     let dead = false;
     const controller = new AbortController();
     setLoading(true);
+    setError('');
+    setPartialMessage('');
 
     const load = async () => {
       try {
@@ -100,10 +111,12 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
             { label: cfg.key, color: ACCENT, freqs: d.freqs, mag: d.mag },
           ]);
           setMeta({ mode: d.mode, n: d.n_samples, nan: d.nan_count });
+          setPartialMessage('');
         } else {
           const eligible = visibleTPs.filter((s) =>
             (columnsByTest[s.test] ?? []).includes(cfg.key)
           );
+          let failed = 0;
           const results = await Promise.all(
             eligible.map(async (s) => {
               try {
@@ -120,14 +133,25 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
               } catch (e) {
                 if (isAbortError(e)) throw e;
                 console.error(`spectrum failed for ${s.id}/${cfg.key}:`, e);
+                failed += 1;
                 return null;
               }
             })
           );
           if (dead) return;
           const ok = results.filter((r): r is SpectrumTrace => r !== null);
+          if (failed > 0 && ok.length === 0) {
+            throw new Error(
+              `Spectrum data was unavailable for ${failed} selected test point${failed === 1 ? '' : 's'}.`
+            );
+          }
           setTraces(ok);
           setMeta(ok.length ? { mode: specMode, n: ok.length, nan: 0 } : null);
+          setPartialMessage(
+            failed > 0
+              ? `${failed} of ${eligible.length} selected test point${eligible.length === 1 ? '' : 's'} could not be loaded.`
+              : ''
+          );
         }
         if (!dead) setError('');
       } catch (e) {
@@ -146,7 +170,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [test, cfg.key, specMode, range, source, tpFingerprint, columnsByTest]);
+  }, [test, cfg.key, specMode, range, source, tpFingerprint, columnsByTest, retryVersion]);
 
   // Destroy only on unmount; syncPlot reuses/rebuilds in place (perf 2.4).
   useEffect(() => () => clearPlot(plotRef, structKeyRef), []);
@@ -232,10 +256,38 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
     isExpanded ? styles.expandButtonExpanded : styles.expandButtonCollapsed
   }`;
 
-  const emptyHint =
-    source === 'tp' && visibleTPs.length === 0
-      ? 'Select test points on the scatter plot'
-      : undefined;
+  const eligibleTpCount = visibleTPs.filter((selected) =>
+    (columnsByTest[selected.test] ?? []).includes(cfg.key)
+  ).length;
+  const hasData = traces.some((trace) =>
+    trace.freqs.some(
+      (frequency, index) =>
+        frequency !== null &&
+        Number.isFinite(frequency) &&
+        trace.mag[index] !== null &&
+        Number.isFinite(trace.mag[index])
+    )
+  );
+  let emptyState: PlotEmptyState;
+  if (source === 'tp' && visibleTPs.length === 0) {
+    emptyState = {
+      title: 'Select test points to compare',
+      detail: 'Choose one or more points on the scatter plot to calculate their spectra.',
+    };
+  } else if (source === 'tp' && eligibleTpCount === 0) {
+    emptyState = {
+      title: `${cfg.label} is not available`,
+      detail: 'None of the visible test points contain this signal.',
+    };
+  } else {
+    emptyState = {
+      title: 'No spectrum samples',
+      detail:
+        source === 'full' && range
+          ? 'Reset the time zoom or choose a wider range.'
+          : 'The selected signal has no plottable frequency data.',
+    };
+  }
 
   return (
     <div className={containerClass} style={{ ...noSelect }}>
@@ -260,15 +312,22 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
                 : `${meta.mode} · ${meta.n} TP${meta.n === 1 ? '' : 's'}`}
             </span>
           )}
-          {loading && <span style={{ fontSize: 10, color: '#569cd6' }}>⟳</span>}
-          <button onClick={onToggleExpand} className={buttonClass}>
+          <button
+            type="button"
+            onClick={onToggleExpand}
+            className={buttonClass}
+            aria-label={`${isExpanded ? 'Minimize' : 'Expand'} ${cfg.label}`}
+            title={`${isExpanded ? 'Minimize' : 'Expand'} this plot`}
+          >
             <span className={styles.expandButtonIcon}>{isExpanded ? '▪' : '▣'}</span>
           </button>
         </div>
-        {isEditMode && !isExpanded && allConfigs.length > 0 && (
+        {isEditMode && allConfigs.length > 0 && (
           <select
             value={cfg.key}
             onChange={(e) => onConfigChange?.(e.target.value)}
+            aria-label="Plot variable"
+            title="Change the variable shown in this plot"
             style={{
               position: 'absolute',
               left: 0,
@@ -293,11 +352,19 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
           </select>
         )}
       </div>
-      <div ref={chartRef} style={{ flex: 1, minHeight: 0, overflow: 'hidden' }} title={emptyHint}>
-        {error && <div style={{ color: '#f48771', fontSize: 11, padding: 8 }}>{error}</div>}
-        {!error && emptyHint && (
-          <div style={{ color: '#555', fontSize: 11, padding: 8 }}>no selection</div>
-        )}
+      <div className={styles.plotViewport}>
+        <div ref={chartRef} className={styles.plotCanvas} />
+        <PlotStateOverlay
+          loading={loading}
+          hasData={hasData}
+          error={error}
+          emptyState={emptyState}
+          onRetry={() => setRetryVersion((version) => version + 1)}
+          loadingLabel="Calculating spectrum"
+          updatingLabel="Recalculating spectrum"
+          errorTitle="Could not calculate the spectrum"
+          partialMessage={partialMessage}
+        />
       </div>
     </div>
   );

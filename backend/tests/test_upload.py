@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
+import polars as pl
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -68,6 +69,8 @@ class UploadTests(DataDirTestCase):
         source_file: str = "alpha.csv",
         last_modified_ms: int = 1_785_340_000_000,
         fs_hz: float | None = 10.0,
+        time_mode: str = "auto",
+        time_column: str | None = None,
     ):
         payload = {
             "name": name,
@@ -75,6 +78,8 @@ class UploadTests(DataDirTestCase):
             "size_bytes": len(body),
             "last_modified_ms": last_modified_ms,
             "fs_hz": fs_hz,
+            "time_mode": time_mode,
+            "time_column": time_column,
         }
         response = self.client.post("/api/uploads", json=payload)
         return response
@@ -150,6 +155,8 @@ class UploadTests(DataDirTestCase):
         self.assertEqual(session["received_bytes"], 0)
         self.assertEqual(session["received_chunks"], 0)
         self.assertEqual(session["chunks"], [])
+        self.assertEqual(session["time_mode"], "auto")
+        self.assertIsNone(session["time_column"])
         uuid.UUID(session["upload_id"])  # opaque id must at least be canonical
 
         directory = self.tests / "alpha"
@@ -160,6 +167,8 @@ class UploadTests(DataDirTestCase):
         self.assertEqual(manifest["upload_id"], session["upload_id"])
         self.assertEqual(manifest["size_bytes"], len(body))
         self.assertEqual(manifest["fs_hz"], 12.5)
+        self.assertEqual(manifest["time_mode"], "auto")
+        self.assertIsNone(manifest["time_column"])
 
     def test_init_is_idempotent_for_same_file_identity(self):
         body = small_csv()
@@ -172,6 +181,63 @@ class UploadTests(DataDirTestCase):
         self.assertEqual(second["size_bytes"], first["size_bytes"])
         self.assertEqual(
             [p.name for p in self.tests.iterdir()], ["alpha"])
+
+    def test_init_persists_time_setup_and_includes_it_in_identity(self):
+        body = small_csv()
+        first = self.init_ok(
+            body,
+            fs_hz=500.0,
+            time_mode="generated",
+            time_column="elapsed_s",
+        )
+        self.assertEqual(first["fs_hz"], 500.0)
+        self.assertEqual(first["time_mode"], "generated")
+        self.assertEqual(first["time_column"], "elapsed_s")
+
+        same = self.init_upload(
+            body,
+            fs_hz=500.0,
+            time_mode="generated",
+            time_column="elapsed_s",
+        )
+        self.assertEqual(same.status_code, 200, same.text)
+        self.assertEqual(same.json()["upload_id"], first["upload_id"])
+
+        changed_rate = self.init_upload(
+            body,
+            fs_hz=1000.0,
+            time_mode="generated",
+            time_column="elapsed_s",
+        )
+        self.assertEqual(changed_rate.status_code, 409, changed_rate.text)
+
+    def test_existing_column_name_preserves_significant_header_spaces(self):
+        body = small_csv()
+        session = self.init_ok(
+            body,
+            time_mode="column",
+            time_column=" TIME ",
+        )
+        self.assertEqual(session["time_column"], " TIME ")
+        fetched = self.get_session(session["upload_id"])
+        self.assertEqual(fetched.status_code, 200, fetched.text)
+        self.assertEqual(fetched.json()["time_column"], " TIME ")
+
+    def test_init_validates_time_setup(self):
+        body = small_csv()
+        missing_column = self.init_upload(
+            body, time_mode="column", time_column=None)
+        self.assertEqual(missing_column.status_code, 400, missing_column.text)
+        self.assertFalse((self.tests / "alpha").exists())
+
+        auto_with_column = self.init_upload(
+            body, time_mode="auto", time_column="time")
+        self.assertEqual(auto_with_column.status_code, 400, auto_with_column.text)
+        self.assertFalse((self.tests / "alpha").exists())
+
+        invalid_mode = self.init_upload(body, time_mode="other")
+        self.assertEqual(invalid_mode.status_code, 422, invalid_mode.text)
+        self.assertFalse((self.tests / "alpha").exists())
 
     def test_init_conflicts_when_reserved_name_describes_another_file(self):
         body = small_csv()
@@ -560,6 +626,35 @@ class UploadTests(DataDirTestCase):
         self.assertEqual(meta["time_column"], "time")
         self.assertEqual(meta["fs_hz"], 10.0)
         self.assertTrue((self.tests / "alpha" / "data.parquet").is_file())
+
+    def test_complete_forwards_generated_time_column_and_rate(self):
+        body = small_csv(rows=8, fs=10.0)
+        session = self.init_ok(
+            body,
+            fs_hz=500.0,
+            time_mode="generated",
+            time_column="elapsed_s",
+        )
+        for index in range(session["total_chunks"]):
+            self.put_ok(
+                session["upload_id"], index, self.chunk_bytes(body, index))
+
+        response = self.complete(session["upload_id"])
+        self.assertEqual(response.status_code, 200, response.text)
+        meta = store.get_meta("alpha")
+        self.assertEqual(meta["time_column"], "elapsed_s")
+        self.assertEqual(meta["time_source"], "generated")
+        self.assertEqual(meta["fs_hz"], 500.0)
+        self.assertIn("time", meta["columns"])
+        stored = pl.read_parquet(
+            self.tests / "alpha" / "data.parquet",
+            columns=["elapsed_s", "time"],
+        )
+        self.assertEqual(
+            stored["elapsed_s"].to_list(),
+            [i / 500.0 for i in range(8)],
+        )
+        self.assertEqual(stored["time"].to_list(), [i / 10.0 for i in range(8)])
 
     def test_cancel_removes_only_the_matching_receiving_session(self):
         body = small_csv()

@@ -7,8 +7,8 @@ import unittest
 import numpy as np
 import polars as pl
 
-from app import store
-from app.config import PYRAMID_LEVELS
+from app import dsp, store
+from app.config import POINT_BUDGET_CAP, PYRAMID_LEVELS
 from app.ingest import build_pyramid
 from ._base import DataDirTestCase
 
@@ -38,6 +38,19 @@ class BudgetHelperTests(unittest.TestCase):
         # nothing fits an impossibly small budget -> coarsest level
         self.assertEqual(store.pick_pyramid_level(n_raw, 1),
                          PYRAMID_LEVELS[-1])
+
+    def test_manual_display_plan_is_bounded_and_explicit(self):
+        self.assertEqual(
+            store.resolve_window_display(100, 1000, "auto"), ("raw", 1))
+        self.assertEqual(
+            store.resolve_window_display(100, 1000, "envelope"),
+            ("envelope", PYRAMID_LEVELS[0]))
+        mode, stride = store.resolve_window_display(
+            POINT_BUDGET_CAP * 3, 1000, "line")
+        self.assertEqual(mode, "raw")
+        self.assertEqual(stride, 3)
+        with self.assertRaisesRegex(ValueError, "display must be"):
+            store.resolve_window_display(100, 1000, "unknown")
 
     def test_merge_over_cap_halves_and_keeps_extrema(self):
         t = np.arange(2000, dtype=np.float64)
@@ -96,6 +109,38 @@ class ReadWindowBudgetTests(DataDirTestCase):
         self.assertEqual(r["level"], 1)
         self.assertEqual(len(r["t"]), r["n_raw"])
         self.assertTrue(math.isclose(r["t"][0], 0.0, abs_tol=1e-9))
+
+    def test_zoomed_in_window_can_force_a_minmax_envelope(self):
+        r = store.read_window(
+            "big", ["val"], 0.0, 0.5, px=1500, display="envelope")
+        self.assertEqual(r["mode"], "envelope")
+        self.assertEqual(r["level"], PYRAMID_LEVELS[0])
+        self.assertEqual(len(r["series"]["val"]["min"]), len(r["t"]))
+        self.assertEqual(len(r["series"]["val"]["max"]), len(r["t"]))
+
+    def test_full_range_can_force_a_bounded_single_line(self):
+        r = store.read_window(
+            "big", ["val"], None, None, px=100, display="line")
+        self.assertEqual(r["mode"], "raw")
+        self.assertGreater(r["level"], 1)
+        self.assertLessEqual(len(r["t"]), POINT_BUDGET_CAP)
+        self.assertEqual(len(r["series"]["val"]), len(r["t"]))
+
+    def test_filtered_manual_modes_align_with_the_base_window(self):
+        cases = (
+            ("line", None, None),
+            ("envelope", 0.0, 0.5),
+        )
+        for display, t0, t1 in cases:
+            base = store.read_window(
+                "big", ["val"], t0, t1, px=100,
+                display=display)
+            filtered = dsp.filtered_window(
+                "big", ["val"], "detrend", t0, t1, px=100,
+                display=display)
+            self.assertEqual(filtered["mode"], base["mode"])
+            self.assertEqual(filtered["level"], base["level"])
+            self.assertEqual(filtered["t"], base["t"])
 
 
 if __name__ == "__main__":

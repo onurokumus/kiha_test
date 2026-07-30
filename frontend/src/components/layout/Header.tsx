@@ -7,7 +7,7 @@ interface HeaderProps {
   tests: TestInfo[];
   tab: AppTab;
   onTabChange: (tab: AppTab) => void;
-  onUploadFiles: (files: File[]) => void;
+  onImportFiles: (files: File[]) => void;
   uploads: UploadItem[];
   onDismissUpload: (id: number) => void;
   onPauseUpload: (id: number) => void;
@@ -119,7 +119,7 @@ export const Header: React.FC<HeaderProps> = ({
   tests,
   tab,
   onTabChange,
-  onUploadFiles,
+  onImportFiles,
   uploads,
   onDismissUpload,
   onPauseUpload,
@@ -127,7 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
   onCancelUpload,
   notice,
 }) => {
-  const fileRef = useRef<HTMLInputElement>(null);
+  const importRef = useRef<HTMLInputElement>(null);
   // Local active uploads render their own chip; only count transfers received
   // from another browser/window in the generic status badge.
   const localActive = uploads.filter((item) => !!item.sessionId).length;
@@ -158,18 +158,18 @@ export const Header: React.FC<HeaderProps> = ({
         {tabButton('edit', 'Edit')}
         {tabButton('uploads', 'Uploads')}
         {tabButton('settings', 'Settings')}
-        <button className="btn" onClick={() => fileRef.current?.click()}>
-          ⬆ Upload CSV
+        <button className="btn" onClick={() => importRef.current?.click()}>
+          ⬆ Import CSV
         </button>
         <input
-          ref={fileRef}
+          ref={importRef}
           type="file"
           accept=".csv"
           multiple
           style={{ display: 'none' }}
           onChange={(event) => {
-            const selected = Array.from(event.target.files ?? []);
-            if (selected.length) onUploadFiles(selected);
+            const files = Array.from(event.target.files ?? []);
+            if (files.length) onImportFiles(files);
             event.target.value = '';
           }}
         />
@@ -206,7 +206,7 @@ export const Header: React.FC<HeaderProps> = ({
       )}
       </div>
       <span className="app-header-hint">
-        drop .csv anywhere to upload
+        drop .csv anywhere to configure import
       </span>
     </div>
   );
