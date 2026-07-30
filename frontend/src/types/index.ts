@@ -35,14 +35,14 @@ export type UploadPhase =
   | 'finalizing'
   | 'error';
 
-/** One resumable CSV upload, shown as a header chip and as a live row on the
- *  Uploads page. `progress` combines server-confirmed bytes with the current
+/** One resumable CSV upload, shown as a header chip and in the active-transfer
+ *  tray. `progress` combines server-confirmed bytes with the current
  *  multipart requests; `committedBytes` is the durable/resumable subset. */
 export interface UploadItem {
   id: number;
   fileName: string;
-  /** Sanitized server-side test name — lets the Uploads page merge this
-   *  entry with the backend's 'receiving' row for the same transfer. */
+  /** Sanitized server-side test name used to associate pre-session state with
+   *  the backend's receiving transfer until an upload ID is available. */
   testName: string;
   progress: number | null; // 0..1 bytes sent; null = length unknown
   phase: UploadPhase;

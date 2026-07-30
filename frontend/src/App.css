@@ -108,6 +108,76 @@ input[type='checkbox'] {
   letter-spacing: 0.5px;
 }
 
+.app-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 16px;
+  border-bottom: 1px solid #3c3c3c;
+  background: #252526;
+}
+
+.app-header-primary,
+.app-header-activity {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.app-header-primary {
+  flex: none;
+  gap: 12px;
+}
+
+.app-header-activity {
+  flex: 1 1 240px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.app-header-hint {
+  flex: none;
+  margin-left: auto;
+  color: #666;
+  font-size: 10px;
+}
+
+.upload-chip {
+  max-width: min(420px, 100%);
+  min-width: 0;
+}
+
+.upload-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .app-header {
+    flex-wrap: wrap;
+  }
+
+  .app-header-activity {
+    flex-basis: 100%;
+    order: 3;
+  }
+
+  .app-header-hint {
+    display: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .app-header-primary {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+}
+
 /* Uploads page: live-status chips and indeterminate progress bars */
 .upload-pulse {
   animation: upload-pulse 1.6s ease-in-out infinite;
@@ -115,6 +185,162 @@ input[type='checkbox'] {
 @keyframes upload-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
+}
+
+/* Uploads page: live transfers are intentionally separate from the archival
+   data grid, so progress and controls never change the table's geometry. */
+.upload-transfers-panel,
+.upload-history-panel {
+  overflow: hidden;
+}
+
+.upload-transfers-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #3c3c3c;
+  color: #909090;
+  font-size: 11px;
+}
+
+.upload-transfer-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(240px, 2fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+.upload-transfer-row + .upload-transfer-row {
+  border-top: 1px solid #2d2d2d;
+}
+
+.upload-transfer-row.is-error {
+  background: rgba(75, 29, 29, 0.45);
+}
+
+.upload-transfer-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 11px;
+}
+
+.upload-transfer-meta > strong,
+.upload-transfer-meta > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-transfer-meta > span {
+  color: #909090;
+  font-size: 10px;
+}
+
+.upload-transfer-meta > .upload-transfer-error {
+  color: #f48771;
+}
+
+.upload-transfer-progress {
+  min-width: 0;
+}
+
+.upload-transfer-actions {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.upload-transfer-actions > span {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.upload-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.upload-history-ellipsis,
+.upload-history-error {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-history-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.upload-history-error {
+  width: 100%;
+  color: #f48771;
+  font-size: 9px;
+}
+
+.upload-history-metrics-secondary {
+  margin-top: 2px;
+  overflow: hidden;
+  color: #777;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.upload-history-actions-cell {
+  padding-right: 4px !important;
+  padding-left: 4px !important;
+}
+
+.upload-history-actions .btn {
+  padding-right: 7px;
+  padding-left: 7px;
+}
+
+@media (max-width: 900px) {
+  .upload-transfer-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+  }
+
+  .upload-transfer-progress {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .upload-history-source {
+    display: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .upload-history-uploaded {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .upload-history-metrics {
+    display: none;
+  }
 }
 
 /* Loading spinner (used by SelectedPointsPanel's stats-loading indicator). */

@@ -39,11 +39,10 @@ const UploadChip: React.FC<{
   if (item.error) {
     return (
       <span
-        className="badge"
+        className="badge upload-chip"
         style={{
           color: '#f48771',
           background: '#4b1d1d',
-          maxWidth: 480,
           display: 'inline-flex',
           alignItems: 'center',
           gap: 6,
@@ -51,6 +50,7 @@ const UploadChip: React.FC<{
         title={`${item.fileName}: ${item.error}`}
       >
         <span
+          className="upload-chip-label"
           style={{
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -94,11 +94,11 @@ const UploadChip: React.FC<{
 
   return (
     <span
-      className="badge"
+      className="badge upload-chip"
       title={`${item.fileName}: ${item.completedChunks}/${item.totalChunks || '?'} chunks committed`}
       style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
     >
-      ⬆ {item.fileName} {label}
+      <span className="upload-chip-label">⬆ {item.fileName} {label}</span>
       {item.phase === 'paused' ? (
         <button
           onClick={item.requiresFile ? onOpenUploads : onResume}
@@ -148,39 +148,33 @@ export const Header: React.FC<HeaderProps> = ({
   );
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '8px 16px',
-        background: '#252526',
-        borderBottom: '1px solid #3c3c3c',
-      }}
-    >
-      <span style={{ fontWeight: 600, color: '#569cd6', fontSize: 14 }}>
-        Propeller Test Tool
-      </span>
-      {tabButton('analyze', 'Analyze')}
-      {tabButton('split', 'Split')}
-      {tabButton('edit', 'Edit')}
-      {tabButton('uploads', 'Uploads')}
-      {tabButton('settings', 'Settings')}
-      <button className="btn" onClick={() => fileRef.current?.click()}>
-        ⬆ Upload CSV
-      </button>
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".csv"
-        multiple
-        style={{ display: 'none' }}
-        onChange={(event) => {
-          const selected = Array.from(event.target.files ?? []);
-          if (selected.length) onUploadFiles(selected);
-          event.target.value = '';
-        }}
-      />
+    <div className="app-header">
+      <div className="app-header-primary">
+        <span style={{ fontWeight: 600, color: '#569cd6', fontSize: 14 }}>
+          Propeller Test Tool
+        </span>
+        {tabButton('analyze', 'Analyze')}
+        {tabButton('split', 'Split')}
+        {tabButton('edit', 'Edit')}
+        {tabButton('uploads', 'Uploads')}
+        {tabButton('settings', 'Settings')}
+        <button className="btn" onClick={() => fileRef.current?.click()}>
+          ⬆ Upload CSV
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv"
+          multiple
+          style={{ display: 'none' }}
+          onChange={(event) => {
+            const selected = Array.from(event.target.files ?? []);
+            if (selected.length) onUploadFiles(selected);
+            event.target.value = '';
+          }}
+        />
+      </div>
+      <div className="app-header-activity">
       {uploads.map((item) => (
         <UploadChip
           key={item.id}
@@ -210,8 +204,8 @@ export const Header: React.FC<HeaderProps> = ({
       {notice && (
         <span style={{ fontSize: 11, color: '#569cd6' }}>{notice}</span>
       )}
-      <span style={{ flex: 1 }} />
-      <span style={{ fontSize: 10, color: '#666' }}>
+      </div>
+      <span className="app-header-hint">
         drop .csv anywhere to upload
       </span>
     </div>

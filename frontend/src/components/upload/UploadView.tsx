@@ -120,8 +120,8 @@ const tdRight: React.CSSProperties = {
 
 /** Uploads tab: drop zone + full upload history with live status.
  *  Server rows come from the 2 s test-list poll (App polls while this tab
- *  is open); local in-flight uploads are merged onto their matching
- *  'receiving' row by sanitized test name so a transfer never shows twice. */
+ *  is open). In-flight browser uploads and orphaned server sessions live in
+ *  a separate transfer tray, keeping the archival data grid stable. */
 export default function UploadView({
   tests,
   uploads,
@@ -142,19 +142,7 @@ export default function UploadView({
   const [actionError, setActionError] = useState('');
   const [actionNote, setActionNote] = useState('');
 
-  const activeUploads = uploads.filter((u) => u.phase !== 'error');
-  const failedUploads = uploads.filter(
-    (u) =>
-      u.phase === 'error' &&
-      (!u.sessionId || !tests.some((test) => test.name === u.testName))
-  );
-  const uploadByTestName = new Map(
-    uploads
-      .filter((u) => u.phase !== 'error' || !!u.sessionId)
-      .map((u) => [u.testName, u])
-  );
-
-  const rows = useMemo(
+  const sortedTests = useMemo(
     () =>
       [...tests].sort((a, b) =>
         // ISO UTC strings — lexicographic desc == newest first
@@ -163,7 +151,22 @@ export default function UploadView({
     [tests]
   );
 
-  const totalBytes = tests.reduce((acc, t) => acc + (t.size_bytes ?? 0), 0);
+  const localOwnsTest = (test: TestInfo) =>
+    uploads.some((upload) =>
+      upload.sessionId
+        ? upload.sessionId === test.upload_id
+        : test.status === 'receiving' && upload.testName === test.name
+    );
+  const serverTransfers = sortedTests.filter(
+    (test) => test.status === 'receiving' && !localOwnsTest(test)
+  );
+  // Transfers have their own stable tray. Keeping them out of the data grid
+  // means transient progress controls cannot resize history columns.
+  const rows = sortedTests.filter(
+    (test) => test.status !== 'receiving' && !localOwnsTest(test)
+  );
+  const transferCount = uploads.length + serverTransfers.length;
+  const totalBytes = rows.reduce((acc, t) => acc + (t.size_bytes ?? 0), 0);
 
   const handleDelete = async (name: string) => {
     if (!confirm(`Delete test '${name}'?\n\nIt can be restored from this page for about an hour.`)) return;
@@ -266,7 +269,7 @@ export default function UploadView({
                     ? 'uploading…'
                     : `${pct}%`;
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 190 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, width: '100%' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div
             style={{
@@ -282,12 +285,23 @@ export default function UploadView({
               style={{
                 width: pct === null ? '100%' : `${pct}%`,
                 height: '100%',
-                background: u.phase === 'paused' ? '#909090' : '#569cd6',
+                background:
+                  u.phase === 'paused'
+                    ? '#909090'
+                    : u.phase === 'error'
+                      ? '#f48771'
+                      : '#569cd6',
                 transition: 'width 0.2s ease',
               }}
             />
           </div>
-          <span style={{ fontSize: 10, color: '#569cd6', whiteSpace: 'nowrap' }}>
+          <span
+            style={{
+              fontSize: 10,
+              color: u.phase === 'error' ? '#f48771' : '#569cd6',
+              whiteSpace: 'nowrap',
+            }}
+          >
             {phase}
           </span>
         </div>
@@ -295,6 +309,46 @@ export default function UploadView({
           {fmtBytes(u.committedBytes)} verified
           {u.totalBytes ? ` / ${fmtBytes(u.totalBytes)}` : ''}
           {u.totalChunks ? ` • ${u.completedChunks}/${u.totalChunks} chunks` : ''}
+        </span>
+      </div>
+    );
+  };
+
+  const serverProgressCell = (test: TestInfo) => {
+    const committed = test.received_bytes ?? test.size_bytes ?? 0;
+    const total = test.total_bytes ?? 0;
+    const pct = total > 0 ? Math.min(100, Math.round((committed / total) * 100)) : null;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, width: '100%' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div
+            style={{
+              flex: 1,
+              height: 6,
+              background: '#3c3c3c',
+              borderRadius: 3,
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              className={pct === null ? 'upload-pulse' : undefined}
+              style={{
+                width: pct === null ? '100%' : `${pct}%`,
+                height: '100%',
+                background: '#569cd6',
+              }}
+            />
+          </div>
+          <span style={{ fontSize: 10, color: '#569cd6', whiteSpace: 'nowrap' }}>
+            {pct === null ? 'receiving…' : `${pct}%`}
+          </span>
+        </div>
+        <span style={{ fontSize: 9, color: '#777', whiteSpace: 'nowrap' }}>
+          {fmtBytes(committed)} verified
+          {total ? ` / ${fmtBytes(total)}` : ''}
+          {test.total_chunks
+            ? ` • ${test.received_chunks ?? 0}/${test.total_chunks} chunks`
+            : ''}
         </span>
       </div>
     );
@@ -391,28 +445,59 @@ export default function UploadView({
           />
         </div>
 
-        {/* Failed transfers remain actionable: retry/resume or cancel server state. */}
-        {failedUploads.map((u) => (
-          <div
-            key={u.id}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              background: '#4b1d1d',
-              color: '#f48771',
-              borderRadius: 4,
-              padding: '6px 10px',
-              fontSize: 12,
-            }}
-          >
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              ✗ {u.fileName}: {u.error}
-            </span>
-            <span style={{ flex: 1 }} />
-            {uploadActions(u)}
-          </div>
-        ))}
+        {transferCount > 0 && (
+          <section className="panel upload-transfers-panel" aria-label="Active transfers">
+            <div className="upload-transfers-header">
+              <span className="section-title" style={{ marginBottom: 0 }}>
+                Active transfers
+              </span>
+              <span>
+                {transferCount} transfer{transferCount === 1 ? '' : 's'}
+              </span>
+            </div>
+            <div>
+              {uploads.map((u) => (
+                <div
+                  key={u.id}
+                  className={`upload-transfer-row${u.phase === 'error' ? ' is-error' : ''}`}
+                >
+                  <div className="upload-transfer-meta">
+                    <strong title={u.testName}>{u.testName}</strong>
+                    <span title={u.fileName}>{u.fileName}</span>
+                    {u.error && (
+                      <span className="upload-transfer-error" title={u.error}>
+                        {u.error}
+                      </span>
+                    )}
+                  </div>
+                  <div className="upload-transfer-progress">{progressCell(u)}</div>
+                  <div className="upload-transfer-actions">{uploadActions(u)}</div>
+                </div>
+              ))}
+              {serverTransfers.map((test) => (
+                <div key={`server-${test.upload_id ?? test.name}`} className="upload-transfer-row">
+                  <div className="upload-transfer-meta">
+                    <strong title={test.name}>{test.name}</strong>
+                    <span title={test.source_file ?? undefined}>
+                      {test.source_file ?? 'Upload from another browser'}
+                    </span>
+                  </div>
+                  <div className="upload-transfer-progress">{serverProgressCell(test)}</div>
+                  <div className="upload-transfer-actions">
+                    <button
+                      className="btn"
+                      disabled={busyRow === test.name}
+                      onClick={() => handleCancelReceiving(test)}
+                      style={{ color: '#f48771' }}
+                    >
+                      {busyRow === test.name ? 'canceling…' : 'Cancel'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Recently deleted (undo) */}
         {restorable.length > 0 && (
@@ -462,7 +547,7 @@ export default function UploadView({
         )}
 
         {/* History table */}
-        <div className="panel" style={{ padding: 0, overflow: 'auto' }}>
+        <div className="panel upload-history-panel" style={{ padding: 0 }}>
           <div
             style={{
               display: 'flex',
@@ -474,122 +559,91 @@ export default function UploadView({
           >
             <span className="section-title" style={{ marginBottom: 0 }}>Upload history</span>
             <span style={{ fontSize: 11, color: '#909090' }}>
-              {tests.length} test{tests.length === 1 ? '' : 's'} • {fmtBytes(totalBytes)} on disk
+              {rows.length} test{rows.length === 1 ? '' : 's'} • {fmtBytes(totalBytes)} on disk
             </span>
           </div>
-          {rows.length === 0 && activeUploads.length === 0 ? (
+          {rows.length === 0 ? (
             <div style={{ padding: 24, textAlign: 'center', color: '#909090', fontSize: 12 }}>
-              No uploads yet.
+              No completed uploads yet.
             </div>
           ) : (
-            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+            <table className="upload-history-table">
               <thead>
                 <tr>
-                  <th style={thStyle}>Test</th>
-                  <th style={thStyle}>Status</th>
-                  <th style={thStyle}>Uploaded</th>
-                  <th style={thStyle}>Source file</th>
-                  <th style={thRight}>Size</th>
-                  <th style={thRight}>Duration</th>
-                  <th style={thRight}>Rows</th>
-                  <th style={thRight}>Cols</th>
-                  <th style={thRight}>fs (Hz)</th>
-                  <th style={thRight}>Ingest</th>
-                  <th style={thStyle} />
+                  <th style={{ ...thStyle, width: '15%' }}>Test</th>
+                  <th style={{ ...thStyle, width: '10%' }}>Status</th>
+                  <th className="upload-history-uploaded" style={{ ...thStyle, width: '14%' }}>
+                    Uploaded
+                  </th>
+                  <th className="upload-history-source" style={{ ...thStyle, width: '15%' }}>
+                    Source file
+                  </th>
+                  <th style={{ ...thRight, width: '8%' }}>Size</th>
+                  <th className="upload-history-metrics" style={{ ...thRight, width: '17%' }}>
+                    Data
+                  </th>
+                  <th style={{ ...thStyle, width: '21%' }} />
                 </tr>
               </thead>
               <tbody>
-                {/* Local transfers the server does not list yet (pre-flight) */}
-                {activeUploads
-                  .filter((u) => !tests.some((t) => t.name === u.testName))
-                  .map((u) => (
-                    <tr key={`up-${u.id}`}>
-                      <td style={tdStyle}>{u.testName}</td>
-                      <td style={tdStyle}>{progressCell(u)}</td>
-                      <td style={tdStyle}>—</td>
-                      <td style={tdStyle}>{u.fileName}</td>
-                      <td style={tdRight} colSpan={6} />
-                      <td style={{ ...tdStyle, textAlign: 'right' }}>
-                        {uploadActions(u)}
-                      </td>
-                    </tr>
-                  ))}
                 {rows.map((t) => {
-                  const upload = uploadByTestName.get(t.name);
                   const busy = isBusyStatus(t.status);
                   return (
                     <tr key={t.name}>
-                      <td style={{ ...tdStyle, fontWeight: 600 }}>{t.name}</td>
-                      <td style={tdStyle}>
-                        {upload ? (
-                          progressCell(upload)
-                        ) : (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                            <StatusChip status={t.status} />
-                            {t.status === 'receiving' && (
-                              <span style={{ fontSize: 10, color: '#909090' }}>
-                                {fmtBytes(t.received_bytes ?? t.size_bytes)}
-                                {t.total_bytes ? ` / ${fmtBytes(t.total_bytes)}` : ''} received
-                                {t.total_chunks
-                                  ? ` (${t.received_chunks ?? 0}/${t.total_chunks} chunks)`
-                                  : ''}
-                              </span>
-                            )}
-                            {t.status === 'error' && t.error && (
-                              <span
-                                title={t.error}
-                                style={{
-                                  fontSize: 11,
-                                  color: '#f48771',
-                                  maxWidth: 260,
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                  display: 'inline-block',
-                                  verticalAlign: 'middle',
-                                }}
-                              >
-                                {t.error}
-                              </span>
-                            )}
-                          </span>
-                        )}
+                      <td style={{ ...tdStyle, fontWeight: 600, overflow: 'hidden' }}>
+                        <span className="upload-history-ellipsis" title={t.name}>
+                          {t.name}
+                        </span>
                       </td>
-                      <td style={tdStyle} title={t.edited_at ? `edited ${fmtDate(t.edited_at)}` : undefined}>
+                      <td style={{ ...tdStyle, overflow: 'hidden' }}>
+                        <div className="upload-history-status">
+                          <StatusChip status={t.status} />
+                          {t.status === 'error' && t.error && (
+                            <span className="upload-history-error" title={t.error}>
+                              {t.error}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td
+                        className="upload-history-uploaded"
+                        style={{ ...tdStyle, overflow: 'hidden' }}
+                        title={t.edited_at ? `edited ${fmtDate(t.edited_at)}` : undefined}
+                      >
                         {fmtDate(t.created_at)}
                         {t.edited_at ? ' *' : ''}
                       </td>
                       <td
+                        className="upload-history-source"
                         style={{
                           ...tdStyle,
                           color: '#909090',
-                          maxWidth: 220,
                           overflow: 'hidden',
-                          textOverflow: 'ellipsis',
                         }}
                         title={t.source_file ?? undefined}
                       >
-                        {t.source_file ?? '—'}
+                        <span className="upload-history-ellipsis">
+                          {t.source_file ?? '—'}
+                        </span>
                       </td>
                       <td style={tdRight}>{fmtBytes(t.size_bytes)}</td>
-                      <td style={tdRight}>{fmtDuration(t.duration_s)}</td>
-                      <td style={tdRight}>{fmtCount(t.n_rows)}</td>
-                      <td style={tdRight}>{fmtCount(t.n_columns)}</td>
-                      <td style={tdRight}>{t.fs_hz ?? '—'}</td>
-                      <td style={tdRight}>{t.ingest_seconds != null ? `${t.ingest_seconds} s` : '—'}</td>
-                      <td style={{ ...tdStyle, textAlign: 'right' }}>
-                        {upload ? uploadActions(upload) : (
-                        <span style={{ display: 'inline-flex', gap: 6 }}>
-                          {t.status === 'receiving' && t.upload_id && (
-                            <button
-                              className="btn"
-                              disabled={busyRow === t.name}
-                              onClick={() => handleCancelReceiving(t)}
-                              style={{ color: '#f48771' }}
-                            >
-                              {busyRow === t.name ? 'canceling…' : 'Cancel'}
-                            </button>
-                          )}
+                      <td
+                        className="upload-history-metrics"
+                        style={{ ...tdRight, overflow: 'hidden' }}
+                      >
+                        <div title={`${fmtCount(t.n_rows)} rows × ${fmtCount(t.n_columns)} columns`}>
+                          {fmtCount(t.n_rows)} × {fmtCount(t.n_columns)}
+                        </div>
+                        <div className="upload-history-metrics-secondary">
+                          {fmtDuration(t.duration_s)} · {t.fs_hz ?? '—'} Hz ·{' '}
+                          {t.ingest_seconds != null ? `${t.ingest_seconds} s ingest` : '— ingest'}
+                        </div>
+                      </td>
+                      <td
+                        className="upload-history-actions-cell"
+                        style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'normal' }}
+                      >
+                        <span className="upload-history-actions">
                           {t.status === 'ready' && (
                             <button className="btn" onClick={() => onOpenTest(t.name)}>
                               Analyze →
@@ -616,7 +670,7 @@ export default function UploadView({
                               {busyRow === t.name ? '⟳ stats…' : '↻ stats'}
                             </button>
                           )}
-                          {!busy && !upload && (
+                          {!busy && (
                             <button
                               className="btn"
                               disabled={busyRow === t.name}
@@ -627,7 +681,6 @@ export default function UploadView({
                             </button>
                           )}
                         </span>
-                        )}
                       </td>
                     </tr>
                   );
