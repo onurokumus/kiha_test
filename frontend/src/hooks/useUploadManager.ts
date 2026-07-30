@@ -188,11 +188,13 @@ export function useUploadManager({
 
   const updateUploads = useCallback(
     (update: (current: UploadItem[]) => UploadItem[]) => {
-      setUploads((current) => {
-        const next = update(current);
-        itemsRef.current = next;
-        return next;
-      });
+      // The Promise queue can run in a microtask before React evaluates a
+      // functional state updater. Keep the imperative mirror authoritative
+      // and update it synchronously so a just-enqueued item is immediately
+      // visible to runOne instead of being left at "queued" forever.
+      const next = update(itemsRef.current);
+      itemsRef.current = next;
+      setUploads(next);
     },
     []
   );
@@ -484,7 +486,10 @@ export function useUploadManager({
           pendingSessions.current.delete(id);
         }
         controllers.current.delete(id);
-        await refreshTests();
+        // Queue progression must not wait on this cosmetic refresh. The App
+        // poller also refreshes active tests, and a stalled GET /tests should
+        // never hold every later file in the local queue.
+        void refreshTests();
       }
     },
     [
