@@ -1,18 +1,24 @@
-/** User preferences, persisted in localStorage (no backend involvement — the
- *  hard "no database" rule; a JSON blob per browser is plenty for UI prefs).
+/** User preferences. Personal choices persist in localStorage; a small JSON
+ *  file on the server supplies page defaults to browsers without a personal
+ *  override (still no database).
  *
  *  Column preferences are stored as plain names and applied only while the
  *  column exists in a loaded test — a preference naming a not-yet-uploaded
  *  column is kept verbatim and simply dormant (the Settings page shows it as
- *  "(not loaded)"). Precedence, weakest to strongest, everywhere:
- *    auto default  <  saved preference  <  explicit in-session pick.
- *  Settings only take effect via the page's SAVE button (App.handleSettingsSave
- *  applies exactly the fields that changed); edits are a draft until then.
+ *  "(not loaded)"). Bootstrap precedence is built-in < server-wide < personal.
+ *  Runtime precedence is auto < active preference < explicit in-session pick.
+ *  Settings only take effect through Save (or the publish-default action,
+ *  which also saves locally); edits are a draft until then.
  */
 export interface AppSettings {
   /** Preferred scatter axes; '' = auto (the most-shared pair). */
   scatterX: string;
   scatterY: string;
+  /** Uploaded test/data zone whose rows form the scatter reference line.
+   *  Its time column is interpreted as the ordered datasheet point ID. */
+  datasheetZone: string;
+  /** Initial visibility of the datasheet reference line. */
+  datasheetVisible: boolean;
   /** Preferred plotted (Y) column by SLOT (index 0..8 = grid cells
    *  left-to-right, top-to-bottom), shared by every grid view mode;
    *  '' = auto for that slot (selection-driven fill). */
@@ -37,6 +43,8 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   scatterX: '',
   scatterY: '',
+  datasheetZone: '',
+  datasheetVisible: true,
   gridColumns: Array.from({ length: 9 }, () => ''),
   xyYCols: Array.from({ length: 9 }, () => ''),
   xyXCols: Array.from({ length: 9 }, () => ''),
@@ -48,6 +56,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const STORAGE_KEY = 'ptt.settings.v1';
+
+// Set once during application bootstrap. A personal browser setting remains
+// stronger; the built-in defaults remain the final offline fallback.
+let pageDefaultSettings: AppSettings | null = null;
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
@@ -67,6 +79,11 @@ export function normalizeSettings(raw: unknown): AppSettings {
   return {
     scatterX: str(p.scatterX),
     scatterY: str(p.scatterY),
+    datasheetZone: str(p.datasheetZone),
+    datasheetVisible:
+      p.datasheetVisible === undefined
+        ? DEFAULT_SETTINGS.datasheetVisible
+        : !!p.datasheetVisible,
     gridColumns: slots9(p.gridColumns),
     xyYCols: slots9(p.xyYCols),
     xyXCols,
@@ -82,14 +99,32 @@ export function normalizeSettings(raw: unknown): AppSettings {
   };
 }
 
-export function loadSettings(): AppSettings {
+function loadPersonalSettings(): AppSettings | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
-    return normalizeSettings(JSON.parse(raw));
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return normalizeSettings(parsed);
   } catch {
-    return DEFAULT_SETTINGS;
+    return null;
   }
+}
+
+/** True only for a usable personal document. Invalid storage must not mask a
+ * valid server-wide default. */
+export function hasPersonalSettings(): boolean {
+  return loadPersonalSettings() !== null;
+}
+
+/** Install the server response before React renders so every initial state is
+ * seeded consistently (view mode, spectrum mode, grid preferences, etc.). */
+export function setPageDefaultSettings(raw: unknown): void {
+  pageDefaultSettings = normalizeSettings(raw);
+}
+
+export function loadSettings(): AppSettings {
+  return loadPersonalSettings() ?? pageDefaultSettings ?? DEFAULT_SETTINGS;
 }
 
 export function saveSettings(s: AppSettings): void {

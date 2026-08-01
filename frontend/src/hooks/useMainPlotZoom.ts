@@ -1,11 +1,17 @@
 import { useState, useCallback, useMemo } from 'react';
-import { ScatterDataPoint } from '../types';
 import { PLOT_INSET, PLOT_INSET_X, PLOT_INSET_Y } from '../constants/scatterGeometry';
 
 type ZoomDomain = [number, number, number, number] | null;
+type PlotCoordinate = { x: number; y: number };
+
+const paddedAxis = (min: number, max: number): [number, number] => {
+  const span = max - min;
+  const padding = span > 0 ? span * 0.05 : Math.max(Math.abs(min) * 0.05, 0.5);
+  return [min - padding, max + padding];
+};
 
 export const useMainPlotZoom = (
-  scatterData: ScatterDataPoint[],
+  scatterData: PlotCoordinate[],
   initialZoom: ZoomDomain = null
 ) => {
   const [mainZoom, setMainZoom] = useState<ZoomDomain>(initialZoom);
@@ -15,19 +21,25 @@ export const useMainPlotZoom = (
     if (!scatterData.length) {
       return { xMin: 0, xMax: 1, yMin: 0, yMax: 1 };
     }
-    const xVals = scatterData.map((d) => d.x);
-    const yVals = scatterData.map((d) => d.y);
-    const xMin = Math.min(...xVals);
-    const xMax = Math.max(...xVals);
-    const yMin = Math.min(...yVals);
-    const yMax = Math.max(...yVals);
-    const pad = 0.05;
+    let xMin = scatterData[0].x;
+    let xMax = scatterData[0].x;
+    let yMin = scatterData[0].y;
+    let yMax = scatterData[0].y;
+    for (let index = 1; index < scatterData.length; index += 1) {
+      const point = scatterData[index];
+      if (point.x < xMin) xMin = point.x;
+      if (point.x > xMax) xMax = point.x;
+      if (point.y < yMin) yMin = point.y;
+      if (point.y > yMax) yMax = point.y;
+    }
+    const [paddedXMin, paddedXMax] = paddedAxis(xMin, xMax);
+    const [paddedYMin, paddedYMax] = paddedAxis(yMin, yMax);
 
     return {
-      xMin: xMin - (xMax - xMin) * pad,
-      xMax: xMax + (xMax - xMin) * pad,
-      yMin: yMin - (yMax - yMin) * pad,
-      yMax: yMax + (yMax - yMin) * pad,
+      xMin: paddedXMin,
+      xMax: paddedXMax,
+      yMin: paddedYMin,
+      yMax: paddedYMax,
     };
   }, [scatterData]);
 

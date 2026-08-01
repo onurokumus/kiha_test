@@ -564,6 +564,8 @@ gotchas), not human onboarding.
   must wrap it in the TestPointsFile shape {version, test, source_file,
   fs_hz, test_points} and PUT /testpoints.
 - /filter takes `cols` + `type`; /spectrum takes `col` + `mode` (fft|welch).
+  Optional `rpm_col` adds mean/min/max absolute RPM over the identical sample
+  window; Spectrum uses that mean to convert Hz to order (`Hz * 60 / RPM`).
 - TP data responses nest time per series (series.<col>.t) with time_origin_s;
   full-test /data responses have a top-level t array.
 - CSV export/download endpoints (GET /export, /testpoints/{id}/export, /raw)

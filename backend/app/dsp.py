@@ -394,8 +394,16 @@ def filtered_window(name: str, cols: list[str], kind: str,
 
 def spectrum(name: str, col: str, mode: str, t0: float | None,
              t1: float | None, nperseg: int = 4096,
-             max_bins: int = 4000) -> dict:
-    """FFT magnitude spectrum or Welch PSD of one column over [t0, t1]."""
+             max_bins: int = 4000,
+             rpm_col: str | None = None) -> dict:
+    """FFT magnitude spectrum or Welch PSD of one column over [t0, t1].
+
+    When ``rpm_col`` is supplied, the response also carries the mean shaft
+    speed over the identical sample window.  The frontend uses that reference
+    speed to express frequency as cycles per revolution (order).  This is a
+    fixed-speed normalization, not angular resampling, so it is most useful on
+    steady-speed test points or a narrowly zoomed full-test range.
+    """
     meta = get_meta(name)
     if meta is None:
         raise FileNotFoundError(name)
@@ -416,8 +424,12 @@ def spectrum(name: str, col: str, mode: str, t0: float | None,
     if n < 16:
         raise ValueError("range too short for a spectrum")
 
-    v = (pl.scan_parquet(TESTS_DIR / name / "data.parquet")
-         .slice(i0, n).select([col]).collect())[col].to_numpy().astype(np.float64)
+    requested_cols = [col]
+    if rpm_col is not None and rpm_col not in requested_cols:
+        requested_cols.append(rpm_col)
+    frame = (pl.scan_parquet(TESTS_DIR / name / "data.parquet")
+             .slice(i0, n).select(requested_cols).collect())
+    v = frame[col].to_numpy().astype(np.float64)
     clean, mask = _interp_nan(v)
     nan_count = int(v.size - mask.sum())
     if clean is None:
@@ -442,8 +454,25 @@ def spectrum(name: str, col: str, mode: str, t0: float | None,
         _, mag = bucket_minmax(mag, factor)
         freqs = freqs[::factor][: len(mag)]
 
+    rpm_reference = {}
+    if rpm_col is not None:
+        rpm = frame[rpm_col].to_numpy().astype(np.float64)
+        finite_rpm = np.abs(rpm[np.isfinite(rpm)])
+        if finite_rpm.size == 0:
+            raise ValueError(f"RPM column '{rpm_col}' is all NaN in the selected range")
+        mean_rpm = float(np.mean(finite_rpm))
+        if not math.isfinite(mean_rpm) or mean_rpm <= 0:
+            raise ValueError(
+                f"RPM column '{rpm_col}' has no positive mean speed in the selected range")
+        rpm_reference = {
+            "rpm_col": rpm_col,
+            "mean_rpm": mean_rpm,
+            "min_rpm": float(np.min(finite_rpm)),
+            "max_rpm": float(np.max(finite_rpm)),
+        }
+
     return {"mode": mode, "col": col, "fs_hz": fs, "n_samples": n,
             "nan_count": nan_count,
             "freqs": [round(float(f), 4) for f in freqs],
             "mag": [float(m) if math.isfinite(m) else None for m in mag],
-            **extra}
+            **rpm_reference, **extra}

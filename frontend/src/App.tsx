@@ -10,6 +10,7 @@ import SplitView from './components/split/SplitView';
 import EditView from './components/edit/EditView';
 import UploadView from './components/upload/UploadView';
 import SettingsView from './components/settings/SettingsView';
+import { useConfirm } from './components/feedback/confirm';
 import { useTestPointSelection } from './hooks/useTestPointSelection';
 import { useScatterFilter } from './hooks/useScatterFilter';
 import { useMainPlotZoom } from './hooks/useMainPlotZoom';
@@ -24,6 +25,9 @@ import {
   fetchTestPoints,
   fetchTpStats,
   fetchTestPointTrace,
+  fetchWindow,
+  isAbortError,
+  putDefaultSettings,
 } from './services/api';
 import { noSelect } from './constants/styles';
 import { DEFAULT_FILTER_UI, FilterUi, buildFilterSpec } from './constants/filters';
@@ -36,8 +40,10 @@ import {
   saveAnalysisSession,
 } from './services/analysisSession';
 import {
+  DatasheetDataPoint,
   ScatterDataPoint,
   SelectedTestPoint,
+  SpectrumXAxis,
   StatsCache,
   TestInfo,
   TestMeta,
@@ -83,7 +89,24 @@ function bestAxisPair(columnsByTest: Record<string, string[]>): [string, string]
   return [x, y || x];
 }
 
+/** Prefer an explicit RPM-like signal without assuming a fixed test schema.
+ *  The user can override this choice from the Spectrum controls. */
+function bestRpmColumn(columns: string[]): string {
+  const score = (column: string) => {
+    const normalized = column.toLocaleLowerCase();
+    if (normalized === 'rpm') return 0;
+    if (/(^|[^a-z0-9])rpm([^a-z0-9]|$)/i.test(column)) return 1;
+    if (normalized.includes('rpm')) return 2;
+    return 3;
+  };
+  return columns
+    .map((column, index) => ({ column, index, score: score(column) }))
+    .filter((candidate) => candidate.score < 3)
+    .sort((a, b) => a.score - b.score || a.index - b.index)[0]?.column ?? '';
+}
+
 function App() {
+  const confirmAction = useConfirm();
   const [restoredSession] = useState(loadAnalysisSession);
   const [hasRestoredSession] = useState(hasSavedAnalysisSession);
   const [tests, setTests] = useState<TestInfo[]>([]);
@@ -117,6 +140,13 @@ function App() {
   const [axesUserSet, setAxesUserSet] = useState(hasRestoredSession && restoredSession.axesUserSet);
   const [expandedPlot, setExpandedPlot] = useState<number | null>(null);
   const [clusteringEnabled, setClusteringEnabled] = useState(settings.clustering);
+  const [datasheetVisible, setDatasheetVisible] = useState(settings.datasheetVisible);
+  const [datasheetLine, setDatasheetLine] = useState<{
+    key: string;
+    points: DatasheetDataPoint[];
+    loading: boolean;
+    error: string;
+  }>({ key: '', points: [], loading: false, error: '' });
   const [isEditMode, setIsEditMode] = useState(false);
   const [plotConfigs, setPlotConfigs] = useState<string[]>(
     hasRestoredSession ? restoredSession.plotConfigs : []
@@ -141,6 +171,12 @@ function App() {
   );
   const [specMode, setSpecMode] = useState<'fft' | 'welch'>(
     hasRestoredSession ? restoredSession.specMode : settings.specMode
+  );
+  const [specXAxis, setSpecXAxis] = useState<SpectrumXAxis>(
+    hasRestoredSession ? restoredSession.specXAxis : 'hz'
+  );
+  const [specRpmCol, setSpecRpmCol] = useState(
+    hasRestoredSession ? restoredSession.specRpmCol : ''
   );
   const [specLogY, setSpecLogY] = useState(
     hasRestoredSession ? restoredSession.specLogY : settings.specLogY
@@ -286,21 +322,23 @@ function App() {
   /** Union of every ready test's variables (scatter axes, filters). */
   const unionColumns = useMemo(() => {
     const set = new Set<string>();
-    Object.values(metaByTest).forEach((m) => {
+    Object.entries(metaByTest).forEach(([name, m]) => {
+      if (name === settings.datasheetZone) return;
       m.columns.forEach((c) => {
         if (c !== m.time_column) set.add(c);
       });
     });
     return Array.from(set).sort();
-  }, [metaByTest]);
+  }, [metaByTest, settings.datasheetZone]);
 
   const columnsByTest = useMemo(() => {
     const out: Record<string, string[]> = {};
     Object.entries(metaByTest).forEach(([name, m]) => {
+      if (name === settings.datasheetZone) return;
       out[name] = m.columns.filter((c) => c !== m.time_column);
     });
     return out;
-  }, [metaByTest]);
+  }, [metaByTest, settings.datasheetZone]);
 
   /** Columns across the selected test points, ordered by selection (the
    *  first-selected TP's columns come first), deduped. Drives the grid's
@@ -338,6 +376,17 @@ function App() {
     const seen = new Set(selectionColumns);
     return [...selectionColumns, ...dataColumns.filter((c) => !seen.has(c))];
   }, [selectionDriven, selectionColumns, dataColumns]);
+
+  /** Candidate RPM variables for the current spectrum source. Unlike the plot
+   *  grid universe, this intentionally excludes active-test filler columns
+   *  when spectra come from selected test points. */
+  const spectrumRpmColumns = useMemo(
+    () =>
+      specSource === 'tp' && selectionColumns.length > 0
+        ? selectionColumns
+        : dataColumns,
+    [specSource, selectionColumns, dataColumns]
+  );
 
   const traceColumns = useMemo(() => {
     if (viewMode !== 'tp') return [];
@@ -654,6 +703,18 @@ function App() {
     );
   }, [gridColumns, plotsUserEdited, settings.gridColumns, settings.xyYCols, settings.xyXCols]);
 
+  // Keep an explicit RPM reference for per-revolution spectra. Exact/case-only
+  // matches survive test switches; otherwise choose the strongest RPM-like
+  // column in the currently relevant schema and leave it blank if none exists.
+  useEffect(() => {
+    setSpecRpmCol((previous) => {
+      const matching = spectrumRpmColumns.find(
+        (column) => column.toLocaleLowerCase() === previous.toLocaleLowerCase()
+      );
+      return matching ?? bestRpmColumn(spectrumRpmColumns);
+    });
+  }, [spectrumRpmColumns]);
+
   // Poll the test list while any ingest or rebuild runs, or while the
   // Uploads page is open (its whole point is live status); auto-select the
   // first ready test if none is selected, and reload the current test when
@@ -727,20 +788,40 @@ function App() {
       if (next.specMode !== prev.specMode) setSpecMode(next.specMode);
       if (next.specLogY !== prev.specLogY) setSpecLogY(next.specLogY);
       if (next.clustering !== prev.clustering) setClusteringEnabled(next.clustering);
+      if (next.datasheetZone !== prev.datasheetZone) {
+        setDatasheetVisible(next.datasheetVisible);
+        resetMainZoomRef.current();
+      } else if (next.datasheetVisible !== prev.datasheetVisible) {
+        setDatasheetVisible(next.datasheetVisible);
+      }
     },
     [settings]
   );
 
+  const handleMakeSettingsDefault = useCallback(
+    async (next: AppSettings) => {
+      await putDefaultSettings(next);
+      // Publishing the displayed draft should leave this browser showing and
+      // using the same values it just made the shared baseline.
+      handleSettingsSave(next);
+    },
+    [handleSettingsSave]
+  );
+
   // Switching back from the split editor: the active test's TP definitions
   // may have changed — refetch it (and its stats).
-  const confirmDiscardActiveDraft = useCallback(() => {
+  const confirmDiscardActiveDraft = useCallback(async (): Promise<boolean> => {
     const busy = tab === 'split' ? splitBusy : tab === 'edit' ? editBusy : false;
     if (busy) {
-      window.alert(
-        tab === 'split'
-          ? 'Test-point changes are still being saved. Wait for the save to finish before leaving Split.'
-          : 'A data change is still being submitted. Wait for it to finish before leaving Edit.'
-      );
+      await confirmAction({
+        title: tab === 'split' ? 'Save still in progress' : 'Data change still in progress',
+        description:
+          tab === 'split'
+            ? 'Test-point changes are still being saved. Wait for the save to finish before leaving Split.'
+            : 'A data change is still being submitted. Wait for it to finish before leaving Edit.',
+        confirmLabel: 'Got it',
+        showCancel: false,
+      });
       return false;
     }
     const dirty =
@@ -758,9 +839,13 @@ function App() {
         : tab === 'edit'
           ? 'data-edit changes'
           : 'CSV import setup';
-    const discard = window.confirm(
-      `Discard unsaved ${label}?\n\nYour saved test data will not be changed.`
-    );
+    const discard = await confirmAction({
+      title: `Discard unsaved ${label}?`,
+      description: 'This draft will be cleared before you leave the current page.',
+      detail: 'Your saved test data will not be changed.',
+      confirmLabel: 'Discard draft',
+      tone: 'warning',
+    });
     if (discard) {
       if (tab === 'split') setSplitDirty(false);
       if (tab === 'edit') setEditDirty(false);
@@ -768,6 +853,7 @@ function App() {
     }
     return discard;
   }, [
+    confirmAction,
     editBusy,
     editDirty,
     pendingUploadFiles.length,
@@ -776,9 +862,9 @@ function App() {
     tab,
   ]);
 
-  const handleTabChange = (next: AppTab) => {
+  const handleTabChange = async (next: AppTab): Promise<boolean> => {
     if (next === tab) return true;
-    if (!confirmDiscardActiveDraft()) return false;
+    if (!(await confirmDiscardActiveDraft())) return false;
     setTab(next);
     if (next === 'uploads') {
       // Fresh history immediately; the 2 s poller takes over while open.
@@ -790,8 +876,8 @@ function App() {
   };
 
   // -- Uploads tab callbacks --
-  const handleOpenTest = (name: string) => {
-    if (handleTestChange(name)) setTab('analyze');
+  const handleOpenTest = async (name: string) => {
+    if (await handleTestChange(name)) setTab('analyze');
   };
 
   const handleTestDeleted = async (name: string) => {
@@ -883,7 +969,7 @@ function App() {
     [handleStatsRebuilt, resetTimeZoom, setHiddenTPs, setSelectedTPs]
   );
 
-  const stageUploadFiles = (files: File[]) => {
+  const stageUploadFiles = async (files: File[]) => {
     const csvFiles = files.filter((file) =>
       file.name.toLowerCase().endsWith('.csv')
     );
@@ -891,7 +977,7 @@ function App() {
       setNotice('Choose one or more .csv files to import');
       return;
     }
-    if (!handleTabChange('uploads')) return;
+    if (!(await handleTabChange('uploads'))) return;
     setPendingUploadFiles(csvFiles);
   };
 
@@ -950,6 +1036,7 @@ function App() {
     const data: ScatterDataPoint[] = [];
 
     Object.entries(tpsByTest).forEach(([test, tps]) => {
+      if (test === settings.datasheetZone) return;
       const xStats = statsCache[test]?.[xAxis];
       const yStats = statsCache[test]?.[yAxis];
       if (!xStats || !yStats) return;
@@ -974,7 +1061,7 @@ function App() {
     });
 
     return data;
-  }, [tpsByTest, xAxis, yAxis, statsCache, selectedTPs]);
+  }, [tpsByTest, xAxis, yAxis, statsCache, selectedTPs, settings.datasheetZone]);
 
   const {
     filterState,
@@ -1134,6 +1221,167 @@ function App() {
     return applyFilters(rawScatterData);
   }, [applyFilters, rawScatterData]);
 
+  const datasheetZone = settings.datasheetZone;
+  const datasheetMeta = metaByTest[datasheetZone] ?? null;
+  const datasheetRequestKey = `${datasheetZone}\0${xAxis}\0${yAxis}`;
+  const datasheetHasMatchingAxes = Boolean(
+    datasheetMeta &&
+      xAxis &&
+      yAxis &&
+      datasheetMeta.columns.includes(xAxis) &&
+      datasheetMeta.columns.includes(yAxis) &&
+      xAxis !== datasheetMeta.time_column &&
+      yAxis !== datasheetMeta.time_column
+  );
+
+  // A datasheet is uploaded through the normal CSV path, but its rows are read
+  // directly rather than aggregated through test-point ranges. The ingested
+  // time coordinate preserves row order and, for a measured point-ID column,
+  // source_time_origin_s reconstructs the original IDs for the tooltip.
+  useEffect(() => {
+    if (!datasheetVisible || !datasheetZone || !xAxis || !yAxis) {
+      setDatasheetLine({ key: '', points: [], loading: false, error: '' });
+      return;
+    }
+    if (!datasheetMeta || !datasheetHasMatchingAxes) {
+      setDatasheetLine({
+        key: datasheetRequestKey,
+        points: [],
+        loading: false,
+        error: '',
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    let active = true;
+    setDatasheetLine({
+      key: datasheetRequestKey,
+      points: [],
+      loading: true,
+      error: '',
+    });
+    fetchWindow(
+      datasheetZone,
+      [xAxis, yAxis],
+      null,
+      null,
+      4000,
+      controller.signal,
+      'line'
+    )
+      .then((response) => {
+        if (!active) return;
+        if (response.mode !== 'raw') {
+          throw new Error('datasheet rows were not returned as a line');
+        }
+        const xValues = response.series[xAxis] ?? [];
+        const yValues = response.series[yAxis] ?? [];
+        const pointIdOrigin =
+          datasheetMeta.time_source === 'measured'
+            ? (datasheetMeta.source_time_origin_s ?? 0)
+            : 0;
+        const points: DatasheetDataPoint[] = [];
+        const rowCount = Math.min(response.t.length, xValues.length, yValues.length);
+        for (let index = 0; index < rowCount; index += 1) {
+          const x = xValues[index];
+          const y = yValues[index];
+          if (
+            typeof x !== 'number' ||
+            !Number.isFinite(x) ||
+            typeof y !== 'number' ||
+            !Number.isFinite(y)
+          ) {
+            continue;
+          }
+          const rawPointId = response.t[index];
+          const pointId =
+            datasheetMeta.time_source === 'generated' || typeof rawPointId !== 'number'
+              ? response.i0 + index + 1
+              : rawPointId + pointIdOrigin;
+          points.push({
+            x,
+            y,
+            id: `datasheet:${datasheetZone}:${response.i0 + index}`,
+            pointId,
+            zone: datasheetZone,
+            isDatasheet: true,
+          });
+        }
+        points.sort((a, b) => a.pointId - b.pointId);
+        setDatasheetLine({
+          key: datasheetRequestKey,
+          points,
+          loading: false,
+          error: '',
+        });
+      })
+      .catch((requestError) => {
+        if (!active || isAbortError(requestError)) return;
+        setDatasheetLine({
+          key: datasheetRequestKey,
+          points: [],
+          loading: false,
+          error: requestError instanceof Error ? requestError.message : String(requestError),
+        });
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [
+    datasheetHasMatchingAxes,
+    datasheetMeta,
+    datasheetRequestKey,
+    datasheetVisible,
+    datasheetZone,
+    xAxis,
+    yAxis,
+  ]);
+
+  const datasheetData = useMemo(
+    () =>
+      datasheetVisible && datasheetLine.key === datasheetRequestKey
+        ? datasheetLine.points
+        : [],
+    [datasheetLine, datasheetRequestKey, datasheetVisible]
+  );
+  const scatterDomainData = useMemo(
+    () => [...scatterData, ...datasheetData],
+    [datasheetData, scatterData]
+  );
+
+  const datasheetStatus = useMemo(() => {
+    if (!datasheetZone) return '';
+    if (!datasheetVisible) return `${datasheetZone} · hidden`;
+    const zoneInfo = tests.find((test) => test.name === datasheetZone);
+    if (!zoneInfo) return `${datasheetZone} · zone not loaded`;
+    if (zoneInfo.status !== 'ready') return `${datasheetZone} · ${zoneInfo.status}`;
+    if (!datasheetMeta) return `${datasheetZone} · loading zone`;
+    if (!xAxis || !yAxis) return `${datasheetZone} · choose both axes`;
+    if (!datasheetHasMatchingAxes) {
+      return `${datasheetZone} · no matching ${xAxis} / ${yAxis} columns`;
+    }
+    if (datasheetLine.loading) return `${datasheetZone} · loading reference rows`;
+    if (datasheetLine.error) return `${datasheetZone} · ${datasheetLine.error}`;
+    if (datasheetData.length === 0) return `${datasheetZone} · no complete X/Y rows`;
+    return `${datasheetZone} · ${datasheetData.length} reference point${
+      datasheetData.length === 1 ? '' : 's'
+    }`;
+  }, [
+    datasheetData.length,
+    datasheetHasMatchingAxes,
+    datasheetLine.error,
+    datasheetLine.loading,
+    datasheetMeta,
+    datasheetVisible,
+    datasheetZone,
+    tests,
+    xAxis,
+    yAxis,
+  ]);
+
   const requiredStatsKeys = useMemo(() => {
     const columns = Array.from(new Set([xAxis, yAxis, ...filterColumns])).filter(Boolean);
     const keys: string[] = [];
@@ -1166,7 +1414,11 @@ function App() {
     setStatsRetry((attempt) => attempt + 1);
   }, [requiredStatsKeys]);
   const scatterEmptyState = useMemo(() => {
-    const pointCount = Object.values(tpsByTest).reduce((count, points) => count + points.length, 0);
+    const pointCount = Object.entries(tpsByTest).reduce(
+      (count, [test, points]) =>
+        test === settings.datasheetZone ? count : count + points.length,
+      0
+    );
     if (!xAxis || !yAxis) {
       return {
         title: 'Choose two variables',
@@ -1189,10 +1441,18 @@ function App() {
       title: 'No comparable points',
       detail: 'The loaded tests do not contain usable values for both selected variables.',
     };
-  }, [hasActiveFilters, rawScatterData.length, scatterData.length, tpsByTest, xAxis, yAxis]);
+  }, [
+    hasActiveFilters,
+    rawScatterData.length,
+    scatterData.length,
+    settings.datasheetZone,
+    tpsByTest,
+    xAxis,
+    yAxis,
+  ]);
 
   const { mainZoom, handleMainWheel, handlePan, resetZoom } = useMainPlotZoom(
-    scatterData,
+    scatterDomainData,
     hasRestoredSession ? restoredSession.mainZoom : null
   );
   resetMainZoomRef.current = resetZoom;
@@ -1228,6 +1488,8 @@ function App() {
         viewMode,
         fullPlotMode,
         specMode,
+        specXAxis,
+        specRpmCol,
         specLogY,
         specSource,
         xySource,
@@ -1262,7 +1524,9 @@ function App() {
     selectionSessionHydrated,
     specLogY,
     specMode,
+    specRpmCol,
     specSource,
+    specXAxis,
     timeZoom,
     viewMode,
     xAxis,
@@ -1317,9 +1581,9 @@ function App() {
 
   // The scatter is global now — switching the active test only affects the
   // per-test views (grid modes, split/edit tabs).
-  const handleTestChange = (test: string): boolean => {
+  const handleTestChange = async (test: string): Promise<boolean> => {
     if (test === currentTest) return true;
-    if (!confirmDiscardActiveDraft()) return false;
+    if (!(await confirmDiscardActiveDraft())) return false;
     setCurrentTest(test);
     setFullRange(null);
     setExpandedPlot(null);
@@ -1454,7 +1718,9 @@ function App() {
       draft={settingsDraft}
       onDraftChange={setSettingsDraft}
       onSave={handleSettingsSave}
+      onMakeDefault={handleMakeSettingsDefault}
       columns={unionColumns}
+      zones={tests.filter((test) => test.status === 'ready').map((test) => test.name)}
     />
   );
 
@@ -1679,6 +1945,10 @@ function App() {
                 clusteringAvailable={rawScatterData.length >= 2}
                 clusteringEnabled={clusteringEnabled}
                 onClusteringChange={setClusteringEnabled}
+                datasheetZone={datasheetZone}
+                datasheetVisible={datasheetVisible}
+                datasheetStatus={datasheetStatus}
+                onDatasheetVisibilityChange={setDatasheetVisible}
               />
               <FilterControls
                 filterState={filterState}
@@ -1697,6 +1967,7 @@ function App() {
               <div className="scatter-plot-stage">
                 <MainScatterPlot
                   scatterData={scatterData}
+                  datasheetData={datasheetData}
                   rawDataCount={rawScatterData.length}
                   xLabel={xLabel}
                   yLabel={yLabel}
@@ -1707,9 +1978,13 @@ function App() {
                   clusteringEnabled={clusteringEnabled}
                 />
                 <PlotStateOverlay
-                  loading={scatterStatsLoading}
-                  hasData={scatterData.length > 0}
-                  error={scatterData.length === 0 ? scatterErrorText : null}
+                  loading={scatterStatsLoading || datasheetLine.loading}
+                  hasData={scatterData.length > 0 || datasheetData.length > 0}
+                  error={
+                    scatterData.length === 0 && datasheetData.length === 0
+                      ? scatterErrorText || datasheetLine.error || null
+                      : null
+                  }
                   emptyState={scatterEmptyState}
                   onRetry={retryScatterStats}
                   loadingLabel="Loading test-point statistics"
@@ -1796,6 +2071,11 @@ function App() {
               onViewModeChange={setViewMode}
               specMode={specMode}
               onSpecModeChange={setSpecMode}
+              specXAxis={specXAxis}
+              onSpecXAxisChange={setSpecXAxis}
+              specRpmCol={specRpmCol}
+              onSpecRpmColChange={setSpecRpmCol}
+              spectrumColumns={spectrumRpmColumns}
               specLogY={specLogY}
               onSpecLogYChange={setSpecLogY}
               tests={tests}
@@ -1824,6 +2104,8 @@ function App() {
               onTimeZoomReset={resetActiveTimeZoom}
               fullPlotMode={fullPlotMode}
               specMode={specMode}
+              specXAxis={specXAxis}
+              specRpmCol={specRpmCol}
               specLogY={specLogY}
               specSource={specSource}
               fs={meta?.fs_hz ?? null}

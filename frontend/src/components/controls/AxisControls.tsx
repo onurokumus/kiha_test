@@ -1,4 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
+import { SearchableSelect } from './SearchableSelect';
 import styles from './AxisControls.module.css';
 
 export interface AxisControlsProps {
@@ -14,6 +15,10 @@ export interface AxisControlsProps {
   clusteringAvailable: boolean;
   clusteringEnabled: boolean;
   onClusteringChange: (enabled: boolean) => void;
+  datasheetZone: string;
+  datasheetVisible: boolean;
+  datasheetStatus: string;
+  onDatasheetVisibilityChange: (visible: boolean) => void;
 }
 
 export const AxisControls: React.FC<AxisControlsProps> = ({
@@ -29,6 +34,10 @@ export const AxisControls: React.FC<AxisControlsProps> = ({
   clusteringAvailable,
   clusteringEnabled,
   onClusteringChange,
+  datasheetZone,
+  datasheetVisible,
+  datasheetStatus,
+  onDatasheetVisibilityChange,
 }) => {
   const [moreOpen, setMoreOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -70,37 +79,33 @@ export const AxisControls: React.FC<AxisControlsProps> = ({
         <span className={styles.contextLabel}>TP mean scatter</span>
 
         <div className={styles.axisFields}>
-          <label className={styles.axisField}>
+          <div className={styles.axisField}>
             <span className={styles.axisLabel}>X</span>
-            <select
+            <SearchableSelect
               value={xAxis}
-              onChange={(event) => onXAxisChange(event.target.value)}
+              onChange={onXAxisChange}
+              options={columns.map((column) => ({ value: column, label: column }))}
               className={styles.axisSelect}
-              aria-label="Scatter plot X axis"
-            >
-              {columns.map((column) => (
-                <option key={column} value={column}>
-                  {column}
-                </option>
-              ))}
-            </select>
-          </label>
+              appearance="embedded"
+              ariaLabel="Scatter plot X axis"
+              searchPlaceholder="Search X-axis signals..."
+              optionNoun="signal"
+            />
+          </div>
 
-          <label className={styles.axisField}>
+          <div className={styles.axisField}>
             <span className={styles.axisLabel}>Y</span>
-            <select
+            <SearchableSelect
               value={yAxis}
-              onChange={(event) => onYAxisChange(event.target.value)}
+              onChange={onYAxisChange}
+              options={columns.map((column) => ({ value: column, label: column }))}
               className={styles.axisSelect}
-              aria-label="Scatter plot Y axis"
-            >
-              {columns.map((column) => (
-                <option key={column} value={column}>
-                  {column}
-                </option>
-              ))}
-            </select>
-          </label>
+              appearance="embedded"
+              ariaLabel="Scatter plot Y axis"
+              searchPlaceholder="Search Y-axis signals..."
+              optionNoun="signal"
+            />
+          </div>
         </div>
 
         {mainZoom && (
@@ -146,6 +151,25 @@ export const AxisControls: React.FC<AxisControlsProps> = ({
               <small>Refresh test-point statistics and traces</small>
             </span>
           </button>
+
+          {datasheetZone && (
+            <div className={styles.optionRow}>
+              <span className={styles.actionCopy}>
+                <strong>Datasheet line</strong>
+                <small title={datasheetStatus}>{datasheetStatus}</small>
+              </span>
+              <button
+                type="button"
+                className={styles.switch}
+                role="switch"
+                aria-label={`Show datasheet line from ${datasheetZone}`}
+                aria-checked={datasheetVisible}
+                onClick={() => onDatasheetVisibilityChange(!datasheetVisible)}
+              >
+                <span aria-hidden="true" />
+              </button>
+            </div>
+          )}
 
           {clusteringAvailable && (
             <div className={styles.optionRow}>

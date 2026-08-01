@@ -12,65 +12,49 @@ export const CustomScatterTooltip: React.FC<TooltipProps<number, string>> = ({
 
   const data = payload[0].payload;
 
-  // Cluster dots carry no TP identity — show the count instead of an empty header
+  if (data.isDatasheet) {
+    return (
+      <div className="chart-tooltip chart-tooltip--datasheet">
+        <div className="chart-tooltip__header">
+          Datasheet · {data.zone}
+          <div className="chart-tooltip__meta">
+            Point ID {formatValue(Number(data.pointId))}
+          </div>
+        </div>
+        {payload.map((entry, index) => (
+          <div key={index} className="chart-tooltip__row">
+            <span className="chart-tooltip__label">{entry.name}</span>
+            <span className="chart-tooltip__value">{formatValue(Number(entry.value))}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Cluster dots carry no TP identity — show the count instead of an empty header.
   if (data.isCluster) {
     return (
-      <div
-        style={{
-          background: '#252526',
-          border: '1px solid #3c3c3c',
-          borderRadius: 4,
-          padding: '8px 12px',
-          fontSize: 12,
-          color: '#e0e0e0',
-        }}
-      >
-        <div style={{ color: '#569cd6', fontWeight: 'bold', fontSize: 14 }}>
+      <div className="chart-tooltip">
+        <div className="chart-tooltip__header">
           {data.clusterCount} overlapping points
         </div>
-        <div style={{ color: '#a0a0a0', marginTop: 4 }}>Click to list them</div>
+        <div className="chart-tooltip__hint">Click to inspect this group.</div>
       </div>
     );
   }
 
   return (
-    <div
-      style={{
-        background: '#252526',
-        border: '1px solid #3c3c3c',
-        borderRadius: 4,
-        padding: '8px 12px',
-        fontSize: 12,
-        color: '#e0e0e0',
-      }}
-    >
-      {/* Label: test name, test point, and label */}
-      <div
-        style={{
-          color: '#569cd6',
-          fontWeight: 'bold',
-          fontSize: 14,
-          marginBottom: 8,
-          paddingBottom: 6,
-          borderBottom: '1px solid #3c3c3c',
-        }}
-      >
+    <div className="chart-tooltip">
+      <div className="chart-tooltip__header">
         {data.test ? `${data.test} · ` : ''}
         {data.name}
         {data.label ? ` — ${data.label}` : ''}
       </div>
 
-      {/* Data values */}
       {payload.map((entry, index) => (
-        <div
-          key={index}
-          style={{
-            color: '#e0e0e0',
-            marginTop: index > 0 ? 4 : 0,
-          }}
-        >
-          <span style={{ color: '#a0a0a0' }}>{entry.name}: </span>
-          {formatValue(Number(entry.value))}
+        <div key={index} className="chart-tooltip__row">
+          <span className="chart-tooltip__label">{entry.name}</span>
+          <span className="chart-tooltip__value">{formatValue(Number(entry.value))}</span>
         </div>
       ))}
     </div>

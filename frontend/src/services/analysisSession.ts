@@ -1,5 +1,5 @@
 import { DEFAULT_FILTER_UI, FilterUi } from '../constants/filters';
-import { AggMode, ScatterFilterState, WindowDisplayMode } from '../types';
+import { AggMode, ScatterFilterState, SpectrumXAxis, WindowDisplayMode } from '../types';
 
 export type AnalysisViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
 export type PlotDensity = 'single' | 'quad' | 'nine';
@@ -24,6 +24,8 @@ export interface AnalysisSession {
   viewMode: AnalysisViewMode;
   fullPlotMode: WindowDisplayMode;
   specMode: 'fft' | 'welch';
+  specXAxis: SpectrumXAxis;
+  specRpmCol: string;
   specLogY: boolean;
   specSource: 'tp' | 'full';
   xySource: 'tp' | 'full';
@@ -53,6 +55,8 @@ export const defaultAnalysisSession = (): AnalysisSession => ({
   viewMode: 'tp',
   fullPlotMode: 'auto',
   specMode: 'fft',
+  specXAxis: 'hz',
+  specRpmCol: '',
   specLogY: false,
   specSource: 'tp',
   xySource: 'tp',
@@ -207,6 +211,8 @@ export function normalizeAnalysisSession(value: unknown): AnalysisSession {
     viewMode: viewMode(value.viewMode),
     fullPlotMode: windowDisplayMode(value.fullPlotMode),
     specMode: value.specMode === 'welch' ? 'welch' : 'fft',
+    specXAxis: value.specXAxis === 'per_rev' ? 'per_rev' : 'hz',
+    specRpmCol: stringValue(value.specRpmCol),
     specLogY: !!value.specLogY,
     specSource: source(value.specSource),
     xySource: source(value.xySource),

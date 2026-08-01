@@ -13,6 +13,7 @@ import {
 import { removeUploadRecord } from '../../services/uploadPersistence';
 import { TestInfo, UploadItem } from '../../types';
 import { isBusyStatus } from '../../constants/status';
+import { useConfirm } from '../feedback/confirm';
 
 interface Props {
   tests: TestInfo[];
@@ -198,6 +199,7 @@ export default function UploadView({
   onTestsChanged,
   onStatsRebuilt,
 }: Props) {
+  const confirmAction = useConfirm();
   const fileRef = useRef<HTMLInputElement>(null);
   const setupRef = useRef<HTMLElement>(null);
   // Names deleted from this page and still restorable (session-local undo).
@@ -347,7 +349,17 @@ export default function UploadView({
   const totalBytes = rows.reduce((acc, t) => acc + (t.size_bytes ?? 0), 0);
 
   const handleDelete = async (name: string) => {
-    if (!confirm(`Delete test '${name}'?\n\nIt can be restored from this page for about an hour.`)) return;
+    if (
+      !(await confirmAction({
+        title: `Delete test '${name}'?`,
+        description: 'The test will be removed from the active data library.',
+        detail: 'You can restore it from this page for about an hour.',
+        confirmLabel: 'Move to trash',
+        tone: 'danger',
+      }))
+    ) {
+      return;
+    }
     setBusyRow(name);
     setActionError('');
     try {
@@ -364,10 +376,13 @@ export default function UploadView({
   const handleCancelReceiving = async (test: TestInfo) => {
     if (!test.upload_id) return;
     if (
-      !confirm(
-        `Cancel incomplete upload '${test.name}'?\n\n` +
-          'Its verified partial data will be permanently removed.'
-      )
+      !(await confirmAction({
+        title: `Cancel upload '${test.name}'?`,
+        description: 'The incomplete upload will stop and cannot be resumed.',
+        detail: 'Its verified partial data will be permanently removed.',
+        confirmLabel: 'Cancel upload',
+        tone: 'danger',
+      }))
     ) {
       return;
     }

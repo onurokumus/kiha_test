@@ -2,12 +2,18 @@ import React, { useEffect, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { fetchSpectrum, isAbortError } from '../../services/api';
-import { SelectedTestPoint, SpectrumData, TimePlotConfig } from '../../types';
+import {
+  SelectedTestPoint,
+  SpectrumData,
+  SpectrumXAxis,
+  TimePlotConfig,
+} from '../../types';
 import { noSelect } from '../../constants/styles';
 import { ACCENT, AXIS_STYLE, safeRange } from '../../constants/uplotTheme';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
 import { syncPlot, clearPlot } from '../../utils/uplotSync';
 import { PlotStateOverlay, PlotEmptyState } from './PlotState';
+import { SearchableSelect } from '../controls/SearchableSelect';
 import styles from './TimePlot.module.css';
 
 export type PanelSource = 'tp' | 'full';
@@ -23,6 +29,8 @@ interface SpectrumPlotProps {
   /** Time range for source='full' (null = whole test). */
   range: [number, number] | null;
   specMode: 'fft' | 'welch';
+  axisMode: SpectrumXAxis;
+  rpmColumn: string;
   logY: boolean;
   isExpanded: boolean;
   onToggleExpand: () => void;
@@ -34,8 +42,55 @@ interface SpectrumPlotProps {
 interface SpectrumTrace {
   label: string;
   color: string;
-  freqs: (number | null)[];
+  x: (number | null)[];
   mag: (number | null)[];
+  meanRpm?: number;
+  minRpm?: number;
+  maxRpm?: number;
+}
+
+interface RpmStats {
+  mean: number;
+  min: number;
+  max: number;
+}
+
+function resolveColumn(columns: string[], requested: string): string | null {
+  if (columns.includes(requested)) return requested;
+  const normalized = requested.toLocaleLowerCase();
+  return columns.find((column) => column.toLocaleLowerCase() === normalized) ?? null;
+}
+
+function traceFromSpectrum(
+  data: SpectrumData,
+  axisMode: SpectrumXAxis,
+  label: string,
+  color: string
+): SpectrumTrace {
+  const meanRpm = data.mean_rpm;
+  if (
+    axisMode === 'per_rev' &&
+    (meanRpm === undefined || !Number.isFinite(meanRpm) || meanRpm <= 0)
+  ) {
+    throw new Error(
+      'The backend did not return a usable mean RPM. Restart the backend and retry.'
+    );
+  }
+  const x =
+    axisMode === 'per_rev'
+      ? data.freqs.map((frequency) =>
+          frequency === null ? null : (frequency * 60) / (meanRpm as number)
+        )
+      : data.freqs;
+  return {
+    label,
+    color,
+    x,
+    mag: data.mag,
+    meanRpm,
+    minRpm: data.min_rpm,
+    maxRpm: data.max_rpm,
+  };
 }
 
 /** Frequency-domain view of one column: either one spectrum over the active
@@ -51,6 +106,8 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   columnsByTest,
   range,
   specMode,
+  axisMode,
+  rpmColumn,
   logY,
   isExpanded,
   onToggleExpand,
@@ -63,7 +120,12 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   const structKeyRef = useRef('');
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [traces, setTraces] = useState<SpectrumTrace[]>([]);
-  const [meta, setMeta] = useState<{ mode: string; n: number; nan: number } | null>(null);
+  const [meta, setMeta] = useState<{
+    mode: string;
+    n: number;
+    nan: number;
+    rpm: RpmStats[];
+  } | null>(null);
   const [loading, setLoading] = useState(
     Boolean(cfg.key && (source === 'full' ? test : selectedTPs.length))
   );
@@ -75,6 +137,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   const tpFingerprint = visibleTPs
     .map((s) => `${s.id}:${s.tp.start_s}:${s.endS}`)
     .join('|');
+  const needsRpmColumn = axisMode === 'per_rev' && !rpmColumn;
 
   useEffect(() => {
     const el = chartRef.current;
@@ -87,7 +150,9 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!cfg.key) {
+    if (!cfg.key || needsRpmColumn) {
+      setTraces([]);
+      setMeta(null);
       setLoading(false);
       setError('');
       return;
@@ -102,38 +167,66 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
       try {
         if (source === 'full') {
           if (!test) return;
+          const resolvedRpmColumn =
+            axisMode === 'per_rev'
+              ? resolveColumn(columnsByTest[test] ?? [], rpmColumn)
+              : null;
+          if (axisMode === 'per_rev' && !resolvedRpmColumn) {
+            throw new Error(`RPM variable '${rpmColumn}' is not available in ${test}.`);
+          }
           const d = await fetchSpectrum(
             test, cfg.key, specMode, range?.[0] ?? null, range?.[1] ?? null,
+            resolvedRpmColumn,
             controller.signal
           );
           if (dead) return;
-          setTraces([
-            { label: cfg.key, color: ACCENT, freqs: d.freqs, mag: d.mag },
-          ]);
-          setMeta({ mode: d.mode, n: d.n_samples, nan: d.nan_count });
+          const trace = traceFromSpectrum(d, axisMode, cfg.key, ACCENT);
+          setTraces([trace]);
+          setMeta({
+            mode: d.mode,
+            n: d.n_samples,
+            nan: d.nan_count,
+            rpm:
+              trace.meanRpm === undefined
+                ? []
+                : [{
+                    mean: trace.meanRpm,
+                    min: trace.minRpm ?? trace.meanRpm,
+                    max: trace.maxRpm ?? trace.meanRpm,
+                  }],
+          });
           setPartialMessage('');
         } else {
           const eligible = visibleTPs.filter((s) =>
             (columnsByTest[s.test] ?? []).includes(cfg.key)
           );
           let failed = 0;
+          const failureMessages: string[] = [];
           const results = await Promise.all(
             eligible.map(async (s) => {
               try {
+                const resolvedRpmColumn =
+                  axisMode === 'per_rev'
+                    ? resolveColumn(columnsByTest[s.test] ?? [], rpmColumn)
+                    : null;
+                if (axisMode === 'per_rev' && !resolvedRpmColumn) {
+                  throw new Error(
+                    `RPM variable '${rpmColumn}' is not available in ${s.test}.`
+                  );
+                }
                 const d: SpectrumData = await fetchSpectrum(
                   s.test, cfg.key, specMode, s.tp.start_s, s.endS,
+                  resolvedRpmColumn,
                   controller.signal
                 );
-                return {
-                  label: `${s.name} · ${s.test}`,
-                  color: s.color,
-                  freqs: d.freqs,
-                  mag: d.mag,
-                };
+                return traceFromSpectrum(
+                  d, axisMode, `${s.name} · ${s.test}`, s.color
+                );
               } catch (e) {
                 if (isAbortError(e)) throw e;
                 console.error(`spectrum failed for ${s.id}/${cfg.key}:`, e);
                 failed += 1;
+                failureMessages.push(String(e instanceof Error ? e.message : e));
                 return null;
               }
             })
@@ -141,12 +234,27 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
           if (dead) return;
           const ok = results.filter((r): r is SpectrumTrace => r !== null);
           if (failed > 0 && ok.length === 0) {
+            const uniqueMessages = Array.from(new Set(failureMessages.filter(Boolean)));
+            if (uniqueMessages.length === 1) throw new Error(uniqueMessages[0]);
             throw new Error(
               `Spectrum data was unavailable for ${failed} selected test point${failed === 1 ? '' : 's'}.`
             );
           }
           setTraces(ok);
-          setMeta(ok.length ? { mode: specMode, n: ok.length, nan: 0 } : null);
+          setMeta(ok.length ? {
+            mode: specMode,
+            n: ok.length,
+            nan: 0,
+            rpm: ok.flatMap((trace) =>
+              trace.meanRpm === undefined
+                ? []
+                : [{
+                    mean: trace.meanRpm,
+                    min: trace.minRpm ?? trace.meanRpm,
+                    max: trace.maxRpm ?? trace.meanRpm,
+                  }]
+            ),
+          } : null);
           setPartialMessage(
             failed > 0
               ? `${failed} of ${eligible.length} selected test point${eligible.length === 1 ? '' : 's'} could not be loaded.`
@@ -170,7 +278,19 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [test, cfg.key, specMode, range, source, tpFingerprint, columnsByTest, retryVersion]);
+  }, [
+    test,
+    cfg.key,
+    specMode,
+    axisMode,
+    rpmColumn,
+    range,
+    source,
+    tpFingerprint,
+    columnsByTest,
+    retryVersion,
+    needsRpmColumn,
+  ]);
 
   // Destroy only on unmount; syncPlot reuses/rebuilds in place (perf 2.4).
   useEffect(() => () => clearPlot(plotRef, structKeyRef), []);
@@ -210,7 +330,13 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
         x: { time: false, range: safeRange as uPlot.Scale.Range },
         y: { range: safeRange as uPlot.Scale.Range },
       },
-      axes: [{ ...AXIS_STYLE }, { ...AXIS_STYLE }],
+      axes: [
+        {
+          ...AXIS_STYLE,
+          label: axisMode === 'per_rev' ? 'Order (cycles/rev)' : 'Frequency (Hz)',
+        },
+        { ...AXIS_STYLE },
+      ],
       legend: { show: isExpanded, live: true },
       // uPlot default drag = client-side x zoom; dblclick resets it.
       // Wheel-zoom / shift-drag pan are client-side too (no commit target).
@@ -221,13 +347,13 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
 
     const data = [
       null,
-      ...traces.map((tr) => [tr.freqs, transform(tr.mag)]),
+      ...traces.map((tr) => [tr.x, transform(tr.mag)]),
     ] as unknown as uPlot.AlignedData;
 
     // logY is a data transform, not a structure change → excluded from the key,
     // so toggling it re-ranges (setData) instead of rebuilding.
     const structKey = [
-      series.map((s) => s.label ?? '').join('~'), box.w, box.h, isExpanded,
+      series.map((s) => s.label ?? '').join('~'), box.w, box.h, isExpanded, axisMode,
     ].join('|');
     syncPlot({
       plotRef,
@@ -246,7 +372,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
         }
       },
     });
-  }, [traces, logY, box, isExpanded]);
+  }, [traces, logY, box, isExpanded, axisMode]);
 
   const containerClass = `${styles.plotContainer} ${
     isExpanded ? styles.plotContainerExpanded : styles.plotContainerCollapsed
@@ -260,16 +386,21 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
     (columnsByTest[selected.test] ?? []).includes(cfg.key)
   ).length;
   const hasData = traces.some((trace) =>
-    trace.freqs.some(
-      (frequency, index) =>
-        frequency !== null &&
-        Number.isFinite(frequency) &&
+    trace.x.some(
+      (xValue, index) =>
+        xValue !== null &&
+        Number.isFinite(xValue) &&
         trace.mag[index] !== null &&
         Number.isFinite(trace.mag[index])
     )
   );
   let emptyState: PlotEmptyState;
-  if (source === 'tp' && visibleTPs.length === 0) {
+  if (needsRpmColumn) {
+    emptyState = {
+      title: 'Choose an RPM variable',
+      detail: 'Per-revolution spectra use mean RPM over each FFT/Welch interval.',
+    };
+  } else if (source === 'tp' && visibleTPs.length === 0) {
     emptyState = {
       title: 'Select test points to compare',
       detail: 'Choose one or more points on the scatter plot to calculate their spectra.',
@@ -289,6 +420,25 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
     };
   }
 
+  const rpmMeans = meta?.rpm.map((stats) => stats.mean) ?? [];
+  const formatRpm = (value: number) =>
+    value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  const rpmSummary =
+    rpmMeans.length === 0
+      ? ''
+      : rpmMeans.length === 1
+        ? `mean ${formatRpm(rpmMeans[0])} rpm`
+        : `mean ${formatRpm(Math.min(...rpmMeans))}-${formatRpm(Math.max(...rpmMeans))} rpm`;
+  const rpmDetail = meta?.rpm.length
+    ? meta.rpm
+        .map(
+          (stats, index) =>
+            `${traces[index]?.label ?? `Trace ${index + 1}`}: mean ${formatRpm(stats.mean)} rpm ` +
+            `(range ${formatRpm(stats.min)}-${formatRpm(stats.max)} rpm)`
+        )
+        .join('\n')
+    : undefined;
+
   return (
     <div className={containerClass} style={{ ...noSelect }}>
       <div
@@ -306,10 +456,10 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
           {meta && (
-            <span style={{ fontSize: 10, color: '#909090' }}>
+            <span style={{ fontSize: 10, color: '#909090' }} title={rpmDetail}>
               {source === 'full'
-                ? `${meta.mode} · ${meta.n.toLocaleString()} pts${meta.nan > 0 ? ` · ⚠${meta.nan} NaN` : ''}`
-                : `${meta.mode} · ${meta.n} TP${meta.n === 1 ? '' : 's'}`}
+                ? `${meta.mode} · ${meta.n.toLocaleString()} pts${meta.nan > 0 ? ` · ⚠${meta.nan} NaN` : ''}${rpmSummary ? ` · ${rpmSummary}` : ''}`
+                : `${meta.mode} · ${meta.n} TP${meta.n === 1 ? '' : 's'}${rpmSummary ? ` · ${rpmSummary}` : ''}`}
             </span>
           )}
           <button
@@ -323,33 +473,29 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
           </button>
         </div>
         {isEditMode && allConfigs.length > 0 && (
-          <select
+          <SearchableSelect
             value={cfg.key}
-            onChange={(e) => onConfigChange?.(e.target.value)}
-            aria-label="Plot variable"
+            onChange={(nextKey) => onConfigChange?.(nextKey)}
+            options={allConfigs.map((config) => ({
+              value: config.key,
+              label: config.label,
+              keywords: [config.key],
+            }))}
+            ariaLabel="Plot variable"
             title="Change the variable shown in this plot"
+            searchPlaceholder="Search plot variables..."
+            optionNoun="variable"
+            appearance="plot"
+            size="compact"
             style={{
               position: 'absolute',
               left: 0,
               top: -2,
-              background: '#1e1e1e',
-              color: '#e0e0e0',
-              border: '1px solid #3c3c3c',
-              borderRadius: 3,
-              padding: '2px 6px',
-              fontSize: 11,
-              cursor: 'pointer',
-              outline: 'none',
-              fontFamily: 'Segoe UI, sans-serif',
+              width: 180,
+              maxWidth: 'calc(100% - 76px)',
               zIndex: 5,
             }}
-          >
-            {allConfigs.map((config) => (
-              <option key={config.key} value={config.key}>
-                {config.label}
-              </option>
-            ))}
-          </select>
+          />
         )}
       </div>
       <div className={styles.plotViewport}>

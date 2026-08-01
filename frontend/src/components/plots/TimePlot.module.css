@@ -121,6 +121,44 @@
   overflow: hidden;
 }
 
+/* Keep expanded legends to one independently scrollable row. uPlot includes
+   the legend in its root height, and each plot reserves legend.offsetHeight
+   from the canvas. Without this cap every wrapped TP label removes another
+   row from the actual graph. */
+.plotCanvas :global(.u-legend) {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: 32px;
+  margin: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  color: #e0e0e0;
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: left;
+  white-space: nowrap;
+  scrollbar-color: #5a5a5a #252526;
+  scrollbar-width: thin;
+}
+
+.plotCanvas :global(.u-legend::-webkit-scrollbar) {
+  height: 6px;
+}
+
+.plotCanvas :global(.u-legend::-webkit-scrollbar-track) {
+  background: #252526;
+}
+
+.plotCanvas :global(.u-legend::-webkit-scrollbar-thumb) {
+  background: #5a5a5a;
+  border-radius: 3px;
+}
+
+.plotCanvas :global(.u-legend .u-series > *) {
+  padding: 2px 4px;
+}
+
 .filteredStatus {
   display: inline-flex;
   align-items: center;

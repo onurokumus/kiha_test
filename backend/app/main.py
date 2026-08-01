@@ -30,8 +30,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from . import dsp, edit, formula, recipes, split, store, uploads
-from .config import (CORS_ORIGINS, POINT_BUDGET_CAP, TESTS_DIR, TRASH_DIR,
-                     TRASH_MAX_AGE_S)
+from .config import (CORS_ORIGINS, DATA_DIR, POINT_BUDGET_CAP, TESTS_DIR,
+                     TRASH_DIR, TRASH_MAX_AGE_S)
 from .locks import (catalog_read, catalog_write, data_read, drop_test_lock,
                     test_read, test_write, tests_write, with_test_read)
 from .status import BUSY_STATUSES, INGEST_LIKE, write_status
@@ -162,6 +162,63 @@ class TestPointsFile(BaseModel):
     source_file: str = ""
     fs_hz: float | None = None
     test_points: list[TestPoint] = Field(default_factory=list)
+
+
+class AppSettingsDefaults(BaseModel):
+    """Validated shape of the browser settings that may be shared globally."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scatterX: str = Field(default="", max_length=512)
+    scatterY: str = Field(default="", max_length=512)
+    datasheetZone: str = Field(default="", max_length=512)
+    datasheetVisible: bool = True
+    gridColumns: list[str] = Field(
+        default_factory=lambda: [""] * 9, min_length=9, max_length=9)
+    xyYCols: list[str] = Field(
+        default_factory=lambda: [""] * 9, min_length=9, max_length=9)
+    xyXCols: list[str] = Field(
+        default_factory=lambda: [""] * 9, min_length=9, max_length=9)
+    defaultViewMode: Literal["tp", "full", "spectrum", "xy"] = "tp"
+    specMode: Literal["fft", "welch"] = "fft"
+    specLogY: bool = False
+    clustering: bool = True
+    uploadFsHz: str = Field(default="", max_length=64)
+
+
+class AppSettingsDefaultsResponse(BaseModel):
+    settings: AppSettingsDefaults | None
+
+
+def _app_settings_defaults_path() -> Path:
+    """Keep the shared UI defaults beside (not inside) the test catalog."""
+    return DATA_DIR / "default-settings.json"
+
+
+@app.get("/api/settings/defaults", response_model=AppSettingsDefaultsResponse)
+def api_get_settings_defaults():
+    path = _app_settings_defaults_path()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"settings": None}
+    except json.JSONDecodeError:
+        logger.warning("ignoring invalid shared settings file: %s", path)
+        return {"settings": None}
+
+    try:
+        settings = AppSettingsDefaults.model_validate(raw)
+    except ValueError:
+        logger.warning("ignoring invalid shared settings document: %s", path)
+        return {"settings": None}
+    return {"settings": settings}
+
+
+@app.put("/api/settings/defaults", response_model=AppSettingsDefaultsResponse)
+def api_put_settings_defaults(payload: AppSettingsDefaults):
+    settings = payload.model_dump()
+    store.write_json_atomic(_app_settings_defaults_path(), settings)
+    return {"settings": settings}
 
 
 # ---------- tests ----------
@@ -727,14 +784,18 @@ def api_filter(name: str,
 def api_spectrum(name: str, col: str = Query(...),
                  mode: Literal["fft", "welch"] = "fft",
                  t0: float | None = None, t1: float | None = None,
-                 nperseg: int = 4096):
+                 nperseg: int = 4096,
+                 rpm_col: str | None = None):
     meta = store.get_meta(name)
     if meta is None:
         raise HTTPException(404, f"test '{name}' not found or not ready")
     if col not in meta["columns"]:
         raise HTTPException(400, f"unknown column: {col}")
+    if rpm_col is not None and rpm_col not in meta["columns"]:
+        raise HTTPException(400, f"unknown RPM column: {rpm_col}")
     try:
-        return dsp.spectrum(name, col, mode, t0, t1, nperseg)
+        return dsp.spectrum(
+            name, col, mode, t0, t1, nperseg, rpm_col=rpm_col)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

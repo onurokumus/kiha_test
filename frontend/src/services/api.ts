@@ -28,6 +28,7 @@ import {
   WindowDisplayMode,
   XYData,
 } from '../types';
+import type { AppSettings } from '../constants/settings';
 
 export const API_BASE = (
   import.meta.env.VITE_API_BASE || `${import.meta.env.BASE_URL}api`
@@ -45,6 +46,28 @@ function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 
 export async function fetchTests(): Promise<TestInfo[]> {
   return getJson<TestInfo[]>('/tests');
+}
+
+/** Shared page defaults. Null means the server has never been configured. */
+export async function fetchDefaultSettings(
+  signal?: AbortSignal
+): Promise<AppSettings | null> {
+  const response = await getJson<{ settings: AppSettings | null }>(
+    '/settings/defaults',
+    signal
+  );
+  return response.settings;
+}
+
+/** Atomically replace the server-wide baseline used by browsers without a
+ * personal settings override. */
+export async function putDefaultSettings(settings: AppSettings): Promise<AppSettings> {
+  const response = await sendJson<{ settings: AppSettings }>('/settings/defaults', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+  return response.settings;
 }
 
 export async function fetchMeta(name: string): Promise<TestMeta> {
@@ -183,11 +206,13 @@ export async function fetchSpectrum(
   mode: 'fft' | 'welch',
   t0: number | null,
   t1: number | null,
+  rpmCol: string | null = null,
   signal?: AbortSignal
 ): Promise<SpectrumData> {
   const params = new URLSearchParams({ col, mode });
   if (t0 !== null) params.set('t0', String(t0));
   if (t1 !== null) params.set('t1', String(t1));
+  if (rpmCol) params.set('rpm_col', rpmCol);
   return getJson<SpectrumData>(
     `/tests/${encodeURIComponent(name)}/spectrum?${params}`,
     signal

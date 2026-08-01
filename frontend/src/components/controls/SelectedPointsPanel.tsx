@@ -1,8 +1,14 @@
-import React, { CSSProperties, useId, useState } from 'react';
+import React, { CSSProperties, useId, useMemo, useState } from 'react';
 import { testPointCsvUrl } from '../../services/api';
-import { SelectedTestPoint, TestInfo, WindowDisplayMode } from '../../types';
+import {
+  SelectedTestPoint,
+  SpectrumXAxis,
+  TestInfo,
+  WindowDisplayMode,
+} from '../../types';
 import { PlotDensity } from '../../services/analysisSession';
-import { TestOptions } from './TestOptions';
+import { SearchableSelect } from './SearchableSelect';
+import { TestSelect } from './TestSelect';
 import styles from './SelectedPointsPanel.module.css';
 
 type PanelViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
@@ -24,6 +30,11 @@ interface SelectedPointsPanelProps {
   onViewModeChange: (mode: PanelViewMode) => void;
   specMode: 'fft' | 'welch';
   onSpecModeChange: (mode: 'fft' | 'welch') => void;
+  specXAxis: SpectrumXAxis;
+  onSpecXAxisChange: (axis: SpectrumXAxis) => void;
+  specRpmCol: string;
+  onSpecRpmColChange: (column: string) => void;
+  spectrumColumns: string[];
   specLogY: boolean;
   onSpecLogYChange: (logY: boolean) => void;
   /** Active test for full-test-sourced views (moved here from the header). */
@@ -93,6 +104,11 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
   onViewModeChange,
   specMode,
   onSpecModeChange,
+  specXAxis,
+  onSpecXAxisChange,
+  specRpmCol,
+  onSpecRpmColChange,
+  spectrumColumns,
   specLogY,
   onSpecLogYChange,
   tests,
@@ -116,6 +132,23 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
     (viewMode === 'spectrum' && specSource === 'full') ||
     (viewMode === 'xy' && xySource === 'full');
   const hasContextControls = hasSourceControl || hasTestControl;
+  const rpmColumnOptions = useMemo(() => {
+    const score = (column: string) => {
+      const normalized = column.toLocaleLowerCase();
+      if (normalized === 'rpm') return 0;
+      if (/(^|[^a-z0-9])rpm([^a-z0-9]|$)/i.test(column)) return 1;
+      if (normalized.includes('rpm')) return 2;
+      return 3;
+    };
+    return spectrumColumns
+      .map((column, index) => ({ column, index }))
+      .sort((a, b) => score(a.column) - score(b.column) || a.index - b.index)
+      .map(({ column }) => ({
+        value: column,
+        label: column,
+        keywords: score(column) < 3 ? ['rpm', 'speed', 'shaft'] : undefined,
+      }));
+  }, [spectrumColumns]);
 
   const selectionSummary =
     selectedTPs.length === 0
@@ -215,16 +248,16 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
           )}
 
           {hasTestControl && (
-            <label className={styles.contextControl}>
+            <div className={styles.contextControl}>
               <span className={styles.utilityLabel}>Test</span>
-              <select
-                className={styles.select}
+              <TestSelect
+                tests={tests}
+                className={styles.testSelect}
                 value={currentTest}
-                onChange={(event) => onTestChange(event.target.value)}
-              >
-                <TestOptions tests={tests} />
-              </select>
-            </label>
+                onChange={onTestChange}
+                ariaLabel="Active test"
+              />
+            </div>
           )}
 
           {viewMode === 'full' && (
@@ -264,6 +297,48 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
                   <option value="welch">Welch PSD</option>
                 </select>
               </label>
+              <div className={styles.contextControl}>
+                <span className={styles.utilityLabel}>X axis</span>
+                <div className={styles.sourceButtons} role="group" aria-label="Spectrum x-axis">
+                  {([
+                    ['hz', 'Hz'],
+                    ['per_rev', 'Per rev'],
+                  ] as Array<[SpectrumXAxis, string]>).map(([axis, label]) => (
+                    <button
+                      key={axis}
+                      type="button"
+                      className={styles.contextButton}
+                      aria-pressed={specXAxis === axis}
+                      onClick={() => onSpecXAxisChange(axis)}
+                      title={
+                        axis === 'hz'
+                          ? 'Plot frequency in hertz'
+                          : 'Plot cycles per revolution using mean RPM over each spectrum interval'
+                      }
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {specXAxis === 'per_rev' && (
+                <div className={styles.contextControl}>
+                  <span className={styles.utilityLabel}>RPM</span>
+                  <SearchableSelect
+                    className={styles.rpmSelect}
+                    value={specRpmCol}
+                    options={rpmColumnOptions}
+                    onChange={onSpecRpmColChange}
+                    ariaLabel="RPM variable for per-revolution spectrum"
+                    placeholder="Choose RPM variable"
+                    searchPlaceholder="Search RPM variables..."
+                    emptyMessage="No variables available"
+                    optionNoun="variable"
+                    title="The mean absolute RPM over each FFT/Welch interval is used as its reference speed"
+                    menuMinWidth={300}
+                  />
+                </div>
+              )}
               <button
                 type="button"
                 className={styles.contextButton}

@@ -10,9 +10,15 @@ import {
   TP_SYNC_KEY,
 } from '../../constants/uplotTheme';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
-import { syncPlot, clearPlot } from '../../utils/uplotSync';
+import {
+  clearPlot,
+  facetedSeriesValue,
+  sortedFacetedDataIdx,
+  syncPlot,
+} from '../../utils/uplotSync';
 import { FILTER_LABELS, FilterUi } from '../../constants/filters';
 import { FilterRow } from '../controls/FilterRow';
+import { SearchableSelect } from '../controls/SearchableSelect';
 import { PlotStateOverlay, PlotEmptyState } from './PlotState';
 import styles from './TimePlot.module.css';
 
@@ -342,6 +348,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
             stroke: trace.color,
             width: showingFiltered ? 2 : 1.5,
             spanGaps: false,
+            value: facetedSeriesValue,
             facets: [
               { scale: 'x', auto: true },
               { scale: 'y', auto: true },
@@ -364,6 +371,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
       axes: [{ ...TIME_AXIS_STYLE }, { ...AXIS_STYLE, scale: 'y' }],
       legend: { show: isExpanded, live: true },
       cursor: {
+        dataIdx: sortedFacetedDataIdx,
         drag: { x: true, y: false },
         sync: { key: TP_SYNC_KEY, scales: ['x', null] },
       },
@@ -615,33 +623,29 @@ export const TimePlot: React.FC<TimePlotProps> = ({
           </button>
         </div>
         {isEditMode && allConfigs.length > 0 && (
-          <select
+          <SearchableSelect
             value={cfg.key}
-            onChange={(e) => onConfigChange?.(e.target.value)}
-            aria-label="Plot variable"
+            onChange={(nextKey) => onConfigChange?.(nextKey)}
+            options={allConfigs.map((config) => ({
+              value: config.key,
+              label: config.label,
+              keywords: [config.key],
+            }))}
+            ariaLabel="Plot variable"
             title="Change the variable shown in this plot"
+            searchPlaceholder="Search plot variables..."
+            optionNoun="variable"
+            appearance="plot"
+            size="compact"
             style={{
               position: 'absolute',
               left: 0,
               top: -2,
-              background: '#1e1e1e',
-              color: '#e0e0e0',
-              border: '1px solid #3c3c3c',
-              borderRadius: 3,
-              padding: '2px 6px',
-              fontSize: 11,
-              cursor: 'pointer',
-              outline: 'none',
-              fontFamily: 'Segoe UI, sans-serif',
+              width: 180,
+              maxWidth: 'calc(100% - 76px)',
               zIndex: 5,
             }}
-          >
-            {allConfigs.map((config) => (
-              <option key={config.key} value={config.key}>
-                {config.label}
-              </option>
-            ))}
-          </select>
+          />
         )}
       </div>
       {isExpanded && (

@@ -74,16 +74,10 @@
   flex: 1 1 auto;
   min-width: 0;
   height: 100%;
-  padding: 0 24px 0 7px;
   overflow: hidden;
   color: #d7dde3;
-  background-color: #1e1e1e;
-  border: 0;
-  outline: 0;
   font-family: 'Segoe UI', sans-serif;
   font-size: 11px;
-  text-overflow: ellipsis;
-  color-scheme: dark;
 }
 
 .resetButton,

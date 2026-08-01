@@ -9,7 +9,7 @@ import {
   ResponsiveContainer,
   ZAxis,
 } from 'recharts';
-import { ScatterDataPoint, TestPoint } from '../../types';
+import { DatasheetDataPoint, ScatterDataPoint, TestPoint } from '../../types';
 import { AnimatedDot } from './AnimatedDot';
 import { ClusterDot } from './ClusterDot';
 import { formatValue } from '../../utils/formatters';
@@ -20,6 +20,7 @@ import { clusterPoints, shouldEnableClustering } from '../../utils/pointClusteri
 
 interface MainScatterPlotProps {
   scatterData: ScatterDataPoint[];
+  datasheetData: DatasheetDataPoint[];
   rawDataCount: number;
   xLabel: string;
   yLabel: string;
@@ -37,6 +38,7 @@ interface MenuState {
 
 export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   scatterData,
+  datasheetData,
   rawDataCount,
   xLabel,
   yLabel,
@@ -116,9 +118,16 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   });
   const mainZoomRef = useRef(mainZoom);
 
+  /** The reference line participates in the automatic chart domain but never
+   * in clustering, filtering, selection, or point-count calculations. */
+  const domainData = useMemo(
+    () => [...scatterData, ...datasheetData],
+    [datasheetData, scatterData]
+  );
+
   // Calculate bounds for clustering - optimized to avoid spread operators
   const bounds = useMemo(() => {
-    if (!scatterData.length) {
+    if (!domainData.length) {
       return {
         initialXMin: 0,
         initialXMax: 1,
@@ -132,13 +141,13 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
     }
 
     // Use reduce instead of spread operator for better performance with large arrays
-    let xMin = scatterData[0].x;
-    let xMax = scatterData[0].x;
-    let yMin = scatterData[0].y;
-    let yMax = scatterData[0].y;
+    let xMin = domainData[0].x;
+    let xMax = domainData[0].x;
+    let yMin = domainData[0].y;
+    let yMax = domainData[0].y;
 
-    for (let i = 1; i < scatterData.length; i++) {
-      const point = scatterData[i];
+    for (let i = 1; i < domainData.length; i++) {
+      const point = domainData[i];
       if (point.x < xMin) xMin = point.x;
       if (point.x > xMax) xMax = point.x;
       if (point.y < yMin) yMin = point.y;
@@ -146,8 +155,10 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
     }
 
     const pad = 0.05;
-    const xPadding = (xMax - xMin) * pad;
-    const yPadding = (yMax - yMin) * pad;
+    const xPadding =
+      xMax > xMin ? (xMax - xMin) * pad : Math.max(Math.abs(xMin) * pad, 0.5);
+    const yPadding =
+      yMax > yMin ? (yMax - yMin) * pad : Math.max(Math.abs(yMin) * pad, 0.5);
 
     return {
       initialXMin: xMin - xPadding,
@@ -159,7 +170,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       currentYMin: mainZoom ? mainZoom[2] : yMin - yPadding,
       currentYMax: mainZoom ? mainZoom[3] : yMax + yPadding,
     };
-  }, [scatterData, mainZoom]);
+  }, [domainData, mainZoom]);
 
   // Update refs when values change
   useEffect(() => {
@@ -601,6 +612,21 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
     );
   }, [handlePointClick, highlightedPointId, handlePointHover, isPanning]);
 
+  const datasheetShapeRenderer = useCallback((props: unknown) => {
+    const shapeProps = props as { cx: number; cy: number };
+    return (
+      <circle
+        cx={shapeProps.cx}
+        cy={shapeProps.cy}
+        r={3.5}
+        fill="#1e1e1e"
+        stroke="#d7ba7d"
+        strokeWidth={1.75}
+        onMouseEnter={handlePointHover}
+      />
+    );
+  }, [handlePointHover]);
+
   const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
     if (menuState && chartRef.current) {
       // Check if mouse position is within the plot div bounds
@@ -675,6 +701,24 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
             isAnimationActive={false}
             active={isPanning || suppressTooltip ? false : undefined}
           />
+          {datasheetData.length > 0 && (
+            <Scatter
+              className="datasheet-scatter-series"
+              name="Datasheet"
+              data={datasheetData}
+              line={{
+                stroke: '#d7ba7d',
+                strokeWidth: 2,
+                strokeDasharray: '7 4',
+                fill: 'none',
+              }}
+              lineType="joint"
+              lineJointType="linear"
+              shape={datasheetShapeRenderer}
+              activeShape={datasheetShapeRenderer}
+              isAnimationActive={false}
+            />
+          )}
           <Scatter
             data={renderData}
             shape={shapeRenderer}

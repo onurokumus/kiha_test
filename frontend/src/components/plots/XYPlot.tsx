@@ -8,6 +8,7 @@ import { ACCENT, AXIS_STYLE, safeRange } from '../../constants/uplotTheme';
 import { xyPanZoomPlugin } from '../../utils/uplotPanZoom';
 import { syncPlot, clearPlot } from '../../utils/uplotSync';
 import { PlotStateOverlay, PlotEmptyState } from './PlotState';
+import { SearchableSelect } from '../controls/SearchableSelect';
 import styles from './TimePlot.module.css';
 import type { PanelSource } from './SpectrumPlot';
 
@@ -32,16 +33,9 @@ interface XYPlotProps {
 }
 
 const editSelectStyle: React.CSSProperties = {
-  background: '#1e1e1e',
-  color: '#e0e0e0',
-  border: '1px solid #3c3c3c',
-  borderRadius: 3,
-  padding: '2px 6px',
-  fontSize: 11,
-  cursor: 'pointer',
-  outline: 'none',
-  fontFamily: 'Segoe UI, sans-serif',
+  flex: '1 1 0',
   minWidth: 0,
+  maxWidth: 180,
 };
 
 interface XYTrace {
@@ -356,33 +350,39 @@ export const XYPlot: React.FC<XYPlotProps> = ({
               zIndex: 5,
             }}
           >
-            <select
+            <SearchableSelect
               value={cfg.key}
-              onChange={(e) => onConfigChange?.(e.target.value)}
+              onChange={(nextKey) => onConfigChange?.(nextKey)}
+              options={allConfigs.map((config) => ({
+                value: config.key,
+                label: config.label,
+                keywords: [config.key],
+              }))}
               style={editSelectStyle}
-              aria-label="Y variable"
+              ariaLabel="Y variable"
               title="Y column"
-            >
-              {allConfigs.map((config) => (
-                <option key={config.key} value={config.key}>
-                  {config.label}
-                </option>
-              ))}
-            </select>
+              searchPlaceholder="Search Y variables..."
+              optionNoun="variable"
+              appearance="plot"
+              size="compact"
+            />
             <span style={{ fontSize: 10, color: '#909090', flexShrink: 0 }}>vs</span>
-            <select
+            <SearchableSelect
               value={xCol}
-              onChange={(e) => onXColChange?.(e.target.value)}
+              onChange={(nextKey) => onXColChange?.(nextKey)}
+              options={allConfigs.map((config) => ({
+                value: config.key,
+                label: config.label,
+                keywords: [config.key],
+              }))}
               style={editSelectStyle}
-              aria-label="X variable"
+              ariaLabel="X variable"
               title="X column (this plot only)"
-            >
-              {allConfigs.map((config) => (
-                <option key={config.key} value={config.key}>
-                  {config.label}
-                </option>
-              ))}
-            </select>
+              searchPlaceholder="Search X variables..."
+              optionNoun="variable"
+              appearance="plot"
+              size="compact"
+            />
           </div>
         )}
       </div>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { useConfirm } from '../components/feedback/confirm';
 
 const DEFAULT_MESSAGE = 'You have unsaved changes. Discard them and continue?';
 
@@ -32,6 +33,7 @@ export function useUnsavedChanges({
   confirmOnContextChange = false,
   message = DEFAULT_MESSAGE,
 }: UseUnsavedChangesOptions) {
+  const confirmAction = useConfirm();
   const dirtyChangeRef = useRef(onDirtyChange);
 
   useEffect(() => {
@@ -63,15 +65,26 @@ export function useUnsavedChanges({
   }, [isDirty]);
 
   const confirmContextChange = useCallback(
-    (shouldConfirm = confirmOnContextChange): boolean =>
-      !isDirty || !shouldConfirm || window.confirm(message),
-    [confirmOnContextChange, isDirty, message]
+    async (shouldConfirm = confirmOnContextChange): Promise<boolean> => {
+      if (!isDirty || !shouldConfirm) return true;
+      return confirmAction({
+        title: 'Discard unsaved changes?',
+        description: message,
+        detail: 'Saved test data will not be changed.',
+        confirmLabel: 'Discard changes',
+        tone: 'warning',
+      });
+    },
+    [confirmAction, confirmOnContextChange, isDirty, message]
   );
 
   const requestContextChange = useCallback(
-    (changeContext: () => void, options: ContextChangeOptions = {}): boolean => {
+    async (
+      changeContext: () => void,
+      options: ContextChangeOptions = {}
+    ): Promise<boolean> => {
       const shouldConfirm = options.confirm ?? confirmOnContextChange;
-      if (!confirmContextChange(shouldConfirm)) return false;
+      if (!(await confirmContextChange(shouldConfirm))) return false;
 
       if (isDirty) {
         options.onDiscard?.();

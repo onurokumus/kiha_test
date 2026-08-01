@@ -90,6 +90,19 @@ Test data is not stored in git, so a fresh clone starts empty:
    recipes, existing-column rename/drop, metadata, NaN policy, trimming, and
    test rename/delete.
 
+## Datasheet reference line
+
+Upload a datasheet CSV through the normal **Uploads** flow and choose its
+point-ID column as the time column. Then open **Settings**, select that upload
+as the **Datasheet zone**, choose whether it should be visible by default, and
+save. The Analyze scatter joins valid datasheet rows in point-ID order whenever
+the selected X and Y variable names exist in both the datasheet and test data.
+Missing columns and rows with an empty X or Y value are ignored. Use
+**Analyze -> More -> Datasheet line** to hide or show the line for the current
+session. `Example_Datasheet_demo.csv` is a ready-to-upload example matched to
+the included `demo_120s` variables; it deliberately contains two partial cells
+and one completely empty column.
+
 ## Derived variables and formula recipes
 
 The **Edit** tab can materialize new numeric columns from ordered equations.

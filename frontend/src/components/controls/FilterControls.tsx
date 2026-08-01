@@ -9,6 +9,7 @@ import React, {
   useState,
 } from 'react';
 import { AggMode, FilterOptions, ScatterFilterState } from '../../types';
+import { SearchableSelect } from './SearchableSelect';
 import styles from './FilterControls.module.css';
 
 const AGG_MODES: { value: AggMode; label: string }[] = [
@@ -507,21 +508,23 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
                         <span className={styles.parameterIndex} aria-hidden="true">
                           {index + 1}
                         </span>
-                        <label className={styles.parameterField}>
+                        <div className={styles.parameterField}>
                           <span>Column</span>
-                          <select
+                          <SearchableSelect
+                            className={styles.parameterSelect}
                             value={filter.column}
-                            onChange={(event) =>
-                              onUpdateParameterFilter(filter.id, 'column', event.target.value)
+                            onChange={(column) =>
+                              onUpdateParameterFilter(filter.id, 'column', column)
                             }
-                          >
-                            {columns.map((column) => (
-                              <option key={column} value={column}>
-                                {column}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                            options={columns.map((column) => ({
+                              value: column,
+                              label: column,
+                            }))}
+                            ariaLabel={`Column for parameter filter ${index + 1}`}
+                            searchPlaceholder="Search filter columns..."
+                            optionNoun="signal"
+                          />
+                        </div>
                         <label className={styles.parameterField}>
                           <span>Aggregation</span>
                           <select

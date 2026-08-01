@@ -10,7 +10,9 @@ import {
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { IdCandidate, TestInfo, TestMeta, TestPoint, TestPointsFile } from '../../types';
 import { round3 } from '../../utils/formatters';
-import { TestOptions } from '../controls/TestOptions';
+import { SearchableSelect } from '../controls/SearchableSelect';
+import { TestSelect } from '../controls/TestSelect';
+import { useConfirm } from '../feedback/confirm';
 import SplitPlot, { effectiveEnd, TimeRange } from './SplitPlot';
 
 interface Props {
@@ -18,7 +20,7 @@ interface Props {
   meta: TestMeta;
   columns: string[]; // plottable columns (no time column)
   tests: TestInfo[];
-  onTestChange: (test: string) => boolean | void;
+  onTestChange: (test: string) => Promise<boolean | void>;
   /** Reports whether this view has test-point changes that are not saved. */
   onDirtyChange?: (isDirty: boolean) => void;
   /** Test-point definitions were persisted and dependent caches are stale. */
@@ -56,6 +58,7 @@ export default function SplitView({
   onSaved,
   onBusyChange,
 }: Props) {
+  const confirmAction = useConfirm();
   const [tps, setTps] = useState<TestPoint[]>([]);
   const [savedTps, setSavedTps] = useState<TestPoint[] | null>(null);
   const [tpLoadState, setTpLoadState] = useState<'loading' | 'ready' | 'error'>(
@@ -150,7 +153,18 @@ export default function SplitView({
 
   const runAutoSplit = async () => {
     if (!candCol || tpLoadState !== 'ready' || saving) return;
-    if (tps.length && !confirm(`Replace ${tps.length} existing test points?`)) return;
+    if (
+      tps.length &&
+      !(await confirmAction({
+        title: `Replace ${tps.length} existing test points?`,
+        description: `Auto-split will replace the ${tps.length} unsaved test-point definitions currently shown.`,
+        detail: 'Nothing is written to the test until you select Save.',
+        confirmLabel: 'Replace points',
+        tone: 'warning',
+      }))
+    ) {
+      return;
+    }
     setStatus('splitting…');
     try {
       const result = await autoSplit(test, candCol, ignoreZero, minLen);
@@ -257,9 +271,9 @@ export default function SplitView({
     message: `Replace unsaved test-point changes for '${test}'?`,
   });
 
-  const changeTest = (nextTest: string) => {
+  const changeTest = async (nextTest: string) => {
     if (nextTest === test) return;
-    if (onTestChange(nextTest) === false) return;
+    if ((await onTestChange(nextTest)) === false) return;
     discardChanges(false);
   };
 
@@ -280,14 +294,13 @@ export default function SplitView({
             Could not load saved test-point definitions. Editing is disabled to protect the
             existing file. {tpLoadError}
           </span>
-          <select
-            className="input"
-            aria-label="Choose another test"
+          <TestSelect
+            tests={tests}
+            ariaLabel="Choose another test"
             value={test}
-            onChange={(event) => changeTest(event.target.value)}
-          >
-            <TestOptions tests={tests} />
-          </select>
+            onChange={changeTest}
+            style={{ width: 190 }}
+          />
           <button className="btn" onClick={() => setTpLoadRetry((attempt) => attempt + 1)}>
             Retry
           </button>
@@ -322,25 +335,30 @@ export default function SplitView({
         }}
       >
         <span style={{ fontSize: 11, color: '#909090' }}>test:</span>
-        <select
-          className="input" style={{ width: 150 }}
-          value={test} onChange={(e) => changeTest(e.target.value)}
-        >
-          <TestOptions tests={tests} />
-        </select>
+        <TestSelect
+          tests={tests}
+          value={test}
+          onChange={changeTest}
+          ariaLabel="Active test"
+          style={{ width: 180 }}
+        />
         <span style={{ color: '#555' }}>|</span>
         <span className="section-title" style={{ margin: 0 }}>Auto-split</span>
-        <select
-          className="input" style={{ width: 160 }}
-          value={candCol} onChange={(e) => setCandCol(e.target.value)}
-        >
-          {candidates.map((c) => (
-            <option key={c.col} value={c.col}>
-              {c.col} ({c.n_unique} values)
-            </option>
-          ))}
-          {candidates.length === 0 && <option value="">no ID-like columns</option>}
-        </select>
+        <SearchableSelect
+          value={candCol}
+          onChange={setCandCol}
+          ariaLabel="Auto-split column"
+          options={candidates.map((candidate) => ({
+            value: candidate.col,
+            label: candidate.col,
+            description: `${candidate.n_unique.toLocaleString()} unique values`,
+          }))}
+          placeholder="No ID-like columns"
+          searchPlaceholder="Search split columns..."
+          optionNoun="column"
+          disabled={candidates.length === 0}
+          style={{ width: 190 }}
+        />
         <label style={{ fontSize: 11, display: 'flex', gap: 4, alignItems: 'center' }}>
           <input type="checkbox" checked={ignoreZero}
                  onChange={(e) => setIgnoreZero(e.target.checked)} />
@@ -361,14 +379,15 @@ export default function SplitView({
         </button>
         <span style={{ color: '#555' }}>|</span>
         <span style={{ fontSize: 11, color: '#909090' }}>plot:</span>
-        <select
-          className="input" style={{ width: 160 }}
-          value={displayCol} onChange={(e) => setDisplayCol(e.target.value)}
-        >
-          {columns.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
+        <SearchableSelect
+          value={displayCol}
+          onChange={setDisplayCol}
+          ariaLabel="Plot column"
+          options={columns.map((column) => ({ value: column, label: column }))}
+          searchPlaceholder="Search plot columns..."
+          optionNoun="signal"
+          style={{ width: 190 }}
+        />
         <span style={{ flex: 1 }} />
         <button className="btn" onClick={addTp}>+ new TP</button>
         <button className="btn" onClick={() => fileRef.current?.click()}>
@@ -390,9 +409,9 @@ export default function SplitView({
         <input
           ref={fileRef} type="file" accept=".json"
           style={{ display: 'none' }}
-          onChange={(e) => {
+          onChange={async (e) => {
             const f = e.target.files?.[0];
-            if (f && confirmContextChange()) handleUpload(f);
+            if (f && (await confirmContextChange())) handleUpload(f);
             e.target.value = '';
           }}
         />

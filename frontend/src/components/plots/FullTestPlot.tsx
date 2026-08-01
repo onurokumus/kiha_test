@@ -6,12 +6,14 @@ import {
   DataWindow,
   FilteredWindow,
   FilterSpec,
+  SelectedTestPoint,
   TimePlotConfig,
   WindowDisplayMode,
 } from '../../types';
 import { noSelect } from '../../constants/styles';
 import { FILTER_LABELS, FilterUi } from '../../constants/filters';
 import { FilterRow } from '../controls/FilterRow';
+import { SearchableSelect } from '../controls/SearchableSelect';
 import {
   ACCENT,
   AXIS_STYLE,
@@ -19,6 +21,10 @@ import {
   TIME_AXIS_STYLE,
 } from '../../constants/uplotTheme';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
+import {
+  XRangeHighlight,
+  xRangeHighlightsPlugin,
+} from '../../utils/uplotRangeHighlights';
 import { syncPlot, clearPlot } from '../../utils/uplotSync';
 import { PlotStateOverlay } from './PlotState';
 import styles from './TimePlot.module.css';
@@ -27,6 +33,8 @@ const FILTER_COLOR = '#dcdcaa';
 
 interface FullTestPlotProps {
   test: string;
+  selectedTPs: SelectedTestPoint[];
+  hiddenTPs: Set<string>;
   cfg: TimePlotConfig;
   range: [number, number] | null;
   displayMode: WindowDisplayMode;
@@ -63,6 +71,8 @@ const EMPTY_FILTER_RESULT: FilterResultState = {
  *  force either representation. Every zoom re-fetches the chosen form. */
 export const FullTestPlot: React.FC<FullTestPlotProps> = ({
   test,
+  selectedTPs,
+  hiddenTPs,
   cfg,
   range,
   displayMode,
@@ -91,6 +101,18 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
   const [loading, setLoading] = useState(Boolean(test && cfg.key));
   const [error, setError] = useState('');
   const [retryVersion, setRetryVersion] = useState(0);
+  const highlights: XRangeHighlight[] = selectedTPs
+    .filter((selection) => selection.test === test && !hiddenTPs.has(selection.id))
+    .map((selection) => ({
+      start: selection.tp.start_s,
+      end: selection.endS,
+      color: selection.color,
+    }));
+  const highlightsRef = useRef<readonly XRangeHighlight[]>(highlights);
+  highlightsRef.current = highlights;
+  const highlightsKey = highlights
+    .map(({ start, end, color }) => `${start}:${end}:${color}`)
+    .join('|');
 
   // Filter result state (spec comes from this plot's own filter row).
   const [filterResult, setFilterResult] =
@@ -321,7 +343,10 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
         points: { size: 6 },
         sync: { key: FULL_SYNC_KEY, scales: ['x', null] },
       },
-      plugins: [xPanZoomPlugin((r) => onRangeChangeRef.current(r))],
+      plugins: [
+        xRangeHighlightsPlugin(() => highlightsRef.current),
+        xPanZoomPlugin((r) => onRangeChangeRef.current(r)),
+      ],
       hooks: {
         setSelect: [
           (u) => {
@@ -366,6 +391,13 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayedWindow, showingFiltered, box, isExpanded]);
+
+  // Selection changes do not alter the trace data or uPlot structure. Redraw
+  // the reused canvas so newly selected (or revealed) test-point bars appear
+  // immediately without triggering a full-test refetch.
+  useEffect(() => {
+    plotRef.current?.redraw();
+  }, [highlightsKey]);
 
   const containerClass = `${styles.plotContainer} ${
     isExpanded ? styles.plotContainerExpanded : styles.plotContainerCollapsed
@@ -512,33 +544,29 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
           </button>
         </div>
         {isEditMode && allConfigs.length > 0 && (
-          <select
+          <SearchableSelect
             value={cfg.key}
-            onChange={(e) => onConfigChange?.(e.target.value)}
-            aria-label="Plot variable"
+            onChange={(nextKey) => onConfigChange?.(nextKey)}
+            options={allConfigs.map((config) => ({
+              value: config.key,
+              label: config.label,
+              keywords: [config.key],
+            }))}
+            ariaLabel="Plot variable"
             title="Change the variable shown in this plot"
+            searchPlaceholder="Search plot variables..."
+            optionNoun="variable"
+            appearance="plot"
+            size="compact"
             style={{
               position: 'absolute',
               left: 0,
               top: -2,
-              background: '#1e1e1e',
-              color: '#e0e0e0',
-              border: '1px solid #3c3c3c',
-              borderRadius: 3,
-              padding: '2px 6px',
-              fontSize: 11,
-              cursor: 'pointer',
-              outline: 'none',
-              fontFamily: 'Segoe UI, sans-serif',
+              width: 180,
+              maxWidth: 'calc(100% - 76px)',
               zIndex: 5,
             }}
-          >
-            {allConfigs.map((config) => (
-              <option key={config.key} value={config.key}>
-                {config.label}
-              </option>
-            ))}
-          </select>
+          />
         )}
       </div>
       {isExpanded && (

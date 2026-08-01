@@ -442,6 +442,10 @@
   padding-right: 24px;
 }
 
+.parameterSelect {
+  width: 100%;
+}
+
 .removeButton {
   width: 32px;
   padding: 0;
@@ -538,7 +542,12 @@
   .removeButton,
   .searchField input,
   .parameterField select,
+  .parameterSelect,
   .rangeField input {
+    min-height: 40px;
+  }
+
+  .parameterSelect button {
     min-height: 40px;
   }
 

@@ -1,5 +1,61 @@
 import uPlot from 'uplot';
 
+type FacetedSeriesData = [
+  readonly number[],
+  readonly (number | null | undefined)[],
+];
+
+/**
+ * Resolve the sample nearest the cursor for uPlot mode-2 series whose x data
+ * is sorted. uPlot cannot infer this from faceted data because every series
+ * owns a different x array (the aligned-mode cursor index is undefined).
+ */
+export function sortedFacetedDataIdx(
+  u: uPlot,
+  seriesIdx: number
+): number | null {
+  if (seriesIdx === 0 || u.cursor.left == null || u.cursor.left < 0) return null;
+
+  const pair = (
+    u.data as unknown as readonly (FacetedSeriesData | null)[]
+  )[seriesIdx];
+  const xs = pair?.[0];
+  if (!xs?.length) return null;
+
+  const xScale = u.series[seriesIdx]?.facets?.[0]?.scale ?? 'x';
+  const target = u.posToVal(u.cursor.left, xScale);
+  const first = xs[0];
+  const last = xs[xs.length - 1];
+  if (!Number.isFinite(target) || target < first || target > last) return null;
+
+  let low = 0;
+  let high = xs.length - 1;
+  while (low < high) {
+    const mid = low + Math.floor((high - low) / 2);
+    if (xs[mid] < target) low = mid + 1;
+    else high = mid;
+  }
+
+  if (low === 0) return 0;
+  const left = low - 1;
+  return target - xs[left] <= xs[low] - target ? left : low;
+}
+
+/** Read and display the y value belonging to a mode-2 legend index. */
+export function facetedSeriesValue(
+  u: uPlot,
+  _rawValue: number,
+  seriesIdx: number,
+  dataIdx: number | null
+): string | number {
+  if (dataIdx == null) return '—';
+  const pair = (
+    u.data as unknown as readonly (FacetedSeriesData | null)[]
+  )[seriesIdx];
+  const value = pair?.[1]?.[dataIdx];
+  return typeof value === 'number' && Number.isFinite(value) ? value : '—';
+}
+
 /**
  * In-place uPlot updater (perf 2.4). The plot components used to
  * `destroy()` + `new uPlot()` on EVERY data change — with 9 linked plots

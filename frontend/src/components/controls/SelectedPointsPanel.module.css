@@ -209,6 +209,17 @@
   font-size: 11px;
 }
 
+.testSelect {
+  min-width: 132px;
+  max-width: 206px;
+  height: 32px;
+}
+
+.rpmSelect {
+  width: 164px;
+  max-width: 220px;
+}
+
 .selectionTray {
   min-width: 0;
   overflow: hidden;
@@ -514,7 +525,8 @@ button.itemAction {
     flex: 1 1 150px;
   }
 
-  .select {
+  .select,
+  .testSelect {
     flex: 1 1 auto;
     max-width: none;
   }
@@ -547,7 +559,12 @@ button.itemAction {
   .visibilityButton,
   .itemAction,
   .clearButton,
-  .select {
+  .select,
+  .testSelect {
+    min-height: 40px;
+  }
+
+  .testSelect button {
     min-height: 40px;
   }
 

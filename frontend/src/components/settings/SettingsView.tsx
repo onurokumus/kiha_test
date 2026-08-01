@@ -1,5 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { AppSettings, DEFAULT_SETTINGS, normalizeSettings } from '../../constants/settings';
+import { SearchableSelect, SearchableSelectOption } from '../controls/SearchableSelect';
+import { useConfirm } from '../feedback/confirm';
 
 interface SettingsViewProps {
   /** The SAVED (active) settings. */
@@ -11,9 +13,13 @@ interface SettingsViewProps {
   /** Persist + apply (App diffs against the saved settings and applies only
    *  the changed fields). Nothing takes effect before this. */
   onSave: (next: AppSettings) => void;
+  /** Publish the settings currently shown as the server-wide page baseline. */
+  onMakeDefault: (next: AppSettings) => Promise<void>;
   /** Union of every loaded test's columns — the pick lists. A saved preference
    *  naming a column no test currently has still shows, tagged "(not loaded)". */
   columns: string[];
+  /** Ready uploaded data zones that can supply datasheet rows. */
+  zones: string[];
 }
 
 /** One column preference dropdown: auto option + union columns, keeping a
@@ -24,24 +30,90 @@ const ColSelect: React.FC<{
   columns: string[];
   autoLabel: string;
   width?: number;
-}> = ({ value, onChange, columns, autoLabel, width = 180 }) => (
-  <select
-    className="input"
-    style={{ width }}
-    value={value}
-    onChange={(e) => onChange(e.target.value)}
-  >
-    <option value="">{autoLabel}</option>
-    {value && !columns.includes(value) && (
-      <option value={value}>{value} (not loaded)</option>
-    )}
-    {columns.map((c) => (
-      <option key={c} value={c}>
-        {c}
-      </option>
-    ))}
-  </select>
-);
+  ariaLabel?: string;
+}> = ({ value, onChange, columns, autoLabel, width = 180, ariaLabel = 'Column preference' }) => {
+  const options: SearchableSelectOption[] = [
+    {
+      value: '',
+      label: autoLabel,
+      description: 'Choose the best available signal',
+      group: 'Automatic',
+    },
+    ...(value && !columns.includes(value)
+      ? [
+          {
+            value,
+            label: value,
+            description: 'Saved preference - not currently loaded',
+            group: 'Saved preference',
+          },
+        ]
+      : []),
+    ...columns.map((column) => ({
+      value: column,
+      label: column,
+      group: 'Loaded signals',
+    })),
+  ];
+
+  return (
+    <SearchableSelect
+      style={{ width }}
+      value={value}
+      onChange={onChange}
+      options={options}
+      ariaLabel={ariaLabel}
+      searchPlaceholder="Search signals..."
+      optionNoun="signal"
+      menuMinWidth={300}
+    />
+  );
+};
+
+/** Datasheet source selector. Keep a temporarily unavailable saved zone
+ * visible so a server restart or re-upload cannot erase the preference. */
+const ZoneSelect: React.FC<{
+  value: string;
+  onChange: (value: string) => void;
+  zones: string[];
+}> = ({ value, onChange, zones }) => {
+  const options: SearchableSelectOption[] = [
+    {
+      value: '',
+      label: '(none)',
+      description: 'Do not draw a datasheet reference line',
+      group: 'Datasheet',
+    },
+    ...(value && !zones.includes(value)
+      ? [
+          {
+            value,
+            label: value,
+            description: 'Saved zone - not currently loaded',
+            group: 'Saved preference',
+          },
+        ]
+      : []),
+    ...zones.map((zone) => ({
+      value: zone,
+      label: zone,
+      group: 'Loaded zones',
+    })),
+  ];
+
+  return (
+    <SearchableSelect
+      style={{ width: 260 }}
+      value={value}
+      onChange={onChange}
+      options={options}
+      ariaLabel="Datasheet zone"
+      searchPlaceholder="Search data zones..."
+      optionNoun="zone"
+      menuMinWidth={320}
+    />
+  );
+};
 
 const Section: React.FC<{ title: string; hint?: string; children: React.ReactNode }> = ({
   title,
@@ -66,8 +138,9 @@ const Row: React.FC<{ label: string; children: React.ReactNode }> = ({ label, ch
   </label>
 );
 
-/** Settings tab. All edits accumulate in a DRAFT; only the Save button
- *  persists and applies them (Revert discards). Export/Import move the whole
+/** Settings tab. All edits accumulate in a DRAFT; Save persists locally, while
+ *  Make default also publishes and applies the displayed draft. Revert
+ *  discards. Export/Import move the whole
  *  settings object through a JSON file so users can share configurations —
  *  an import lands in the draft for review, it is NOT auto-saved. */
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -75,16 +148,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   draft,
   onDraftChange,
   onSave,
+  onMakeDefault,
   columns,
+  zones,
 }) => {
+  const confirmAction = useConfirm();
   const view = draft ?? settings;
   const dirty = draft !== null;
   const importRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState('');
+  const [publishingDefault, setPublishingDefault] = useState(false);
+  const [publishMessage, setPublishMessage] = useState('');
+  const [publishError, setPublishError] = useState('');
+
+  const replaceDraft = (next: AppSettings | null) => {
+    setImportError('');
+    setPublishMessage('');
+    setPublishError('');
+    onDraftChange(next);
+  };
 
   const edit = (patch: Partial<AppSettings>) => {
-    setImportError('');
-    onDraftChange({ ...view, ...patch });
+    replaceDraft({ ...view, ...patch });
   };
 
   const handleExport = () => {
@@ -99,17 +184,45 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   const handleImportFile = async (file: File) => {
+    setPublishMessage('');
+    setPublishError('');
     try {
       const parsed: unknown = JSON.parse(await file.text());
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         throw new Error('not a settings object');
       }
-      onDraftChange(normalizeSettings(parsed));
-      setImportError('');
+      replaceDraft(normalizeSettings(parsed));
     } catch (e) {
       setImportError(
         `could not import ${file.name}: ${e instanceof Error ? e.message : String(e)}`
       );
+    }
+  };
+
+  const handleMakeDefault = async () => {
+    const confirmed = await confirmAction({
+      title: 'Make these the page defaults?',
+      description: 'The settings currently shown will become the starting configuration for everyone.',
+      detail: 'They apply on the next page load for browsers without personal settings. Existing personal settings will not be overwritten.',
+      confirmLabel: 'Make page defaults',
+      tone: 'warning',
+    });
+    if (!confirmed) return;
+
+    setPublishingDefault(true);
+    setPublishMessage('');
+    setPublishError('');
+    try {
+      await onMakeDefault(view);
+      setPublishMessage('These settings are now the page defaults for everyone.');
+    } catch (error) {
+      setPublishError(
+        `could not update page defaults: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    } finally {
+      setPublishingDefault(false);
     }
   };
 
@@ -141,8 +254,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <button className="btn" onClick={() => onSave(view)} disabled={!dirty}>
             Save
           </button>
-          <button className="btn" onClick={() => onDraftChange(null)} disabled={!dirty}>
+          <button className="btn" onClick={() => replaceDraft(null)} disabled={!dirty}>
             Revert
+          </button>
+          <button
+            className="btn"
+            onClick={handleMakeDefault}
+            disabled={publishingDefault}
+            title="save the settings shown here as the starting defaults for browsers without personal settings"
+            style={{ borderColor: '#569cd6', color: '#b9dcf2' }}
+          >
+            {publishingDefault ? 'Publishing...' : 'Make default for everyone'}
           </button>
           {dirty && (
             <span className="badge" style={{ color: '#dcdcaa' }}>
@@ -173,7 +295,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           />
           <button
             className="btn"
-            onClick={() => onDraftChange({ ...DEFAULT_SETTINGS })}
+            onClick={() => replaceDraft({ ...DEFAULT_SETTINGS })}
             title="fill the draft with defaults (Save to apply)"
           >
             Reset to defaults
@@ -182,6 +304,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {importError && (
           <div style={{ color: '#f48771', fontSize: 11 }}>{importError}</div>
         )}
+        <div aria-live="polite">
+          {publishMessage && (
+            <div style={{ color: '#89d185', fontSize: 11 }}>{publishMessage}</div>
+          )}
+          {publishError && (
+            <div style={{ color: '#f48771', fontSize: 11 }}>{publishError}</div>
+          )}
+        </div>
 
         <Section
           title="Scatter plot (left panel)"
@@ -194,6 +324,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onChange={(v) => edit({ scatterX: v })}
                 columns={columns}
                 autoLabel="(auto — most shared)"
+                ariaLabel="Preferred X axis"
               />
             </Row>
             <Row label="Y axis">
@@ -202,6 +333,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onChange={(v) => edit({ scatterY: v })}
                 columns={columns}
                 autoLabel="(auto — most shared)"
+                ariaLabel="Preferred Y axis"
+              />
+            </Row>
+          </div>
+        </Section>
+
+        <Section
+          title="Scatter datasheet line"
+          hint="Upload the datasheet CSV through Uploads, choose its point-ID column as the time column, then select that uploaded zone here. For the active scatter axes, only rows with valid values in both matching columns are joined; missing or empty columns are ignored."
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <Row label="Datasheet zone">
+              <ZoneSelect
+                value={view.datasheetZone}
+                onChange={(value) => edit({ datasheetZone: value })}
+                zones={zones}
+              />
+            </Row>
+            <Row label="Show by default">
+              <input
+                type="checkbox"
+                checked={view.datasheetVisible}
+                onChange={(event) => edit({ datasheetVisible: event.target.checked })}
               />
             </Row>
           </div>
@@ -231,6 +385,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 columns={columns}
                 autoLabel={`(auto ${i + 1})`}
                 width={170}
+                ariaLabel={`Preferred signal for grid cell ${i + 1}`}
               />
             ))}
           </div>
@@ -272,6 +427,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     columns={columns}
                     autoLabel={`(same as cell ${i + 1})`}
                     width={150}
+                    ariaLabel={`Preferred Y signal for XY cell ${i + 1}`}
                   />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -286,6 +442,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     columns={columns}
                     autoLabel="(auto)"
                     width={150}
+                    ariaLabel={`Preferred X signal for XY cell ${i + 1}`}
                   />
                 </div>
               </div>

@@ -2,6 +2,7 @@ import React from 'react';
 import {
   FilterSpec,
   SelectedTestPoint,
+  SpectrumXAxis,
   TimePlotConfig,
   WindowDisplayMode,
 } from '../../types';
@@ -33,6 +34,8 @@ interface TimeSeriesGridProps {
   onTimeZoomReset: () => void;
   fullPlotMode: WindowDisplayMode;
   specMode: 'fft' | 'welch';
+  specXAxis: SpectrumXAxis;
+  specRpmCol: string;
   specLogY: boolean;
   specSource: 'tp' | 'full';
   /** Active test's sample rate (Nyquist hint in per-plot filter rows). */
@@ -70,6 +73,8 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   onTimeZoomReset,
   fullPlotMode,
   specMode,
+  specXAxis,
+  specRpmCol,
   specLogY,
   specSource,
   fs,
@@ -177,6 +182,8 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
                   {...shared}
                   {...filterProps}
                   test={test}
+                  selectedTPs={selectedTPs}
+                  hiddenTPs={hiddenTPs}
                   range={timeZoom}
                   displayMode={fullPlotMode}
                   onRangeChange={onTimeZoomChange}
@@ -185,7 +192,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
               )}
               {viewMode === 'spectrum' && (
                 <SpectrumPlot
-                  key={`spectrum:${cfg.key}:${specMode}:${specSource}:${
+                  key={`spectrum:${cfg.key}:${specMode}:${specXAxis}:${specRpmCol}:${specSource}:${
                     specSource === 'full' ? test : visibleSelectionFingerprint
                   }`}
                   {...shared}
@@ -196,6 +203,8 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
                   columnsByTest={columnsByTest}
                   range={timeZoom}
                   specMode={specMode}
+                  axisMode={specXAxis}
+                  rpmColumn={specRpmCol}
                   logY={specLogY}
                 />
               )}

@@ -18,13 +18,15 @@ import {
   TestInfo,
   TestMeta,
 } from '../../types';
-import { TestOptions } from '../controls/TestOptions';
+import { SearchableSelect } from '../controls/SearchableSelect';
+import { TestSelect } from '../controls/TestSelect';
+import { useConfirm } from '../feedback/confirm';
 
 interface Props {
   test: string;
   meta: TestMeta;
   tests: TestInfo[];
-  onTestChange: (test: string) => boolean | void;
+  onTestChange: (test: string) => Promise<boolean | void>;
   /** A rebuild was scheduled — parent should poll and refresh when ready. */
   onRebuildStarted: () => void;
   /** Test was renamed (navigate to the new name) or deleted (empty string). */
@@ -158,6 +160,7 @@ export default function EditView({
   onDirtyChange,
   onBusyChange,
 }: Props) {
+  const confirmAction = useConfirm();
   const [status, setStatus] = useState('');
   const [pendingAction, setPendingAction] = useState('');
   const columnSignature = meta.columns.join('\u0000');
@@ -391,12 +394,18 @@ export default function EditView({
     }
   };
 
-  const loadRecipe = () => {
+  const loadRecipe = async () => {
     const recipe = recipes.find((candidate) => candidate.name === selectedRecipe);
     if (!recipe) return;
     if (
       formulasDirty &&
-      !confirm('Load this recipe and discard the current equation draft?')
+      !(await confirmAction({
+        title: `Load recipe '${recipe.name}'?`,
+        description: 'The current unsaved equation draft will be replaced by this recipe.',
+        detail: 'Saved recipes and test data will not be changed.',
+        confirmLabel: 'Load recipe',
+        tone: 'warning',
+      }))
     ) {
       return;
     }
@@ -427,7 +436,12 @@ export default function EditView({
     const replacesRecipe = recipes.some((recipe) => recipe.name === name);
     if (
       replacesRecipe &&
-      !confirm(`Replace the saved recipe '${name}' with this equation set?`)
+      !(await confirmAction({
+        title: `Replace recipe '${name}'?`,
+        description: 'The saved equation set will be replaced by the current draft.',
+        confirmLabel: 'Replace recipe',
+        tone: 'warning',
+      }))
     ) {
       return;
     }
@@ -457,7 +471,16 @@ export default function EditView({
 
   const removeRecipe = async () => {
     if (pendingAction || !selectedRecipe) return;
-    if (!confirm(`Delete the saved recipe '${selectedRecipe}'?`)) return;
+    if (
+      !(await confirmAction({
+        title: `Delete recipe '${selectedRecipe}'?`,
+        description: 'This removes the saved recipe. The equation draft currently shown is unchanged.',
+        confirmLabel: 'Delete recipe',
+        tone: 'danger',
+      }))
+    ) {
+      return;
+    }
     const name = selectedRecipe;
     try {
       setPendingAction(`Deleting recipe '${name}'`);
@@ -489,9 +512,19 @@ export default function EditView({
   ) => {
     if (pendingAction) return;
     const draftWarning = discardedDrafts.length
-      ? `\n\nThis will also discard unsaved ${discardedDrafts.join(', ')} drafts.`
+      ? ` Unsaved ${discardedDrafts.join(', ')} drafts will also be discarded.`
       : '';
-    if (!confirm(`${what}\n\nThis rewrites the test's data and pyramid; the test is unavailable until the rebuild finishes.${draftWarning}\n\nContinue?`)) return;
+    if (
+      !(await confirmAction({
+        title: 'Rebuild test data?',
+        description: `${what}.${draftWarning}`,
+        detail: "This rewrites the test's data and pyramid. The test will be unavailable until the rebuild finishes.",
+        confirmLabel: 'Rebuild test',
+        tone: 'warning',
+      }))
+    ) {
+      return;
+    }
     try {
       setPendingAction(what);
       await editTest(test, ops);
@@ -659,9 +692,9 @@ export default function EditView({
     onDirtyChange,
   });
 
-  const changeTest = (nextTest: string) => {
+  const changeTest = async (nextTest: string) => {
     if (nextTest === test) return;
-    if (onTestChange(nextTest) === false) return;
+    if ((await onTestChange(nextTest)) === false) return;
     resetDrafts();
   };
 
@@ -683,16 +716,20 @@ export default function EditView({
     ].filter(Boolean);
     if (
       otherDrafts.length > 0 &&
-      !confirm(
-        `Rename '${test}' to '${target}'?\n\nThis will discard unsaved ${otherDrafts.join(', ')} drafts. Continue?`
-      )
+      !(await confirmAction({
+        title: `Rename '${test}' to '${target}'?`,
+        description: `Unsaved ${otherDrafts.join(', ')} drafts will be discarded.`,
+        detail: 'The saved test data remains available under the new name.',
+        confirmLabel: 'Rename test',
+        tone: 'warning',
+      }))
     ) {
       return;
     }
     try {
       setPendingAction(`Renaming ${test}`);
       await renameTest(test, target);
-      requestContextChange(() => onTestGone(target), {
+      await requestContextChange(() => onTestGone(target), {
         confirm: false,
         onDiscard: resetDrafts,
       });
@@ -705,12 +742,23 @@ export default function EditView({
 
   const doDelete = async () => {
     if (pendingAction) return;
-    const dirtyWarning = dirty ? '\n\nAll unsaved edit drafts will also be discarded.' : '';
-    if (!confirm(`Delete test '${test}'? It moves to the trash folder and can be restored server-side for a while.${dirtyWarning}`)) return;
+    if (
+      !(await confirmAction({
+        title: `Delete test '${test}'?`,
+        description: 'The test will move to the trash folder and can be restored server-side for a limited time.',
+        detail: dirty
+          ? 'All unsaved edit drafts will also be discarded.'
+          : 'Analysis data for this test will no longer appear in the workspace.',
+        confirmLabel: 'Move to trash',
+        tone: 'danger',
+      }))
+    ) {
+      return;
+    }
     try {
       setPendingAction(`Deleting ${test}`);
       await deleteTest(test);
-      requestContextChange(() => onTestGone(''), {
+      await requestContextChange(() => onTestGone(''), {
         confirm: false,
         onDiscard: resetDrafts,
       });
@@ -752,12 +800,13 @@ export default function EditView({
         <div className="panel" style={{ flex: '1 1 380px', display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div className="section-title" style={{ margin: 0 }}>Test</div>
-            <select
-              className="input" style={{ width: 150 }}
-              value={test} onChange={(e) => changeTest(e.target.value)}
-            >
-              <TestOptions tests={tests} />
-            </select>
+            <TestSelect
+              tests={tests}
+              value={test}
+              onChange={changeTest}
+              ariaLabel="Active test"
+              style={{ width: 190 }}
+            />
             <span style={{ flex: 1 }} />
             <button className="btn" onClick={discardDrafts} disabled={!dirty}>
               reset drafts
@@ -865,22 +914,27 @@ export default function EditView({
             </div>
           </div>
           <div className="edit-formula-recipe">
-            <select
-              className="input"
-              aria-label="Saved formula recipe"
+            <SearchableSelect
+              ariaLabel="Saved formula recipe"
               value={selectedRecipe}
-              onChange={(event) => {
-                setSelectedRecipe(event.target.value);
-                if (event.target.value) setRecipeName(event.target.value);
+              onChange={(recipe) => {
+                setSelectedRecipe(recipe);
+                if (recipe) setRecipeName(recipe);
               }}
-            >
-              <option value="">saved recipes…</option>
-              {recipes.map((recipe) => (
-                <option key={recipe.name} value={recipe.name}>
-                  {recipe.name} ({recipe.formulas.length})
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: '', label: 'Saved recipes...' },
+                ...recipes.map((recipe) => ({
+                  value: recipe.name,
+                  label: recipe.name,
+                  description: `${recipe.formulas.length} formula${
+                    recipe.formulas.length === 1 ? '' : 's'
+                  }`,
+                })),
+              ]}
+              searchPlaceholder="Search recipes..."
+              optionNoun="recipe"
+              size="compact"
+            />
             <button
               className="btn"
               onClick={loadRecipe}
@@ -923,18 +977,15 @@ export default function EditView({
               ) + 1
             )}
           </span>
-          <select
-            className="input"
-            aria-label="Variable to insert"
+          <SearchableSelect
+            ariaLabel="Variable to insert"
             value={selectedVariable}
-            onChange={(event) => setSelectedVariable(event.target.value)}
-          >
-            {meta.columns.map((column) => (
-              <option key={column} value={column}>
-                {column}
-              </option>
-            ))}
-          </select>
+            onChange={setSelectedVariable}
+            options={meta.columns.map((column) => ({ value: column, label: column }))}
+            searchPlaceholder="Search variables..."
+            optionNoun="variable"
+            size="compact"
+          />
           <button
             className="btn edit-formula-insert-variable"
             onClick={() => insertFormulaText(`{${selectedVariable}}`)}

@@ -257,6 +257,18 @@ export interface ScatterDataPoint {
   isSelected: boolean;
 }
 
+/** One valid X/Y row from the configured datasheet zone. The source CSV uses
+ * its time column as an ordered point ID; rows missing either selected axis
+ * are omitted before this reaches the scatter plot. */
+export interface DatasheetDataPoint {
+  x: number;
+  y: number;
+  id: string;
+  pointId: number;
+  zone: string;
+  isDatasheet: true;
+}
+
 /** Aggregation mode for test-point range filters.
  *  'any' = keep the TP if any sample can fall in range (min/max overlap). */
 export type AggMode = 'mean' | 'min' | 'max' | 'any';
@@ -304,6 +316,8 @@ export interface IdCandidate {
 }
 
 /** GET /api/tests/{name}/spectrum */
+export type SpectrumXAxis = 'hz' | 'per_rev';
+
 export interface SpectrumData {
   mode: 'fft' | 'welch';
   col: string;
@@ -312,6 +326,13 @@ export interface SpectrumData {
   nan_count: number;
   freqs: (number | null)[];
   mag: (number | null)[];
+  /** Present when the request includes rpm_col. The speed statistics use the
+   *  exact spectrum window and absolute RPM so reverse rotation still yields
+   *  a positive cycles-per-revolution scale. */
+  rpm_col?: string;
+  mean_rpm?: number;
+  min_rpm?: number;
+  max_rpm?: number;
 }
 
 export type FilterKind =
