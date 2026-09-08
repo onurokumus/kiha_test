@@ -46,6 +46,8 @@ interface XYTrace {
   stride: number;
 }
 
+const EMPTY_TRACES: XYTrace[] = [];
+
 /** Variable-vs-variable scatter (this cell's own x and y columns, both
  *  pickable in Edit Plots mode): either the active test over its zoom range,
  *  or one point cloud per selected test point (each over its own time range,
@@ -71,7 +73,8 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   const plotRef = useRef<uPlot | null>(null);
   const structKeyRef = useRef('');
   const [box, setBox] = useState({ w: 0, h: 0 });
-  const [traces, setTraces] = useState<XYTrace[]>([]);
+  const [loadedTraces, setTraces] = useState<XYTrace[]>([]);
+  const [loadedContext, setLoadedContext] = useState('');
   const [loading, setLoading] = useState(
     Boolean(xCol && cfg.key && (source === 'full' ? test : selectedTPs.length))
   );
@@ -80,9 +83,13 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   const [retryVersion, setRetryVersion] = useState(0);
 
   const visibleTPs = selectedTPs.filter((s) => !hiddenTPs.has(s.id));
-  const tpFingerprint = visibleTPs
-    .map((s) => `${s.id}:${s.tp.start_s}:${s.endS}`)
-    .join('|');
+  const tpFingerprint = JSON.stringify(
+    visibleTPs.map((s) => [s.id, s.tp.start_s, s.endS, s.name, s.color])
+  );
+  // A zoom refresh may keep the previous cloud with a stale-data notice.
+  // A different variable/test/selection must never inherit that cloud.
+  const contextKey = JSON.stringify([source, xCol, cfg.key, source === 'full' ? test : tpFingerprint]);
+  const traces = loadedContext === contextKey ? loadedTraces : EMPTY_TRACES;
 
   useEffect(() => {
     const el = chartRef.current;
@@ -95,9 +102,11 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!xCol || !cfg.key) {
+    if (!xCol || !cfg.key || (source === 'full' && !test)) {
+      setTraces([]);
       setLoading(false);
       setError('');
+      setPartialMessage('');
       return;
     }
     let dead = false;
@@ -124,6 +133,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
           );
           if (dead) return;
           const s = d.series[cfg.key];
+          setLoadedContext(contextKey);
           setTraces(
             s && s.x.length
               ? [{ label: `${cfg.key} vs ${xCol}`, color: ACCENT, x: s.x, y: s.y, stride: d.stride }]
@@ -166,6 +176,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
               `XY data was unavailable for ${failed} selected test point${failed === 1 ? '' : 's'}.`
             );
           }
+          setLoadedContext(contextKey);
           setTraces(ok);
           setPartialMessage(
             failed > 0
@@ -190,7 +201,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [test, xCol, cfg.key, range, source, tpFingerprint, columnsByTest, retryVersion]);
+  }, [test, xCol, cfg.key, range, source, tpFingerprint, columnsByTest, retryVersion, contextKey]);
 
   // Destroy only on unmount; syncPlot reuses/rebuilds in place (perf 2.4).
   useEffect(() => () => clearPlot(plotRef, structKeyRef), []);
@@ -242,7 +253,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
     ] as unknown as uPlot.AlignedData;
 
     const structKey = [
-      series.map((s) => s.label ?? '').join('~'), box.w, box.h, isExpanded,
+      JSON.stringify(series.map((s) => [s.label, s.stroke, s.fill])), box.w, box.h, isExpanded,
     ].join('|');
     syncPlot({
       plotRef,

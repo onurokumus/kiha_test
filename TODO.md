@@ -2,6 +2,6 @@
 - [x] total selectable test points up to 20 with proper UI / UX
 - [x] save / show the equations used to generate the variable. make them editable / modifiable.
 - [x] up and down error bar for the scatter plot for the points min / max values.
-- [] test names are not readable when long in uploads section
+- [x] test names are not readable when long in uploads section
 - [] tp plotlarına mean / standart deviation ? bu hangisiydi?
 - [] more equations at once

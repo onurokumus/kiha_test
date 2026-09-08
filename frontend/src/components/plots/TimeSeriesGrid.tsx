@@ -27,6 +27,7 @@ interface TimeSeriesGridProps {
   /** Selected-point trace failures keyed by `${selection.id}|${column}`. */
   traceErrors?: Record<string, string>;
   onRetryTraces?: () => void;
+  onBrowseFullTest?: () => void;
   expandedPlot: number | null;
   onToggleExpand: (index: number) => void;
   timeZoom: [number, number] | null;
@@ -66,6 +67,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   hiddenTPs,
   traceErrors = {},
   onRetryTraces,
+  onBrowseFullTest,
   expandedPlot,
   onToggleExpand,
   timeZoom,
@@ -133,11 +135,51 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
         : [];
   const visibleSelectionFingerprint = selectedTPs
     .filter((selection) => !hiddenTPs.has(selection.id))
-    .map(
-      (selection) =>
-        `${selection.id}:${selection.tp.start_s}:${selection.endS}`
-    )
+    .map((selection) => `${selection.id}:${selection.tp.start_s}:${selection.endS}`)
     .join('|');
+
+  const needsSelection =
+    viewMode === 'tp' ||
+    (viewMode === 'spectrum' && specSource === 'tp') ||
+    (viewMode === 'xy' && xySource === 'tp');
+
+  if (needsSelection && selectedTPs.length === 0 && !isEditMode) {
+    return (
+      <div className={styles.emptyWorkspace}>
+        <svg className={styles.emptyDiagram} viewBox="0 0 280 100" fill="none" aria-hidden="true">
+          <path
+            d="M0 25H280M0 50H280M0 75H280M35 0V100M105 0V100M175 0V100M245 0V100"
+            stroke="currentColor"
+            strokeOpacity=".13"
+          />
+          <path
+            d="M0 68H35L48 53L60 67H82L95 31L108 74L120 54H148L163 42L177 62H203L217 25L230 65H280"
+            stroke="#85bddd"
+            strokeWidth="2"
+          />
+          <path
+            d="M0 77H38L50 65L62 78H86L100 49L112 85L125 68H151L166 58L180 73H207L222 48L235 78H280"
+            stroke="#d7ba7d"
+            strokeWidth="1.5"
+            strokeOpacity=".8"
+          />
+        </svg>
+        <h2>Compare your test points</h2>
+        <p>
+          Select points in the scatter plot to overlay their signals here. Choose points from
+          different tests to compare operating conditions.
+        </p>
+        {onBrowseFullTest && (
+          <button className="btn btn-primary" onClick={onBrowseFullTest}>
+            Browse full test
+          </button>
+        )}
+        <span className={styles.emptyHint}>
+          Full test view lets you explore a complete run before selecting points.
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.gridShell}>

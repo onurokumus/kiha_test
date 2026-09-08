@@ -19,7 +19,7 @@ import uuid
 from collections import Counter
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import (BackgroundTasks, FastAPI, HTTPException, Query, Request,
                      UploadFile)
@@ -817,7 +817,9 @@ def api_split_candidates(name: str):
 @app.post("/api/tests/{name}/split/auto")
 @with_test_read
 def api_autosplit(name: str, col: str = Query(...),
-                  ignore_zero: bool = True, min_len_s: float = 1.0):
+                  ignore_zero: bool = True,
+                  min_len_s: Annotated[
+                      float, Query(ge=0, allow_inf_nan=False)] = 1.0):
     meta = store.get_meta(name)
     if meta is None:
         raise HTTPException(404, f"test '{name}' not found or not ready")

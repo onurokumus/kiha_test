@@ -63,6 +63,24 @@ class EditTests(DataDirTestCase):
         self.assertAlmostEqual(tps[0]["end_s"], 4.0, places=6)
         self.assertEqual(tps[0]["start_idx"], 0)
 
+    def test_trim_preserves_authoritative_end_index_without_end_time(self):
+        payload = store.read_testpoints("alpha")
+        payload["test_points"][0]["end_s"] = None
+        store.write_testpoints("alpha", payload)
+        edit._rebuild("alpha", {"trim_t0": 2.0, "trim_t1": 8.0})
+        point = store.read_testpoints("alpha")["test_points"][0]
+        self.assertEqual(point["end_idx"], 128)
+        self.assertEqual(store.testpoint_range("alpha", 1), (0, 128))
+
+    def test_trim_drops_open_point_that_ended_before_the_kept_range(self):
+        payload = store.read_testpoints("alpha")
+        first, second = payload["test_points"]
+        first.update(end_s=None, end_idx=None)
+        second.update(start_s=1.0, end_s=1.5, start_idx=64, end_idx=96)
+        store.write_testpoints("alpha", payload)
+        edit._rebuild("alpha", {"trim_t0": 2.0, "trim_t1": 8.0})
+        self.assertEqual(store.read_testpoints("alpha")["test_points"], [])
+
     def test_zero_fill(self):
         edit._rebuild("alpha", {"nan_policy": "zero_fill"})
         m = self.meta()
@@ -118,6 +136,18 @@ class EditTests(DataDirTestCase):
         win = store.read_window("alpha", ["a", "b"], None, None, px=100)
         self.assertGreater(len(win["t"]), 0)
 
+    def test_invalid_trim_point_fails_before_live_files_are_replaced(self):
+        payload = store.read_testpoints("alpha")
+        payload["test_points"][0]["end_idx"] = 1
+        store.write_testpoints("alpha", payload)
+        path = self.tests / "alpha" / "data.parquet"
+        before_data, before_meta = path.read_bytes(), self.meta()
+        with self.assertRaisesRegex(ValueError, "empty or reversed"):
+            edit._rebuild("alpha", {"trim_t0": 2.0, "trim_t1": 8.0})
+        self.assertEqual(path.read_bytes(), before_data)
+        self.assertEqual(self.meta(), before_meta)
+        self.assertEqual(store.read_testpoints("alpha"), payload)
+
     def test_edit_invalidates_tp_stats(self):
         before = store.tp_stats("alpha", "a")  # 2 TPs -> populates sidecar
         self.assertTrue((self.tests / "alpha" / "tp_stats.json").is_file())
@@ -143,6 +173,34 @@ class EditTests(DataDirTestCase):
             main.UserMetaPatch(user_meta={"prop": "22x10", "motor": "U8"}))
         self.assertEqual(out["user_meta"]["prop"], "22x10")
         self.assertEqual(self.meta()["user_meta"]["motor"], "U8")
+
+
+class ShortPointEditTests(DataDirTestCase):
+    def setUp(self):
+        super().setUp()
+        fs = 2048.0
+        csv = self.root / "short.csv"
+        pl.DataFrame({"time": np.arange(4096) / fs,
+                      "signal": np.arange(4096, dtype=float)}).write_csv(csv)
+        ingest._ingest_csv(csv, "alpha")
+        store.write_testpoints("alpha", {
+            "version": 1, "test": "alpha", "fs_hz": fs,
+            "test_points": [{
+                "id": 1, "name": "short event", "start_s": 1.0,
+                "end_s": 1.0 + 2 / fs, "start_idx": 2048, "end_idx": 2050,
+            }],
+        })
+
+    def test_column_edit_preserves_testpoint_file_exactly(self):
+        path = self.tests / "alpha" / "testpoints.json"
+        before = path.read_bytes()
+        edit._rebuild("alpha", {"rename": {"signal": "thrust"}})
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(store.testpoint_range("alpha", 1), (2048, 2050))
+
+    def test_trim_keeps_short_points_with_real_samples(self):
+        edit._rebuild("alpha", {"trim_t0": 0.5, "trim_t1": 1.5})
+        self.assertEqual(store.testpoint_range("alpha", 1), (1024, 1026))
 
 
 if __name__ == "__main__":

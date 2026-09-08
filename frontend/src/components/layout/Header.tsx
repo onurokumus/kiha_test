@@ -61,16 +61,17 @@ const UploadChip: React.FC<{
         </span>
         {item.sessionId ? (
           <>
-            <button
-              onClick={item.requiresFile ? onOpenUploads : onResume}
-              style={chipButton}
-            >
+            <button onClick={item.requiresFile ? onOpenUploads : onResume} style={chipButton}>
               {item.requiresFile ? 'select file' : 'retry'}
             </button>
-            <button onClick={onCancel} style={chipButton}>cancel</button>
+            <button onClick={onCancel} style={chipButton}>
+              cancel
+            </button>
           </>
         ) : (
-          <button onClick={onDismiss} title="dismiss" style={chipButton}>×</button>
+          <button onClick={onDismiss} title="dismiss" style={chipButton}>
+            ×
+          </button>
         )}
       </span>
     );
@@ -98,18 +99,21 @@ const UploadChip: React.FC<{
       title={`${item.fileName}: ${item.completedChunks}/${item.totalChunks || '?'} chunks committed`}
       style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
     >
-      <span className="upload-chip-label">⬆ {item.fileName} {label}</span>
+      <span className="upload-chip-label">
+        ⬆ {item.fileName} {label}
+      </span>
       {item.phase === 'paused' ? (
-        <button
-          onClick={item.requiresFile ? onOpenUploads : onResume}
-          style={chipButton}
-        >
+        <button onClick={item.requiresFile ? onOpenUploads : onResume} style={chipButton}>
           {item.requiresFile ? 'select file' : 'resume'}
         </button>
       ) : (
-        <button onClick={onPause} style={chipButton}>pause</button>
+        <button onClick={onPause} style={chipButton}>
+          pause
+        </button>
       )}
-      <button onClick={onCancel} style={chipButton}>cancel</button>
+      <button onClick={onCancel} style={chipButton}>
+        cancel
+      </button>
     </span>
   );
 };
@@ -140,7 +144,9 @@ export const Header: React.FC<HeaderProps> = ({
 
   const tabButton = (value: AppTab, label: string) => (
     <button
-      className={'btn-toggle' + (tab === value ? ' active' : '')}
+      type="button"
+      className={'app-nav-button' + (tab === value ? ' active' : '')}
+      aria-current={tab === value ? 'page' : undefined}
       onClick={() => onTabChange(value)}
     >
       {label}
@@ -148,18 +154,31 @@ export const Header: React.FC<HeaderProps> = ({
   );
 
   return (
-    <div className="app-header">
+    <header className="app-header">
       <div className="app-header-primary">
-        <span style={{ fontWeight: 600, color: '#569cd6', fontSize: 14 }}>
-          Propeller Test Tool
-        </span>
-        {tabButton('analyze', 'Analyze')}
-        {tabButton('split', 'Split')}
-        {tabButton('edit', 'Edit')}
-        {tabButton('uploads', 'Uploads')}
-        {tabButton('settings', 'Settings')}
-        <button className="btn" onClick={() => importRef.current?.click()}>
-          ⬆ Import CSV
+        <div className="app-brand">
+          <img
+            className="app-brand-mark"
+            src={`${import.meta.env.BASE_URL}ptt-logo.webp`}
+            width={32}
+            height={32}
+            alt=""
+            decoding="async"
+            draggable={false}
+          />
+          <span>
+            Propeller Test Tool<small>Test data workbench</small>
+          </span>
+        </div>
+        <nav className="app-nav" aria-label="Main navigation">
+          {tabButton('analyze', 'Analyze')}
+          {tabButton('split', 'Split')}
+          {tabButton('edit', 'Edit')}
+          {tabButton('uploads', 'Uploads')}
+          {tabButton('settings', 'Settings')}
+        </nav>
+        <button className="btn app-import-button" onClick={() => importRef.current?.click()}>
+          <span aria-hidden="true">＋</span> Import CSV
         </button>
         <input
           ref={importRef}
@@ -174,40 +193,43 @@ export const Header: React.FC<HeaderProps> = ({
           }}
         />
       </div>
-      <div className="app-header-activity">
-      {uploads.map((item) => (
-        <UploadChip
-          key={item.id}
-          item={item}
-          onDismiss={() => onDismissUpload(item.id)}
-          onPause={() => onPauseUpload(item.id)}
-          onResume={() => onResumeUpload(item.id)}
-          onCancel={() => onCancelUpload(item.id)}
-          onOpenUploads={() => onTabChange('uploads')}
-        />
-      ))}
-      {receiving > 0 && (
-        <span className="badge" title="uploads currently being received">
-          ⟳ receiving {receiving}
-        </span>
-      )}
-      {ingesting > 0 && (
-        <span className="badge" title="tests currently ingesting">
-          ⟳ ingesting {ingesting}
-        </span>
-      )}
-      {rebuilding > 0 && (
-        <span className="badge" title="tests currently rebuilding">
-          ⟳ rebuilding {rebuilding}
-        </span>
-      )}
-      {notice && (
-        <span style={{ fontSize: 11, color: '#569cd6' }}>{notice}</span>
-      )}
+      <div className="app-header-activity" aria-label="Upload activity">
+        {uploads.map((item) => (
+          <UploadChip
+            key={item.id}
+            item={item}
+            onDismiss={() => onDismissUpload(item.id)}
+            onPause={() => onPauseUpload(item.id)}
+            onResume={() => onResumeUpload(item.id)}
+            onCancel={() => onCancelUpload(item.id)}
+            onOpenUploads={() => onTabChange('uploads')}
+          />
+        ))}
+        {receiving > 0 && (
+          <span className="badge" title="uploads currently being received">
+            ⟳ receiving {receiving}
+          </span>
+        )}
+        {ingesting > 0 && (
+          <span className="badge" title="tests currently ingesting">
+            ⟳ ingesting {ingesting}
+          </span>
+        )}
+        {rebuilding > 0 && (
+          <span className="badge" title="tests currently rebuilding">
+            ⟳ rebuilding {rebuilding}
+          </span>
+        )}
+        {notice && (
+          <span className="app-notice" role="status">
+            {notice}
+          </span>
+        )}
       </div>
-      <span className="app-header-hint">
-        drop .csv anywhere to configure import
+      <span className="app-header-summary">
+        <span className="app-ready-dot" aria-hidden="true" />
+        {tests.filter((test) => test.status === 'ready').length} ready tests
       </span>
-    </div>
+    </header>
   );
 };

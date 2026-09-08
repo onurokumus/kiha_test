@@ -58,7 +58,7 @@ const ColSelect: React.FC<{
 
   return (
     <SearchableSelect
-      style={{ width }}
+      style={{ width, maxWidth: '100%', minWidth: 0 }}
       value={value}
       onChange={onChange}
       options={options}
@@ -120,20 +120,16 @@ const Section: React.FC<{ title: string; hint?: string; children: React.ReactNod
   hint,
   children,
 }) => (
-  <div className="panel" style={{ padding: 14 }}>
-    <div style={{ fontSize: 13, fontWeight: 600, color: '#569cd6', marginBottom: 4 }}>
-      {title}
-    </div>
-    {hint && (
-      <div style={{ fontSize: 11, color: '#909090', marginBottom: 10 }}>{hint}</div>
-    )}
+  <section className="panel" style={{ padding: 14 }}>
+    <h2 style={{ fontSize: 13, fontWeight: 600, color: '#8abfdf', marginBottom: 6 }}>{title}</h2>
+    {hint && <div style={{ fontSize: 11, color: '#909090', marginBottom: 10 }}>{hint}</div>}
     {children}
-  </div>
+  </section>
 );
 
 const Row: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
-  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-    <span style={{ width: 150, color: '#c0c0c0', flexShrink: 0 }}>{label}</span>
+  <label className="settings-row">
+    <span>{label}</span>
     {children}
   </label>
 );
@@ -202,8 +198,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const handleMakeDefault = async () => {
     const confirmed = await confirmAction({
       title: 'Make these the page defaults?',
-      description: 'The settings currently shown will become the starting configuration for everyone.',
-      detail: 'They apply on the next page load for browsers without personal settings. Existing personal settings will not be overwritten.',
+      description:
+        'The settings currently shown will become the starting configuration for everyone.',
+      detail:
+        'They apply on the next page load for browsers without personal settings. Existing personal settings will not be overwritten.',
       confirmLabel: 'Make page defaults',
       tone: 'warning',
     });
@@ -217,9 +215,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setPublishMessage('These settings are now the page defaults for everyone.');
     } catch (error) {
       setPublishError(
-        `could not update page defaults: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        `could not update page defaults: ${error instanceof Error ? error.message : String(error)}`
       );
     } finally {
       setPublishingDefault(false);
@@ -227,7 +223,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   return (
-    <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+    <div className="settings-page">
       <div
         style={{
           maxWidth: 720,
@@ -237,9 +233,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           gap: 12,
         }}
       >
+        <div className="settings-heading">
+          <h1>Workspace settings</h1>
+          <p>Choose your default signals and views. Save to apply your changes.</p>
+        </div>
         {/* Save / share bar */}
         <div
-          className="panel"
+          className="panel settings-actions"
           style={{
             padding: '10px 14px',
             display: 'flex',
@@ -251,7 +251,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             zIndex: 5,
           }}
         >
-          <button className="btn" onClick={() => onSave(view)} disabled={!dirty}>
+          <button className="btn btn-primary" onClick={() => onSave(view)} disabled={!dirty}>
             Save
           </button>
           <button className="btn" onClick={() => replaceDraft(null)} disabled={!dirty}>
@@ -272,7 +272,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </span>
           )}
           <span style={{ flex: 1 }} />
-          <button className="btn" onClick={handleExport} title="download these settings as a JSON file">
+          <button
+            className="btn"
+            onClick={handleExport}
+            title="download these settings as a JSON file"
+          >
             ⬇ Export
           </button>
           <button
@@ -301,16 +305,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             Reset to defaults
           </button>
         </div>
-        {importError && (
-          <div style={{ color: '#f48771', fontSize: 11 }}>{importError}</div>
-        )}
+        {importError && <div style={{ color: '#f48771', fontSize: 11 }}>{importError}</div>}
         <div aria-live="polite">
-          {publishMessage && (
-            <div style={{ color: '#89d185', fontSize: 11 }}>{publishMessage}</div>
-          )}
-          {publishError && (
-            <div style={{ color: '#f48771', fontSize: 11 }}>{publishError}</div>
-          )}
+          {publishMessage && <div style={{ color: '#89d185', fontSize: 11 }}>{publishMessage}</div>}
+          {publishError && <div style={{ color: '#f48771', fontSize: 11 }}>{publishError}</div>}
         </div>
 
         <Section
@@ -366,9 +364,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           hint="Preferred column per grid cell — the plotted (Y) variable in EVERY view mode: vs-time (Test points / Full test), Spectrum, and XY. Auto slots fill from the selected test points (first-selected first), then the active test. Edit Plots changes still override for the session."
         >
           <div
+            className="settings-grid"
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
               gap: 8,
               maxWidth: 560,
             }}
@@ -396,9 +394,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           hint="XY mode has its own per-cell pairing, independent of the section above: each cell plots Y vs X (what Edit Plots shows as '[Y] vs [X]'). Y auto = follow that cell's plotted column above; X auto = the first grid column. Per-cell session picks in Edit Plots still override."
         >
           <div
+            className="settings-grid settings-grid-xy"
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
               gap: 8,
               maxWidth: 620,
             }}

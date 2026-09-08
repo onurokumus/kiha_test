@@ -402,7 +402,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
     // full extent) — swap data without resetting scales, then re-apply the
     // zoom via setScale. With no zoom, auto-range is the reset-to-fit view.
     const structKey = [
-      series.map((s) => s.label ?? '').join('~'), box.w, box.h, isExpanded,
+      JSON.stringify(series.map((s) => [s.label, s.stroke, s.width])), box.w, box.h, isExpanded,
     ].join('|');
     syncPlot({
       plotRef,

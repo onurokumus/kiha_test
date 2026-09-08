@@ -43,8 +43,13 @@ export const useMainPlotZoom = (
   const handleMainWheel = useCallback(
     (e: React.WheelEvent<HTMLDivElement>) => {
       const rect = e.currentTarget.getBoundingClientRect();
-      const xRatio = (e.clientX - rect.left - PLOT_INSET.left) / (rect.width - PLOT_INSET_X);
-      const yRatio = 1 - (e.clientY - rect.top - PLOT_INSET.top) / (rect.height - PLOT_INSET_Y);
+      const width = rect.width - PLOT_INSET_X;
+      const height = rect.height - PLOT_INSET_Y;
+      if (width <= 0 || height <= 0 || e.deltaY === 0) return;
+      // Use the same clamped anchor for both the center and new bounds.
+      // Wheel gestures over axis labels must not jump the viewport.
+      const xRatio = Math.max(0, Math.min(1, (e.clientX - rect.left - PLOT_INSET.left) / width));
+      const yRatio = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top - PLOT_INSET.top) / height));
       const zoomFactor = e.deltaY > 0 ? 1.2 : 0.8;
 
       setMainZoom((prev) => {
@@ -55,18 +60,21 @@ export const useMainPlotZoom = (
 
         const xRange = curXMax - curXMin;
         const yRange = curYMax - curYMin;
-        const xCenter = curXMin + xRange * Math.max(0, Math.min(1, xRatio));
-        const yCenter = curYMin + yRange * Math.max(0, Math.min(1, yRatio));
+        const xCenter = curXMin + xRange * xRatio;
+        const yCenter = curYMin + yRange * yRatio;
 
         const newXRange = xRange * zoomFactor;
         const newYRange = yRange * zoomFactor;
 
-        return [
+        const next: [number, number, number, number] = [
           xCenter - newXRange * xRatio,
           xCenter + newXRange * (1 - xRatio),
           yCenter - newYRange * yRatio,
           yCenter + newYRange * (1 - yRatio),
         ];
+        return next.every(Number.isFinite) && next[0] < next[1] && next[2] < next[3]
+          ? next
+          : prev;
       });
     },
     [defaultBounds]

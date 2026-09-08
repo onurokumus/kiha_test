@@ -577,26 +577,27 @@ button.itemAction {
   }
 
   .modeGroup {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .segmentButton {
     border-width: 1px;
     border-radius: 3px;
+    padding-inline: 4px;
+    font-size: 11px;
   }
 
-  .toolGroup,
-  .densityControl {
+  .toolGroup {
     width: 100%;
   }
 
   .toolGroup {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    display: flex;
+    justify-content: space-between;
   }
 
   .densityControl {
-    grid-column: 1 / -1;
+    flex: 0 1 190px;
   }
 
   .densityButtons {

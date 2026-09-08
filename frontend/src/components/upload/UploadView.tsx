@@ -1,10 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  deleteTest,
-  rawCsvUrl,
-  rebuildTpStats,
-  restoreTest,
-} from '../../services/api';
+import { deleteTest, rawCsvUrl, rebuildTpStats, restoreTest } from '../../services/api';
 import {
   cancelUploadSession,
   UploadDataOptions,
@@ -20,6 +15,7 @@ import {
 import { TestInfo, UploadItem } from '../../types';
 import { isBusyStatus } from '../../constants/status';
 import { useConfirm } from '../feedback/confirm';
+import styles from './UploadView.module.css';
 
 interface Props {
   tests: TestInfo[];
@@ -60,9 +56,10 @@ const fmtBytes = (n?: number | null): string => {
 const fmtDuration = (s?: number | null): string => {
   if (s === null || s === undefined) return '—';
   if (s < 60) return `${s % 1 ? s.toFixed(1) : s} s`;
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = Math.round(s % 60);
+  const rounded = Math.round(s);
+  const h = Math.floor(rounded / 3600);
+  const m = Math.floor((rounded % 3600) / 60);
+  const sec = rounded % 60;
   const mm = String(m).padStart(2, '0');
   const ss = String(sec).padStart(2, '0');
   return h ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
@@ -111,18 +108,16 @@ const StatusChip: React.FC<{ status: string }> = ({ status }) => {
 
 const thStyle: React.CSSProperties = {
   textAlign: 'left',
-  fontSize: 10,
+  fontSize: 11,
   fontWeight: 600,
   color: '#909090',
-  textTransform: 'uppercase',
-  letterSpacing: 0.5,
-  padding: '6px 10px',
+  padding: '11px 12px',
   borderBottom: '1px solid #3c3c3c',
   whiteSpace: 'nowrap',
 };
 const thRight: React.CSSProperties = { ...thStyle, textAlign: 'right' };
 const tdStyle: React.CSSProperties = {
-  padding: '6px 10px',
+  padding: '13px 12px',
   borderBottom: '1px solid #2d2d2d',
   fontSize: 12,
   whiteSpace: 'nowrap',
@@ -171,9 +166,7 @@ async function readCsvHeader(file: File): Promise<string[]> {
     if (parsed.length > best.length) best = parsed;
   }
   return best
-    .map((field, index) =>
-      index === 0 ? field.replace(/^\uFEFF/, '') : field
-    )
+    .map((field, index) => (index === 0 ? field.replace(/^\uFEFF/, '') : field))
     .filter((field) => field.length > 0);
 }
 
@@ -207,6 +200,8 @@ export default function UploadView({
 }: Props) {
   const confirmAction = useConfirm();
   const fileRef = useRef<HTMLInputElement>(null);
+  const resumeFileRef = useRef<HTMLInputElement>(null);
+  const resumeTargetRef = useRef<UploadItem | TestInfo | null>(null);
   const uploaderRef = useRef<HTMLInputElement>(null);
   const setupRef = useRef<HTMLElement>(null);
   // Names deleted from this page and still restorable (session-local undo).
@@ -214,22 +209,16 @@ export default function UploadView({
   const [busyRow, setBusyRow] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
   const [actionNote, setActionNote] = useState('');
-  const [uploaderName, setUploaderName] = useState(
-    loadRememberedUploaderName
-  );
+  const [historyQuery, setHistoryQuery] = useState('');
+  const [historyStatus, setHistoryStatus] = useState('all');
+  const [uploaderName, setUploaderName] = useState(loadRememberedUploaderName);
   const [timeMode, setTimeMode] = useState<UploadTimeMode>('auto');
   const [timeColumn, setTimeColumn] = useState('');
   const [generatedColumn, setGeneratedColumn] = useState('time_s');
-  const [fsInput, setFsInput] = useState(
-    defaultFsHz ? String(defaultFsHz) : ''
-  );
+  const [fsInput, setFsInput] = useState(defaultFsHz ? String(defaultFsHz) : '');
   const [commonColumns, setCommonColumns] = useState<string[]>([]);
   const [headerNote, setHeaderNote] = useState('');
   const [headersLoading, setHeadersLoading] = useState(false);
-
-  useEffect(() => {
-    if (!fsInput && defaultFsHz) setFsInput(String(defaultFsHz));
-  }, [defaultFsHz, fsInput]);
 
   useEffect(() => {
     let alive = true;
@@ -261,9 +250,7 @@ export default function UploadView({
               : `${shared.length} columns found in the CSV header.`
             : 'No shared header columns could be detected; use Auto or Generated time.'
         );
-        setTimeColumn((current) =>
-          shared.includes(current) ? current : likelyTimeColumn(shared)
-        );
+        setTimeColumn((current) => (shared.includes(current) ? current : likelyTimeColumn(shared)));
         setHeadersLoading(false);
       })
       .catch((error) => {
@@ -297,13 +284,11 @@ export default function UploadView({
   const parsedFs = Number(fsInput);
   const validFs = Number.isFinite(parsedFs) && parsedFs > 0;
   const selectedTimeColumn = timeColumn;
-  const workingTimeColumn =
-    timeMode === 'generated' ? generatedColumn.trim() : selectedTimeColumn;
+  const workingTimeColumn = timeMode === 'generated' ? generatedColumn.trim() : selectedTimeColumn;
   const pyramidFieldSource = commonColumns.find(
     (column) =>
       column !== workingTimeColumn &&
-      (workingTimeColumn === `${column}__min` ||
-        workingTimeColumn === `${column}__max`)
+      (workingTimeColumn === `${column}__min` || workingTimeColumn === `${column}__max`)
   );
   const uploaderError = uploaderNameError(uploaderName);
   const setupError =
@@ -313,21 +298,20 @@ export default function UploadView({
         ? uploaderError
         : headersLoading
           ? 'Inspecting the selected CSV headers…'
-        : timeMode === 'column' && !selectedTimeColumn.trim()
-        ? 'Choose the CSV column that contains time.'
-        : timeMode === 'column' &&
-            !commonColumns.includes(selectedTimeColumn)
-          ? `'${selectedTimeColumn}' is not present in every selected CSV header.`
-        : timeMode === 'generated' && !generatedColumn.trim()
-          ? 'Enter a name for the generated time column.'
-          : pyramidFieldSource
-            ? `'${workingTimeColumn}' conflicts with analysis fields for ` +
-              `'${pyramidFieldSource}'; choose another time-column name.`
-          : timeMode === 'generated' && !validFs
-            ? 'Enter a sample rate greater than 0 Hz.'
-            : fsInput && !validFs
-              ? 'Sample rate must be a number greater than 0.'
-              : '';
+          : timeMode === 'column' && !selectedTimeColumn.trim()
+            ? 'Choose the CSV column that contains time.'
+            : timeMode === 'column' && !commonColumns.includes(selectedTimeColumn)
+              ? `'${selectedTimeColumn}' is not present in every selected CSV header.`
+              : timeMode === 'generated' && !generatedColumn.trim()
+                ? 'Enter a name for the generated time column.'
+                : pyramidFieldSource
+                  ? `'${workingTimeColumn}' conflicts with analysis fields for ` +
+                    `'${pyramidFieldSource}'; choose another time-column name.`
+                  : timeMode === 'generated' && !validFs
+                    ? 'Enter a sample rate greater than 0 Hz.'
+                    : fsInput && !validFs
+                      ? 'Sample rate must be a number greater than 0.'
+                      : '';
 
   const beginConfiguredUpload = () => {
     if (setupError || pendingFiles.length === 0) return;
@@ -366,11 +350,24 @@ export default function UploadView({
   );
   // Transfers have their own stable tray. Keeping them out of the data grid
   // means transient progress controls cannot resize history columns.
-  const rows = sortedTests.filter(
-    (test) => test.status !== 'receiving' && !localOwnsTest(test)
-  );
+  const rows = sortedTests.filter((test) => test.status !== 'receiving' && !localOwnsTest(test));
   const transferCount = uploads.length + serverTransfers.length;
   const totalBytes = rows.reduce((acc, t) => acc + (t.size_bytes ?? 0), 0);
+  const visibleRows = rows.filter((test) => {
+    const matchesStatus =
+      historyStatus === 'all' ||
+      (historyStatus === 'processing' ? isBusyStatus(test.status) : test.status === historyStatus);
+    const terms = historyQuery.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+    const searchableText = [test.name, test.source_file, test.uploader_name]
+      .join(' ')
+      .toLocaleLowerCase();
+    return matchesStatus && terms.every((term) => searchableText.includes(term));
+  });
+
+  const selectOriginalCsv = (target: UploadItem | TestInfo) => {
+    resumeTargetRef.current = target;
+    resumeFileRef.current?.click();
+  };
 
   const handleDelete = async (name: string) => {
     if (
@@ -386,6 +383,7 @@ export default function UploadView({
     }
     setBusyRow(name);
     setActionError('');
+    setActionNote('');
     try {
       await deleteTest(name);
       setRestorable((prev) => [name, ...prev.filter((n) => n !== name)]);
@@ -420,9 +418,7 @@ export default function UploadView({
       onTestsChanged();
     } catch (error) {
       setActionError(
-        `cancel '${test.name}' failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        `cancel '${test.name}' failed: ${error instanceof Error ? error.message : String(error)}`
       );
     } finally {
       setBusyRow(null);
@@ -438,9 +434,7 @@ export default function UploadView({
       setActionNote(`${test.name}: original CSV accepted; resuming upload`);
     } catch (error) {
       setActionError(
-        `resume '${test.name}' failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        `resume '${test.name}' failed: ${error instanceof Error ? error.message : String(error)}`
       );
     } finally {
       setBusyRow(null);
@@ -467,6 +461,7 @@ export default function UploadView({
   const handleRestore = async (name: string) => {
     setBusyRow(name);
     setActionError('');
+    setActionNote('');
     try {
       await restoreTest(name);
       setRestorable((prev) => prev.filter((n) => n !== name));
@@ -484,29 +479,36 @@ export default function UploadView({
 
   /** Progress cell for a server row that has a matching local transfer. */
   const progressCell = (u: UploadItem) => {
-    const pct = u.progress === null ? null : Math.round(u.progress * 100);
+    const pct =
+      u.progress === null ? null : Math.max(0, Math.min(100, Math.round(u.progress * 100)));
     const phase =
       u.phase === 'retrying'
         ? `retry ${u.retryAttempt ?? ''}`
         : u.phase === 'error'
           ? 'error'
-        : u.phase === 'finalizing'
-          ? 'finalizing…'
-          : u.phase === 'verifying'
-            ? 'verifying…'
-            : u.phase === 'preparing'
-              ? 'preparing…'
-              : u.phase === 'queued'
-                ? 'queued'
-                : u.phase === 'paused'
-                  ? 'paused'
-                  : pct === null
-                    ? 'uploading…'
-                    : `${pct}%`;
+          : u.phase === 'finalizing'
+            ? 'finalizing…'
+            : u.phase === 'verifying'
+              ? 'verifying…'
+              : u.phase === 'preparing'
+                ? 'preparing…'
+                : u.phase === 'queued'
+                  ? 'queued'
+                  : u.phase === 'paused'
+                    ? 'paused'
+                    : pct === null
+                      ? 'uploading…'
+                      : `${pct}%`;
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, width: '100%' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div
+            role="progressbar"
+            aria-label={`Upload progress for ${u.fileName}`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={pct ?? undefined}
+            aria-valuetext={phase}
             style={{
               flex: 1,
               height: 6,
@@ -521,11 +523,7 @@ export default function UploadView({
                 width: pct === null ? '100%' : `${pct}%`,
                 height: '100%',
                 background:
-                  u.phase === 'paused'
-                    ? '#909090'
-                    : u.phase === 'error'
-                      ? '#f48771'
-                      : '#569cd6',
+                  u.phase === 'paused' ? '#909090' : u.phase === 'error' ? '#f48771' : '#569cd6',
                 transition: 'width 0.2s ease',
               }}
             />
@@ -557,6 +555,11 @@ export default function UploadView({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, width: '100%' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div
+            role="progressbar"
+            aria-label={`Upload progress for ${test.name}`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={pct ?? undefined}
             style={{
               flex: 1,
               height: 6,
@@ -581,9 +584,7 @@ export default function UploadView({
         <span style={{ fontSize: 9, color: '#777', whiteSpace: 'nowrap' }}>
           {fmtBytes(committed)} verified
           {total ? ` / ${fmtBytes(total)}` : ''}
-          {test.total_chunks
-            ? ` • ${test.received_chunks ?? 0}/${test.total_chunks} chunks`
-            : ''}
+          {test.total_chunks ? ` • ${test.received_chunks ?? 0}/${test.total_chunks} chunks` : ''}
         </span>
       </div>
     );
@@ -594,19 +595,13 @@ export default function UploadView({
       return (
         <span style={{ display: 'inline-flex', gap: 6 }}>
           {u.requiresFile ? (
-            <label className="btn" style={{ cursor: 'pointer' }}>
+            <button
+              className="btn"
+              onClick={() => selectOriginalCsv(u)}
+              aria-label={`Select original CSV to resume ${u.testName}`}
+            >
               Select original CSV
-              <input
-                type="file"
-                accept=".csv"
-                style={{ display: 'none' }}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) onResumeUpload(u.id, file);
-                  event.target.value = '';
-                }}
-              />
-            </label>
+            </button>
           ) : (
             <button className="btn" onClick={() => onResumeUpload(u.id)}>
               {u.phase === 'error' ? 'Retry' : 'Resume'}
@@ -633,11 +628,7 @@ export default function UploadView({
         <button className="btn" onClick={() => onPauseUpload(u.id)}>
           Pause
         </button>
-        <button
-          className="btn"
-          style={{ color: '#f48771' }}
-          onClick={() => onCancelUpload(u.id)}
-        >
+        <button className="btn" style={{ color: '#f48771' }} onClick={() => onCancelUpload(u.id)}>
           Cancel
         </button>
       </span>
@@ -645,8 +636,17 @@ export default function UploadView({
   };
 
   return (
-    <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className={styles.page}>
+      <div className={styles.content}>
+        <header className={styles.pageHeader}>
+          <div>
+            <h1>Test uploads</h1>
+            <p>Import rig data, track transfers, and open a test for analysis.</p>
+          </div>
+          <span className={styles.storageSummary}>
+            {rows.length} tests · {fmtBytes(totalBytes)} stored
+          </span>
+        </header>
         <input
           ref={fileRef}
           type="file"
@@ -659,26 +659,41 @@ export default function UploadView({
             event.target.value = '';
           }}
         />
+        <input
+          ref={resumeFileRef}
+          type="file"
+          accept=".csv"
+          style={{ display: 'none' }}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            const target = resumeTargetRef.current;
+            if (file && target) {
+              if ('id' in target) onResumeUpload(target.id, file);
+              else void handleResumeReceiving(target, file);
+            }
+            event.target.value = '';
+            resumeTargetRef.current = null;
+          }}
+        />
 
         {pendingFiles.length === 0 ? (
-          <div
-            className="upload-drop-zone"
-            role="button"
-            tabIndex={0}
+          <button
+            type="button"
+            className={`upload-drop-zone ${styles.dropZone}`}
             onClick={() => fileRef.current?.click()}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                fileRef.current?.click();
-              }
-            }}
           >
-            <div className="upload-drop-title">⬆ Choose test CSV</div>
-            <div className="upload-drop-copy">
-              Choose files here, or drop .csv files anywhere in this window.
-              You will confirm time and sampling settings before upload.
-            </div>
-          </div>
+            <span className={styles.uploadIcon} aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5" />
+              </svg>
+            </span>
+            <span className={styles.dropCopy}>
+              <strong>Import test data</strong>
+              <span>Drop CSV files anywhere, or browse to choose files.</span>
+              <small>Review time and sample-rate settings before the upload starts.</small>
+            </span>
+            <span className={styles.browseButton}>Choose CSV files</span>
+          </button>
         ) : (
           <section
             ref={setupRef}
@@ -695,8 +710,13 @@ export default function UploadView({
               </div>
               <div className="upload-setup-files">
                 {pendingFiles.map((file) => (
-                  <span key={`${file.name}-${file.lastModified}`} className="badge">
-                    {file.name} · {fmtBytes(file.size)}
+                  <span
+                    key={`${file.name}-${file.lastModified}`}
+                    className="badge"
+                    title={file.name}
+                  >
+                    <span>{file.name}</span>
+                    <small>{fmtBytes(file.size)}</small>
                   </span>
                 ))}
               </div>
@@ -720,8 +740,7 @@ export default function UploadView({
                 />
               </label>
               <span id="upload-uploader-help" className="upload-uploader-help">
-                For attribution only—no account is created. Applies to all
-                selected files and is remembered in this browser.
+                Applies to all selected files and is remembered in this browser.
               </span>
             </div>
 
@@ -731,9 +750,7 @@ export default function UploadView({
                 <select
                   className="input"
                   value={timeMode}
-                  onChange={(event) =>
-                    setTimeMode(event.target.value as UploadTimeMode)
-                  }
+                  onChange={(event) => setTimeMode(event.target.value as UploadTimeMode)}
                 >
                   <option value="auto">Auto-detect</option>
                   <option value="column">Use CSV column</option>
@@ -775,11 +792,7 @@ export default function UploadView({
               )}
 
               <label className="upload-setup-field">
-                <span>
-                  {timeMode === 'generated'
-                    ? 'Sample rate (Hz)'
-                    : 'Fallback rate (Hz)'}
-                </span>
+                <span>{timeMode === 'generated' ? 'Sample rate (Hz)' : 'Fallback rate (Hz)'}</span>
                 <input
                   className="input"
                   type="number"
@@ -789,9 +802,7 @@ export default function UploadView({
                   value={fsInput}
                   placeholder="2048"
                   aria-invalid={
-                    !!setupError &&
-                    (setupError.includes('rate') ||
-                      setupError.includes('number'))
+                    !!setupError && (setupError.includes('rate') || setupError.includes('number'))
                   }
                   aria-describedby="upload-setup-feedback"
                   onChange={(event) => setFsInput(event.target.value)}
@@ -809,9 +820,9 @@ export default function UploadView({
               <span className="upload-time-preview-label">Result</span>
               <code>
                 {timeMode === 'generated'
-                  ? `${generatedColumn.trim() || 'time_s'}: 0.000000 s, ${
-                      (1 / (validFs ? parsedFs : 2048)).toFixed(6)
-                    } s, …`
+                  ? `${generatedColumn.trim() || 'time_s'}: 0.000000 s, ${(
+                      1 / (validFs ? parsedFs : 2048)
+                    ).toFixed(6)} s, …`
                   : `${
                       timeMode === 'column'
                         ? timeColumn || 'selected column'
@@ -846,10 +857,7 @@ export default function UploadView({
                 <button className="btn" onClick={() => fileRef.current?.click()}>
                   Change files
                 </button>
-                <button
-                  className="btn"
-                  onClick={onClearPendingFiles}
-                >
+                <button className="btn" onClick={onClearPendingFiles}>
                   Cancel
                 </button>
                 <button
@@ -857,7 +865,7 @@ export default function UploadView({
                   disabled={!!setupError}
                   onClick={beginConfiguredUpload}
                 >
-                  Start upload
+                  Upload {pendingFiles.length} {pendingFiles.length === 1 ? 'file' : 'files'}
                 </button>
               </div>
             </div>
@@ -887,9 +895,7 @@ export default function UploadView({
                       className="upload-transfer-uploader"
                       title={u.uploaderName ?? 'Uploader not recorded'}
                     >
-                      {u.uploaderName
-                        ? `by ${u.uploaderName}`
-                        : 'Uploader not recorded'}
+                      {u.uploaderName ? `by ${u.uploaderName}` : 'Uploader not recorded'}
                     </span>
                     {u.error && (
                       <span className="upload-transfer-error" title={u.error}>
@@ -912,40 +918,22 @@ export default function UploadView({
                       className="upload-transfer-uploader"
                       title={test.uploader_name ?? 'Uploader not recorded'}
                     >
-                      {test.uploader_name
-                        ? `by ${test.uploader_name}`
-                        : 'Uploader not recorded'}
+                      {test.uploader_name ? `by ${test.uploader_name}` : 'Uploader not recorded'}
                     </span>
                   </div>
                   <div className="upload-transfer-progress">{serverProgressCell(test)}</div>
                   <div className="upload-transfer-actions">
-                    <label
-                      className="btn"
-                      aria-disabled={busyRow === test.name}
-                      style={{
-                        cursor:
-                          busyRow === test.name ? 'default' : 'pointer',
-                        opacity: busyRow === test.name ? 0.6 : 1,
-                      }}
-                    >
-                      {busyRow === test.name
-                        ? 'checking...'
-                        : 'Select original CSV'}
-                      <input
-                        type="file"
-                        accept=".csv"
-                        disabled={busyRow === test.name}
-                        style={{ display: 'none' }}
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          if (file) void handleResumeReceiving(test, file);
-                          event.target.value = '';
-                        }}
-                      />
-                    </label>
                     <button
                       className="btn"
-                      disabled={busyRow === test.name}
+                      disabled={busyRow !== null}
+                      onClick={() => selectOriginalCsv(test)}
+                      aria-label={`Select original CSV to resume ${test.name}`}
+                    >
+                      {busyRow === test.name ? 'checking...' : 'Select original CSV'}
+                    </button>
+                    <button
+                      className="btn"
+                      disabled={busyRow !== null}
                       onClick={() => handleCancelReceiving(test)}
                       style={{ color: '#f48771' }}
                     >
@@ -976,11 +964,15 @@ export default function UploadView({
           >
             <span>Recently deleted (restorable for ~1 h):</span>
             {restorable.map((name) => (
-              <span key={name} className="badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span
+                key={name}
+                className="badge"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
                 {name}
                 <button
                   onClick={() => handleRestore(name)}
-                  disabled={busyRow === name}
+                  disabled={busyRow !== null}
                   style={{
                     background: 'none',
                     border: 'none',
@@ -999,192 +991,236 @@ export default function UploadView({
         )}
 
         {actionError && (
-          <div style={{ color: '#f48771', fontSize: 12 }}>{actionError}</div>
+          <div className={styles.actionError} role="alert">
+            {actionError}
+          </div>
         )}
         {actionNote && (
-          <div style={{ color: '#4ec9b0', fontSize: 12 }}>{actionNote}</div>
+          <div className={styles.actionNote} role="status">
+            {actionNote}
+          </div>
         )}
 
         {/* History table */}
         <div className="panel upload-history-panel" style={{ padding: 0 }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'baseline',
-              gap: 8,
-              padding: '8px 10px',
-              borderBottom: '1px solid #3c3c3c',
-            }}
-          >
-            <span className="section-title" style={{ marginBottom: 0 }}>Upload history</span>
-            <span style={{ fontSize: 11, color: '#909090' }}>
-              {rows.length} test{rows.length === 1 ? '' : 's'} • {fmtBytes(totalBytes)} on disk
-            </span>
+          <div className={styles.historyHeader}>
+            <div className={styles.historyTitle}>
+              <h2>Upload history</h2>
+              <span role="status">
+                {visibleRows.length === rows.length
+                  ? rows.length
+                  : `${visibleRows.length} of ${rows.length}`}{' '}
+                {rows.length === 1 ? 'test' : 'tests'}
+              </span>
+            </div>
+            <div className={styles.historyFilters}>
+              <input
+                className="input"
+                type="search"
+                aria-label="Search upload history"
+                placeholder="Search test, file, or uploader…"
+                value={historyQuery}
+                onChange={(event) => setHistoryQuery(event.target.value)}
+              />
+              <select
+                className="input"
+                aria-label="Filter uploads by status"
+                value={historyStatus}
+                onChange={(event) => setHistoryStatus(event.target.value)}
+              >
+                <option value="all">All statuses</option>
+                <option value="ready">Ready</option>
+                <option value="processing">Processing</option>
+                <option value="error">Error</option>
+              </select>
+            </div>
           </div>
-          {rows.length === 0 ? (
-            <div style={{ padding: 24, textAlign: 'center', color: '#909090', fontSize: 12 }}>
-              No completed uploads yet.
+          {visibleRows.length === 0 ? (
+            <div className={styles.emptyState}>
+              <strong>
+                {rows.length === 0
+                  ? 'Your test library starts here'
+                  : 'No tests match these filters'}
+              </strong>
+              <span>
+                {rows.length === 0
+                  ? 'Choose a CSV above. Completed uploads will appear here, ready to analyze.'
+                  : 'Try a different test name, source file, or uploader.'}
+              </span>
+              {rows.length > 0 && (
+                <button
+                  className="btn"
+                  onClick={() => {
+                    setHistoryQuery('');
+                    setHistoryStatus('all');
+                  }}
+                >
+                  Clear filters
+                </button>
+              )}
             </div>
           ) : (
-            <table className="upload-history-table">
-              <thead>
-                <tr>
-                  <th style={{ ...thStyle, width: '15%' }}>Test</th>
-                  <th style={{ ...thStyle, width: '10%' }}>Status</th>
-                  <th className="upload-history-uploaded" style={{ ...thStyle, width: '14%' }}>
-                    Uploaded
-                  </th>
-                  <th className="upload-history-source" style={{ ...thStyle, width: '15%' }}>
-                    Source file
-                  </th>
-                  <th style={{ ...thRight, width: '8%' }}>Size</th>
-                  <th className="upload-history-metrics" style={{ ...thRight, width: '17%' }}>
-                    Data
-                  </th>
-                  <th style={{ ...thStyle, width: '21%' }} />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((t) => {
-                  const busy = isBusyStatus(t.status);
-                  return (
-                    <tr key={t.name}>
-                      <td style={{ ...tdStyle, fontWeight: 600, overflow: 'hidden' }}>
-                        <span className="upload-history-ellipsis" title={t.name}>
-                          {t.name}
-                        </span>
-                        <span
-                          className="upload-history-test-uploader"
-                          title={t.uploader_name ?? 'Uploader not recorded'}
-                        >
-                          {t.uploader_name
-                            ? `by ${t.uploader_name}`
-                            : 'Uploader not recorded'}
-                        </span>
-                      </td>
-                      <td style={{ ...tdStyle, overflow: 'hidden' }}>
-                        <div className="upload-history-status">
-                          <StatusChip status={t.status} />
-                          {t.status === 'error' && t.error && (
-                            <span className="upload-history-error" title={t.error}>
-                              {t.error}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td
-                        className="upload-history-uploaded"
-                        style={{ ...tdStyle, overflow: 'hidden' }}
-                        title={t.edited_at ? `edited ${fmtDate(t.edited_at)}` : undefined}
-                      >
-                        <div>
-                          {fmtDate(t.created_at)}
-                          {t.edited_at ? ' *' : ''}
-                        </div>
-                        <div
-                          className="upload-history-uploaded-secondary"
-                          title={t.uploader_name ?? 'Uploader not recorded'}
-                        >
-                          {t.uploader_name
-                            ? `by ${t.uploader_name}`
-                            : 'Uploader not recorded'}
-                        </div>
-                      </td>
-                      <td
-                        className="upload-history-source"
-                        style={{
-                          ...tdStyle,
-                          color: '#909090',
-                          overflow: 'hidden',
-                        }}
-                        title={t.source_file ?? undefined}
-                      >
-                        <span className="upload-history-ellipsis">
-                          {t.source_file ?? '—'}
-                        </span>
-                      </td>
-                      <td style={tdRight}>{fmtBytes(t.size_bytes)}</td>
-                      <td
-                        className="upload-history-metrics"
-                        style={{ ...tdRight, overflow: 'hidden' }}
-                      >
-                        <div title={`${fmtCount(t.n_rows)} rows × ${fmtCount(t.n_columns)} columns`}>
-                          {fmtCount(t.n_rows)} × {fmtCount(t.n_columns)}
-                        </div>
-                        <div className="upload-history-metrics-secondary">
-                          {fmtDuration(t.duration_s)} · {t.fs_hz ?? '—'} Hz ·{' '}
-                          {t.ingest_seconds != null ? `${t.ingest_seconds} s ingest` : '— ingest'}
-                        </div>
-                        {t.time_column && (
-                          <div className="upload-history-metrics-secondary">
-                            {t.time_column} · {t.time_source ?? 'time'} · seconds from 0
-                          </div>
-                        )}
-                        {(t.missing_rows_inserted ?? 0) > 0 && (
-                          <div
-                            className="upload-history-metrics-secondary"
-                            style={{ color: '#dcdcaa' }}
-                            title="Missing timestamps were represented by NaN signal rows"
+            <div
+              className={styles.tableScroll}
+              role="region"
+              aria-label="Upload history table"
+              tabIndex={0}
+            >
+              <table className="upload-history-table" aria-label="Uploaded tests">
+                <thead>
+                  <tr>
+                    <th scope="col" style={{ ...thStyle, width: '27%' }}>
+                      Test / source file
+                    </th>
+                    <th style={{ ...thStyle, width: '10%' }}>Status</th>
+                    <th className="upload-history-uploaded" style={{ ...thStyle, width: '14%' }}>
+                      Uploaded
+                    </th>
+                    <th style={{ ...thRight, width: '8%' }}>Size</th>
+                    <th className="upload-history-metrics" style={{ ...thRight, width: '17%' }}>
+                      Data
+                    </th>
+                    <th style={{ ...thRight, width: '24%' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleRows.map((t) => {
+                    const busy = isBusyStatus(t.status);
+                    return (
+                      <tr key={t.name}>
+                        <td style={{ ...tdStyle, fontWeight: 600, overflow: 'hidden' }}>
+                          <span className={styles.testName} title={t.name}>
+                            {t.name}
+                          </span>
+                          <span className={styles.sourceFile} title={t.source_file ?? undefined}>
+                            {t.source_file ?? 'Source file unavailable'}
+                          </span>
+                          <span
+                            className="upload-history-test-uploader"
+                            title={t.uploader_name ?? 'Uploader not recorded'}
                           >
-                            {fmtCount(t.missing_rows_inserted)} missing row
-                            {t.missing_rows_inserted === 1 ? '' : 's'} ·{' '}
-                            {fmtCount(t.time_gap_count)} time gap
-                            {t.time_gap_count === 1 ? '' : 's'}
+                            {t.uploader_name ? `by ${t.uploader_name}` : 'Uploader not recorded'}
+                          </span>
+                        </td>
+                        <td style={{ ...tdStyle, overflow: 'hidden' }}>
+                          <div className="upload-history-status">
+                            <StatusChip status={t.status} />
+                            {t.status === 'error' && t.error && (
+                              <span className="upload-history-error" title={t.error}>
+                                {t.error}
+                              </span>
+                            )}
                           </div>
-                        )}
-                      </td>
-                      <td
-                        className="upload-history-actions-cell"
-                        style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'normal' }}
-                      >
-                        <span className="upload-history-actions">
-                          {t.status === 'ready' && (
-                            <button className="btn" onClick={() => onOpenTest(t.name)}>
-                              Analyze →
-                            </button>
+                        </td>
+                        <td
+                          className="upload-history-uploaded"
+                          style={{ ...tdStyle, overflow: 'hidden' }}
+                          title={t.edited_at ? `edited ${fmtDate(t.edited_at)}` : undefined}
+                        >
+                          <div>
+                            {fmtDate(t.created_at)}
+                            {t.edited_at ? ' *' : ''}
+                          </div>
+                          <div
+                            className="upload-history-uploaded-secondary"
+                            title={t.uploader_name ?? 'Uploader not recorded'}
+                          >
+                            {t.uploader_name ? `by ${t.uploader_name}` : 'Uploader not recorded'}
+                          </div>
+                        </td>
+                        <td style={tdRight}>{fmtBytes(t.size_bytes)}</td>
+                        <td
+                          className="upload-history-metrics"
+                          style={{ ...tdRight, overflow: 'hidden' }}
+                        >
+                          <div
+                            title={`${fmtCount(t.n_rows)} rows × ${fmtCount(t.n_columns)} columns`}
+                          >
+                            {fmtCount(t.n_rows)} × {fmtCount(t.n_columns)}
+                          </div>
+                          <div className="upload-history-metrics-secondary">
+                            {fmtDuration(t.duration_s)} · {t.fs_hz ?? '—'} Hz ·{' '}
+                            {t.ingest_seconds != null ? `${t.ingest_seconds} s ingest` : '— ingest'}
+                          </div>
+                          {t.time_column && (
+                            <div className="upload-history-metrics-secondary">
+                              {t.time_column} · {t.time_source ?? 'time'} · seconds from 0
+                            </div>
                           )}
-                          {(t.status === 'ready' || t.status === 'error') && (
-                            <a
-                              className="btn"
-                              href={rawCsvUrl(t.name)}
-                              download
-                              title="download the original uploaded CSV"
-                              style={{ textDecoration: 'none' }}
+                          {(t.missing_rows_inserted ?? 0) > 0 && (
+                            <div
+                              className="upload-history-metrics-secondary"
+                              style={{ color: '#dcdcaa' }}
+                              title="Missing timestamps were represented by NaN signal rows"
                             >
-                              ⬇ CSV
-                            </a>
+                              {fmtCount(t.missing_rows_inserted)} missing row
+                              {t.missing_rows_inserted === 1 ? '' : 's'} ·{' '}
+                              {fmtCount(t.time_gap_count)} time gap
+                              {t.time_gap_count === 1 ? '' : 's'}
+                            </div>
                           )}
-                          {t.status === 'ready' && (
-                            <button
-                              className="btn"
-                              disabled={busyRow === t.name}
-                              onClick={() => handleRebuildStats(t.name)}
-                              title="recompute this test's test-point averages (rarely changes anything; old values keep serving until it finishes)"
-                            >
-                              {busyRow === t.name ? '⟳ stats…' : '↻ stats'}
-                            </button>
-                          )}
-                          {!busy && (
-                            <button
-                              className="btn"
-                              disabled={busyRow === t.name}
-                              onClick={() => handleDelete(t.name)}
-                              style={{ color: '#f48771' }}
-                            >
-                              Delete
-                            </button>
-                          )}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                        <td
+                          className="upload-history-actions-cell"
+                          style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'normal' }}
+                        >
+                          <span className="upload-history-actions">
+                            {t.status === 'ready' && (
+                              <button
+                                className={`btn ${styles.analyzeButton}`}
+                                aria-label={`Analyze ${t.name}`}
+                                onClick={() => onOpenTest(t.name)}
+                              >
+                                Analyze
+                              </button>
+                            )}
+                            {(t.status === 'ready' || t.status === 'error') && (
+                              <a
+                                className="btn"
+                                href={rawCsvUrl(t.name)}
+                                download
+                                aria-label={`Download original CSV for ${t.name}`}
+                                title="download the original uploaded CSV"
+                                style={{ textDecoration: 'none' }}
+                              >
+                                CSV
+                              </a>
+                            )}
+                            {t.status === 'ready' && (
+                              <button
+                                className="btn"
+                                disabled={busyRow !== null}
+                                aria-label={`Recompute test-point averages for ${t.name}`}
+                                onClick={() => handleRebuildStats(t.name)}
+                                title="recompute this test's test-point averages (rarely changes anything; old values keep serving until it finishes)"
+                              >
+                                {busyRow === t.name ? 'Working…' : 'Recompute'}
+                              </button>
+                            )}
+                            {!busy && (
+                              <button
+                                className="btn"
+                                disabled={busyRow !== null}
+                                aria-label={`Delete ${t.name}`}
+                                onClick={() => handleDelete(t.name)}
+                                style={{ color: '#f48771' }}
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
-        <div style={{ fontSize: 10, color: '#666' }}>
-          * edited since upload (hover the date for when). Status updates live every 2 s while this page is open.
+        <div className={styles.historyNote}>
+          Status refreshes automatically. An asterisk marks a test edited after upload; hover its
+          date for details.
         </div>
       </div>
     </div>

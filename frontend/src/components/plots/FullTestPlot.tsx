@@ -97,7 +97,10 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
   onRangeChangeRef.current = onRangeChange;
   const pxRef = useRef(1200);
   const [box, setBox] = useState({ w: 0, h: 0 });
-  const [win, setWin] = useState<DataWindow | null>(null);
+  const [loadedWindow, setWin] = useState<DataWindow | null>(null);
+  const [loadedContext, setLoadedContext] = useState('');
+  const contextKey = JSON.stringify([test, cfg.key]);
+  const win = loadedContext === contextKey ? loadedWindow : null;
   const [loading, setLoading] = useState(Boolean(test && cfg.key));
   const [error, setError] = useState('');
   const [retryVersion, setRetryVersion] = useState(0);
@@ -164,6 +167,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
   // Windowed fetch, debounced and abortable (zoom bursts cancel stale reads)
   useEffect(() => {
     if (!test || !cfg.key) {
+      setWin(null);
       setLoading(false);
       setError('');
       return;
@@ -186,6 +190,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
       )
         .then((w) => {
           if (!dead) {
+            setLoadedContext(contextKey);
             setWin(w);
             setError('');
           }
@@ -200,7 +205,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [test, cfg.key, range, displayMode, retryVersion]);
+  }, [test, cfg.key, range, displayMode, retryVersion, contextKey]);
 
   // Fetch the filtered result; keyed on win so it reuses the same px + range.
   useEffect(() => {

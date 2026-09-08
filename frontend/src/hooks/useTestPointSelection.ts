@@ -10,6 +10,14 @@ export const useTestPointSelection = (maxPoints: number = MAX_SELECTED_TEST_POIN
   const toggleTestPoint = useCallback(
     (test: string, tp: TestPoint, endS: number) => {
       const id = `${test}:${tp.id}`;
+      // A scatter click starts a fresh selection when the point is added
+      // again. Do not retain a previous selection's hidden state.
+      setHiddenTPs((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
       setSelectedTPs((prev) => {
         const existing = prev.find((s) => s.id === id);
         if (existing) {

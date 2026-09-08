@@ -31,7 +31,6 @@ import {
   isAbortError,
   putDefaultSettings,
 } from './services/api';
-import { noSelect } from './constants/styles';
 import { DEFAULT_FILTER_UI, FilterUi, buildFilterSpec } from './constants/filters';
 import { AppSettings, loadSettings, saveSettings, parseUploadFs } from './constants/settings';
 import { isBusyStatus } from './constants/status';
@@ -101,10 +100,12 @@ function bestRpmColumn(columns: string[]): string {
     if (normalized.includes('rpm')) return 2;
     return 3;
   };
-  return columns
-    .map((column, index) => ({ column, index, score: score(column) }))
-    .filter((candidate) => candidate.score < 3)
-    .sort((a, b) => a.score - b.score || a.index - b.index)[0]?.column ?? '';
+  return (
+    columns
+      .map((column, index) => ({ column, index, score: score(column) }))
+      .filter((candidate) => candidate.score < 3)
+      .sort((a, b) => a.score - b.score || a.index - b.index)[0]?.column ?? ''
+  );
 }
 
 function App() {
@@ -128,6 +129,7 @@ function App() {
   const [traceErrors, setTraceErrors] = useState<Record<string, string>>({});
   const [traceRetry, setTraceRetry] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [metaErrors, setMetaErrors] = useState<Record<string, string>>({});
   // Saved preferences (localStorage) — seed the defaults below and feed the
   // Settings tab. Declared first: several states initialize from it.
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
@@ -219,11 +221,7 @@ function App() {
   const [splitBusy, setSplitBusy] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
   useUnsavedChanges({
-    isDirty:
-      settingsDraft !== null ||
-      splitBusy ||
-      editBusy ||
-      pendingUploadFiles.length > 0,
+    isDirty: settingsDraft !== null || splitBusy || editBusy || pendingUploadFiles.length > 0,
   });
   const [scatterRatio, setScatterRatio] = useState(
     hasRestoredSession ? restoredSession.scatterRatio : 40
@@ -383,10 +381,7 @@ function App() {
    *  grid universe, this intentionally excludes active-test filler columns
    *  when spectra come from selected test points. */
   const spectrumRpmColumns = useMemo(
-    () =>
-      specSource === 'tp' && selectionColumns.length > 0
-        ? selectionColumns
-        : dataColumns,
+    () => (specSource === 'tp' && selectionColumns.length > 0 ? selectionColumns : dataColumns),
     [specSource, selectionColumns, dataColumns]
   );
 
@@ -513,10 +508,21 @@ function App() {
       Promise.all([fetchMeta(name), fetchTestPoints(name)])
         .then(([m, tps]) => {
           if ((testGen.current.get(name) ?? 0) !== gen) return; // invalidated mid-flight
+          setMetaErrors((previous) => {
+            if (!previous[name]) return previous;
+            const next = { ...previous };
+            delete next[name];
+            return next;
+          });
           setMetaByTest((prev) => ({ ...prev, [name]: m }));
           setTpsByTest((prev) => ({ ...prev, [name]: tps.test_points }));
         })
         .catch((e) => {
+          if ((testGen.current.get(name) ?? 0) !== gen) return;
+          setMetaErrors((previous) => ({
+            ...previous,
+            [name]: e instanceof Error ? e.message : 'Test data could not be loaded',
+          }));
           console.error(`load failed for ${name}:`, e);
           // Retry transient failures: without this the effect never re-runs
           // (tests/metaByTest unchanged) and the app stays on the loading
@@ -854,15 +860,7 @@ function App() {
       if (tab === 'uploads') setPendingUploadFiles([]);
     }
     return discard;
-  }, [
-    confirmAction,
-    editBusy,
-    editDirty,
-    pendingUploadFiles.length,
-    splitBusy,
-    splitDirty,
-    tab,
-  ]);
+  }, [confirmAction, editBusy, editDirty, pendingUploadFiles.length, splitBusy, splitDirty, tab]);
 
   const handleTabChange = async (next: AppTab): Promise<boolean> => {
     if (next === tab) return true;
@@ -972,9 +970,7 @@ function App() {
   );
 
   const stageUploadFiles = async (files: File[]) => {
-    const csvFiles = files.filter((file) =>
-      file.name.toLowerCase().endsWith('.csv')
-    );
+    const csvFiles = files.filter((file) => file.name.toLowerCase().endsWith('.csv'));
     if (csvFiles.length === 0) {
       setNotice('Choose one or more .csv files to import');
       return;
@@ -983,10 +979,7 @@ function App() {
     setPendingUploadFiles(csvFiles);
   };
 
-  const startConfiguredUploads = (
-    files: File[],
-    options: UploadDataOptions
-  ) => {
+  const startConfiguredUploads = (files: File[], options: UploadDataOptions) => {
     setPendingUploadFiles([]);
     void handleUploadFiles(files, options);
   };
@@ -1021,8 +1014,14 @@ function App() {
     try {
       setLoading(true);
       setError(null);
+      // Keep the current workspace intact until the catalog request succeeds.
+      const list = await fetchTests();
       Object.keys(metaByTest).forEach((name) => invalidateTest(name));
-      setTests(await fetchTests());
+      setTests(list);
+      if (!list.some((test) => test.name === currentTest && test.status === 'ready')) {
+        setFullRange(null);
+        setCurrentTest(list.find((test) => test.status === 'ready')?.name ?? '');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to reload');
       console.error('Error reloading:', err);
@@ -1241,12 +1240,12 @@ function App() {
   const datasheetRequestKey = `${datasheetZone}\0${xAxis}\0${yAxis}`;
   const datasheetHasMatchingAxes = Boolean(
     datasheetMeta &&
-      xAxis &&
-      yAxis &&
-      datasheetMeta.columns.includes(xAxis) &&
-      datasheetMeta.columns.includes(yAxis) &&
-      xAxis !== datasheetMeta.time_column &&
-      yAxis !== datasheetMeta.time_column
+    xAxis &&
+    yAxis &&
+    datasheetMeta.columns.includes(xAxis) &&
+    datasheetMeta.columns.includes(yAxis) &&
+    xAxis !== datasheetMeta.time_column &&
+    yAxis !== datasheetMeta.time_column
   );
 
   // A datasheet is uploaded through the normal CSV path, but its rows are read
@@ -1276,15 +1275,7 @@ function App() {
       loading: true,
       error: '',
     });
-    fetchWindow(
-      datasheetZone,
-      [xAxis, yAxis],
-      null,
-      null,
-      4000,
-      controller.signal,
-      'line'
-    )
+    fetchWindow(datasheetZone, [xAxis, yAxis], null, null, 4000, controller.signal, 'line')
       .then((response) => {
         if (!active) return;
         if (response.mode !== 'raw') {
@@ -1293,9 +1284,7 @@ function App() {
         const xValues = response.series[xAxis] ?? [];
         const yValues = response.series[yAxis] ?? [];
         const pointIdOrigin =
-          datasheetMeta.time_source === 'measured'
-            ? (datasheetMeta.source_time_origin_s ?? 0)
-            : 0;
+          datasheetMeta.time_source === 'measured' ? (datasheetMeta.source_time_origin_s ?? 0) : 0;
         const points: DatasheetDataPoint[] = [];
         const rowCount = Math.min(response.t.length, xValues.length, yValues.length);
         for (let index = 0; index < rowCount; index += 1) {
@@ -1357,9 +1346,7 @@ function App() {
 
   const datasheetData = useMemo(
     () =>
-      datasheetVisible && datasheetLine.key === datasheetRequestKey
-        ? datasheetLine.points
-        : [],
+      datasheetVisible && datasheetLine.key === datasheetRequestKey ? datasheetLine.points : [],
     [datasheetLine, datasheetRequestKey, datasheetVisible]
   );
   const scatterDomainData = useMemo(
@@ -1430,8 +1417,7 @@ function App() {
   }, [requiredStatsKeys]);
   const scatterEmptyState = useMemo(() => {
     const pointCount = Object.entries(tpsByTest).reduce(
-      (count, [test, points]) =>
-        test === settings.datasheetZone ? count : count + points.length,
+      (count, [test, points]) => (test === settings.datasheetZone ? count : count + points.length),
       0
     );
     if (!xAxis || !yAxis) {
@@ -1713,8 +1699,7 @@ function App() {
   const xLabel = xAxis ? `${xAxis} (TP mean)` : '';
   const yLabel = yAxis ? `${yAxis} (TP mean)` : '';
 
-  // Rendered from two places: the normal tab switch and the no-tests screen
-  // (the Uploads page must work before the first test exists).
+  // Uploads and preferences stay available without active test metadata.
   const uploadView = (
     <UploadView
       tests={tests}
@@ -1770,134 +1755,14 @@ function App() {
     </div>
   );
 
-  // Loading state (before the active test's meta is available). The Uploads
-  // page never needs meta — blanking it during a refetch would hide live
-  // status exactly when the user is watching it.
-  if ((loading || (currentTest && !meta)) && !error && tab !== 'uploads' && tab !== 'settings') {
-    if (!currentTest && !loading) {
-      // fall through to the no-tests screen below
-    } else {
-      return (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100vh',
-            background: '#1e1e1e',
-            color: '#e0e0e0',
-            fontFamily: 'Segoe UI, sans-serif',
-            fontSize: 14,
-          }}
-        >
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ marginBottom: 12, fontSize: 16 }}>Loading PTT Backend...</div>
-            <div style={{ color: '#909090', fontSize: 12 }}>Fetching propeller test data</div>
-          </div>
-        </div>
-      );
-    }
-  }
-
-  // Error state
-  if (error) {
-    return (
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100vh',
-          background: '#1e1e1e',
-          color: '#e0e0e0',
-          fontFamily: 'Segoe UI, sans-serif',
-          fontSize: 14,
-        }}
-      >
-        <div style={{ textAlign: 'center', maxWidth: 500 }}>
-          <div style={{ marginBottom: 12, fontSize: 16, color: '#f48771' }}>Error Loading Data</div>
-          <div style={{ color: '#909090', fontSize: 12, marginBottom: 20 }}>{error}</div>
-          <div style={{ color: '#909090', fontSize: 11, lineHeight: 1.6 }}>
-            <div>Make sure the backend is running:</div>
-            <div
-              style={{
-                marginTop: 8,
-                background: '#252526',
-                padding: 8,
-                borderRadius: 4,
-                fontFamily: 'Consolas, monospace',
-              }}
-            >
-              backend\run_backend.bat
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // No tests yet — still show the header so uploads are possible
-  if (!currentTest) {
-    return (
-      <div
-        {...dragHandlers}
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          height: '100vh',
-          background: '#1e1e1e',
-          color: '#e0e0e0',
-          fontFamily: 'Segoe UI, sans-serif',
-          fontSize: 13,
-          ...noSelect,
-        }}
-      >
-        {dropOverlay}
-        <Header
-          tests={tests}
-          tab={tab}
-          onTabChange={handleTabChange}
-          onImportFiles={stageUploadFiles}
-          uploads={uploads}
-          onDismissUpload={dismissUpload}
-          onPauseUpload={pauseUpload}
-          onResumeUpload={resumeUpload}
-          onCancelUpload={cancelUpload}
-          notice={notice}
-        />
-        {tab === 'uploads' ? (
-          uploadView
-        ) : tab === 'settings' ? (
-          settingsView
-        ) : (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ textAlign: 'center', maxWidth: 500 }}>
-              <div style={{ marginBottom: 12, fontSize: 16 }}>No test data available</div>
-              <div style={{ color: '#909090', fontSize: 12 }}>
-                Upload a test CSV with the button above, or drop a .csv file anywhere in this
-                window.
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
+  // Keep navigation and import access available during loading and failures.
+  const needsTestData = tab !== 'uploads' && tab !== 'settings';
+  const activeMetaError = currentTest && !meta ? metaErrors[currentTest] : null;
+  const waitingForData = loading || Boolean(currentTest && !meta);
+  const workspaceError = error || activeMetaError;
 
   return (
-    <div
-      {...dragHandlers}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        background: '#1e1e1e',
-        color: '#e0e0e0',
-        fontFamily: 'Segoe UI, sans-serif',
-        fontSize: 13,
-        ...noSelect,
-      }}
-    >
+    <div {...dragHandlers} className="app-shell">
       {dropOverlay}
       <Header
         tests={tests}
@@ -1911,8 +1776,86 @@ function App() {
         onCancelUpload={cancelUpload}
         notice={notice}
       />
-
-      {tab === 'uploads' ? (
+      {error && !needsTestData && (
+        <div className="app-connection-banner" role="alert">
+          <span>Test data is unavailable. Check the connection and try again.</span>
+          <button className="btn" onClick={reloadData} disabled={loading}>
+            Retry connection
+          </button>
+        </div>
+      )}
+      {needsTestData && (workspaceError || waitingForData || !currentTest) ? (
+        <main className="workspace-state">
+          <div className="workspace-state-content">
+            <div
+              className={'workspace-state-symbol' + (workspaceError ? ' is-error' : '')}
+              aria-hidden="true"
+            >
+              {workspaceError ? '!' : waitingForData ? '…' : '+'}
+            </div>
+            {workspaceError ? (
+              <div role="alert">
+                <h1>{error ? 'Unable to load test data' : 'This test could not be loaded'}</h1>
+                <p>
+                  {error
+                    ? 'Check that the test data service is running, then try again.'
+                    : 'You can retry, or open Uploads to choose another test.'}
+                </p>
+                <details className="workspace-error-details">
+                  <summary>Error details</summary>
+                  <p>{workspaceError}</p>
+                </details>
+                <div className="workspace-state-actions">
+                  <button className="btn btn-primary" onClick={reloadData}>
+                    Try again
+                  </button>
+                  <button className="btn" onClick={() => handleTabChange('uploads')}>
+                    Open uploads
+                  </button>
+                </div>
+              </div>
+            ) : waitingForData ? (
+              <div role="status" aria-live="polite">
+                <h1>{loading ? 'Loading your workspace' : 'Loading test data'}</h1>
+                <p>{currentTest || 'Fetching available tests and saved preferences.'}</p>
+                <div className="workspace-loading-bar" aria-hidden="true" />
+              </div>
+            ) : (
+              <>
+                <h1>
+                  {tests.length ? 'Your tests are not ready yet' : 'Start with your test data'}
+                </h1>
+                <p>
+                  {tests.length
+                    ? 'Open Uploads to follow processing progress or resolve an interrupted import.'
+                    : 'Import a test-rig CSV to explore signals and compare operating points.'}
+                </p>
+                <div className="workspace-state-actions">
+                  <button className="btn btn-primary" onClick={() => handleTabChange('uploads')}>
+                    {tests.length ? 'View uploads' : 'Import your first CSV'}
+                  </button>
+                </div>
+                {!tests.length && (
+                  <ol className="workspace-start-steps">
+                    <li>
+                      <strong>Import a CSV</strong>
+                      <span>Choose a time column or sample rate.</span>
+                    </li>
+                    <li>
+                      <strong>Define test points</strong>
+                      <span>Split the run into operating conditions.</span>
+                    </li>
+                    <li>
+                      <strong>Compare signals</strong>
+                      <span>Explore time traces, spectra, and XY plots.</span>
+                    </li>
+                  </ol>
+                )}
+              </>
+            )}
+          </div>
+        </main>
+      ) : tab === 'uploads' ? (
         uploadView
       ) : tab === 'settings' ? (
         settingsView
@@ -2170,6 +2113,11 @@ function App() {
               columnsByTest={columnsByTest}
               traceErrors={traceErrors}
               onRetryTraces={retryTestPointTraces}
+              onBrowseFullTest={() => {
+                if (viewMode === 'spectrum') setSpecSource('full');
+                else if (viewMode === 'xy') setXYSource('full');
+                else setViewMode('full');
+              }}
               isEditMode={isEditMode}
               plotConfigs={plotConfigs}
               onPlotConfigChange={(configs) => {

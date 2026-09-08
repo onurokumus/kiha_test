@@ -11,7 +11,7 @@ import {
 import { noSelect } from '../../constants/styles';
 import { ACCENT, AXIS_STYLE, safeRange } from '../../constants/uplotTheme';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
-import { syncPlot, clearPlot } from '../../utils/uplotSync';
+import { syncPlot, clearPlot, facetedSeriesValue, sortedFacetedDataIdx } from '../../utils/uplotSync';
 import { PlotStateOverlay, PlotEmptyState } from './PlotState';
 import { SearchableSelect } from '../controls/SearchableSelect';
 import styles from './TimePlot.module.css';
@@ -48,6 +48,8 @@ interface SpectrumTrace {
   minRpm?: number;
   maxRpm?: number;
 }
+
+const EMPTY_TRACES: SpectrumTrace[] = [];
 
 interface RpmStats {
   mean: number;
@@ -119,8 +121,9 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   const plotRef = useRef<uPlot | null>(null);
   const structKeyRef = useRef('');
   const [box, setBox] = useState({ w: 0, h: 0 });
-  const [traces, setTraces] = useState<SpectrumTrace[]>([]);
-  const [meta, setMeta] = useState<{
+  const [loadedTraces, setTraces] = useState<SpectrumTrace[]>([]);
+  const [loadedContext, setLoadedContext] = useState('');
+  const [loadedMeta, setMeta] = useState<{
     mode: string;
     n: number;
     nan: number;
@@ -134,9 +137,15 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   const [retryVersion, setRetryVersion] = useState(0);
 
   const visibleTPs = selectedTPs.filter((s) => !hiddenTPs.has(s.id));
-  const tpFingerprint = visibleTPs
-    .map((s) => `${s.id}:${s.tp.start_s}:${s.endS}`)
-    .join('|');
+  const tpFingerprint = JSON.stringify(
+    visibleTPs.map((s) => [s.id, s.tp.start_s, s.endS, s.name, s.color])
+  );
+  const contextKey = JSON.stringify([
+    source, cfg.key, specMode, axisMode, rpmColumn,
+    source === 'full' ? test : tpFingerprint,
+  ]);
+  const traces = loadedContext === contextKey ? loadedTraces : EMPTY_TRACES;
+  const meta = loadedContext === contextKey ? loadedMeta : null;
   const needsRpmColumn = axisMode === 'per_rev' && !rpmColumn;
 
   useEffect(() => {
@@ -150,11 +159,12 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!cfg.key || needsRpmColumn) {
+    if (!cfg.key || needsRpmColumn || (source === 'full' && !test)) {
       setTraces([]);
       setMeta(null);
       setLoading(false);
       setError('');
+      setPartialMessage('');
       return;
     }
     let dead = false;
@@ -181,6 +191,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
           );
           if (dead) return;
           const trace = traceFromSpectrum(d, axisMode, cfg.key, ACCENT);
+          setLoadedContext(contextKey);
           setTraces([trace]);
           setMeta({
             mode: d.mode,
@@ -240,6 +251,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
               `Spectrum data was unavailable for ${failed} selected test point${failed === 1 ? '' : 's'}.`
             );
           }
+          setLoadedContext(contextKey);
           setTraces(ok);
           setMeta(ok.length ? {
             mode: specMode,
@@ -290,6 +302,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
     columnsByTest,
     retryVersion,
     needsRpmColumn,
+    contextKey,
   ]);
 
   // Destroy only on unmount; syncPlot reuses/rebuilds in place (perf 2.4).
@@ -314,6 +327,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
             stroke: tr.color,
             width: 1,
             spanGaps: false,
+            value: facetedSeriesValue,
             facets: [
               { scale: 'x', auto: true },
               { scale: 'y', auto: true },
@@ -335,12 +349,12 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
           ...AXIS_STYLE,
           label: axisMode === 'per_rev' ? 'Order (cycles/rev)' : 'Frequency (Hz)',
         },
-        { ...AXIS_STYLE },
+        { ...AXIS_STYLE, label: `${specMode === 'welch' ? 'Power spectral density' : 'Magnitude'}${logY ? ' (log10)' : ''}` },
       ],
       legend: { show: isExpanded, live: true },
       // uPlot default drag = client-side x zoom; dblclick resets it.
       // Wheel-zoom / shift-drag pan are client-side too (no commit target).
-      cursor: { drag: { x: true, y: false } },
+      cursor: { dataIdx: sortedFacetedDataIdx, drag: { x: true, y: false } },
       plugins: [xPanZoomPlugin()],
       series,
     });
@@ -350,10 +364,10 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
       ...traces.map((tr) => [tr.x, transform(tr.mag)]),
     ] as unknown as uPlot.AlignedData;
 
-    // logY is a data transform, not a structure change → excluded from the key,
-    // so toggling it re-ranges (setData) instead of rebuilding.
+    // Axis labels and series colors are structural, so log mode and colors
+    // must participate in the key used to reuse the existing canvas.
     const structKey = [
-      series.map((s) => s.label ?? '').join('~'), box.w, box.h, isExpanded, axisMode,
+      JSON.stringify(series.map((s) => [s.label, s.stroke])), box.w, box.h, isExpanded, axisMode, logY, specMode,
     ].join('|');
     syncPlot({
       plotRef,
@@ -372,7 +386,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
         }
       },
     });
-  }, [traces, logY, box, isExpanded, axisMode]);
+  }, [traces, logY, box, isExpanded, axisMode, specMode]);
 
   const containerClass = `${styles.plotContainer} ${
     isExpanded ? styles.plotContainerExpanded : styles.plotContainerCollapsed
@@ -391,7 +405,8 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
         xValue !== null &&
         Number.isFinite(xValue) &&
         trace.mag[index] !== null &&
-        Number.isFinite(trace.mag[index])
+        Number.isFinite(trace.mag[index]) &&
+        (!logY || (trace.mag[index] as number) > 0)
     )
   );
   let emptyState: PlotEmptyState;
@@ -409,6 +424,11 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
     emptyState = {
       title: `${cfg.label} is not available`,
       detail: 'None of the visible test points contain this signal.',
+    };
+  } else if (logY && traces.length > 0 && !hasData) {
+    emptyState = {
+      title: 'No positive spectrum values',
+      detail: 'Switch off Log Y to view zero or non-positive magnitudes.',
     };
   } else {
     emptyState = {

@@ -1,0 +1,391 @@
+.page {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 26px 28px;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.pageHeader,
+.historyHeader,
+.historyTitle,
+.historyFilters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pageHeader,
+.historyHeader {
+  justify-content: space-between;
+}
+
+.pageHeader h1 {
+  margin: 0 0 6px;
+  color: #e8eef2;
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+
+.pageHeader p {
+  margin: 0;
+  color: #9ca9b2;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.storageSummary {
+  flex-shrink: 0;
+  color: #9eacb7;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.page .dropZone {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 25px;
+  border: 1px dashed #516777;
+  border-radius: 7px;
+  background: #222a30;
+  text-align: left;
+  font-family: inherit;
+}
+
+.page .dropZone:focus-visible {
+  outline: 2px solid #82c5ed;
+  outline-offset: 3px;
+}
+
+.uploadIcon {
+  display: grid;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 1px solid #3d5869;
+  border-radius: 9px;
+  color: #88c5e9;
+  background: #273b49;
+}
+
+.uploadIcon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.dropCopy {
+  display: grid;
+  flex: 1;
+  gap: 7px;
+  min-width: 0;
+  line-height: 1.5;
+}
+
+.dropCopy strong {
+  color: #e4eef5;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.dropCopy > span {
+  color: #b8c6d0;
+  font-size: 12px;
+}
+
+.dropCopy small {
+  color: #91a3b1;
+  font-size: 11px;
+}
+
+.browseButton {
+  flex-shrink: 0;
+  padding: 10px 15px;
+  border: 1px solid #568baa;
+  border-radius: 5px;
+  color: #e2f1fa;
+  background: #254d66;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.historyHeader {
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 15px 16px;
+  border-bottom: 1px solid #3c454d;
+}
+
+.historyTitle h2 {
+  margin: 0;
+  color: #dde6ec;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.historyTitle > span {
+  padding: 3px 7px;
+  border-radius: 4px;
+  color: #a4b8c6;
+  background: #2b363e;
+  font-size: 11px;
+}
+
+.historyFilters {
+  flex: 0 1 450px;
+  min-width: 0;
+  gap: 8px;
+}
+
+.historyFilters input {
+  flex: 1;
+  width: 250px;
+  min-width: 0;
+}
+
+.historyFilters select {
+  width: 125px;
+}
+
+.historyFilters :global(.input) {
+  height: 34px;
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
+.tableScroll {
+  overflow-x: auto;
+  scrollbar-color: #596772 #25292c;
+  scrollbar-width: thin;
+}
+
+.tableScroll:focus-visible {
+  outline: 2px solid #82c5ed;
+  outline-offset: -2px;
+}
+
+.tableScroll table {
+  min-width: 900px;
+}
+
+.tableScroll tbody tr:hover {
+  background: #292f34;
+}
+
+.testName,
+.sourceFile {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+
+.testName {
+  color: #dde9f0;
+}
+
+.sourceFile {
+  margin-top: 4px;
+  color: #97a5af;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.page :global(.upload-history-uploaded),
+.page :global(.upload-history-metrics) {
+  display: table-cell;
+}
+
+.page :global(.upload-history-metrics-secondary),
+.page :global(.upload-history-uploaded-secondary),
+.page :global(.upload-history-error) {
+  color: #9aa8b2;
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.page :global(.upload-history-error) {
+  color: #f6a293;
+}
+
+.page :global(.upload-history-test-uploader) {
+  display: none;
+}
+
+.page :global(.upload-history-actions) {
+  gap: 6px;
+}
+
+.page :global(.btn) {
+  min-height: 30px;
+}
+
+.page :global(.btn):focus-visible,
+.page :global(.input):focus-visible {
+  outline: 2px solid #82c5ed;
+  outline-offset: 2px;
+}
+
+.page .analyzeButton {
+  border-color: #4e7b98;
+  color: #cdeaff;
+  background: #244357;
+}
+
+.page :global(.upload-setup-files) {
+  gap: 7px;
+}
+
+.page :global(.upload-setup-files .badge) {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  max-width: 100%;
+  padding: 6px 8px;
+  white-space: normal;
+}
+
+.page :global(.upload-setup-files .badge) > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.page :global(.upload-setup-files .badge) > small {
+  flex-shrink: 0;
+  color: #98acba;
+}
+
+.page :global(.upload-setup-field > span) {
+  color: #b4c0c9;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.page :global(.upload-setup-field > .input) {
+  height: 34px;
+  font-size: 12px;
+}
+
+.page :global(.upload-time-preview code) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.page :global(.upload-transfer-meta > strong),
+.page :global(.upload-transfer-meta > span) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.page :global(.upload-transfer-actions) {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.emptyState {
+  display: grid;
+  justify-items: center;
+  gap: 9px;
+  padding: 38px 20px;
+  color: #9aaab5;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.emptyState strong {
+  color: #d0dce5;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.actionError,
+.actionNote {
+  padding: 10px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.actionError {
+  color: #f6a293;
+  background: #3c2928;
+}
+
+.actionNote {
+  color: #8bdbc4;
+  background: #203931;
+}
+
+.historyNote {
+  color: #8f9ea9;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+@media (max-width: 760px) {
+  .page {
+    padding: 18px 14px;
+  }
+
+  .pageHeader {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .page .dropZone {
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 20px;
+  }
+
+  .browseButton {
+    margin-left: 62px;
+  }
+
+  .historyFilters {
+    flex-basis: 100%;
+  }
+
+  .page :global(.upload-transfer-row) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page :global(.upload-transfer-actions) {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 420px) {
+  .pageHeader h1 {
+    font-size: 21px;
+  }
+
+  .uploadIcon {
+    display: none;
+  }
+
+  .browseButton {
+    margin-left: 0;
+  }
+
+  .page :global(.upload-time-preview) {
+    grid-template-columns: 1fr;
+  }
+}

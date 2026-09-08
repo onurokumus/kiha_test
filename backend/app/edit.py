@@ -26,7 +26,7 @@ from .config import ROW_GROUP_SIZE, TESTS_DIR
 from .ingest import build_pyramid
 from .locks import test_write
 from .status import write_status
-from .store import write_json_atomic
+from .store import _testpoint_bounds, write_json_atomic
 
 NAN_POLICIES = ("keep_gaps", "zero_fill", "interpolate")
 
@@ -195,6 +195,12 @@ def _rebuild(name: str, ops: dict) -> None:
         gap_ranges = _updated_gap_ranges(
             meta, fs, t_start, n_rows, policy)
         missing_rows = sum(end - start for start, end in gap_ranges)
+        # Column/formula/fill edits leave row identity unchanged. Only a trim
+        # may alter points; resolve its result against the OLD rows before the
+        # commit so invalid point metadata cannot fail after files are swapped.
+        trimmed_points = (
+            _trimmed_testpoints(test_dir, name, meta, t_start, n_rows)
+            if trim_t0 is not None or trim_t1 is not None else None)
 
         # 3) COMMIT — fast rename swaps only past this point. Each os.replace
         #    has a non-existent destination (plain atomic rename); no reader
@@ -229,7 +235,8 @@ def _rebuild(name: str, ops: dict) -> None:
         # averages computed against the old columns/rows
         _discard(test_dir / "tp_stats.json")
 
-        _clip_testpoints(test_dir, name, fs, t_start, duration)
+        if trimmed_points is not None:
+            write_json_atomic(test_dir / "testpoints.json", trimmed_points)
         write_status(test_dir, "ready")
     except Exception as e:  # status file is how the UI learns of failures
         _discard(tmp_parquet, tmp_pyramid, old_pyramid)
@@ -237,33 +244,36 @@ def _rebuild(name: str, ops: dict) -> None:
         raise
 
 
-def _clip_testpoints(test_dir: Path, name: str, fs: float,
-                     t_start: float, duration: float) -> None:
-    """Clamp saved test points to the (possibly trimmed) data range and
-    recompute their row indices against the new t_start."""
+def _trimmed_testpoints(test_dir: Path, name: str, old_meta: dict,
+                        t_start: float, n_rows: int) -> dict | None:
+    """Intersect saved half-open ranges with the rows retained by a trim.
+
+    Resolve authoritative indices and implicit next-point ends BEFORE removing
+    points. Otherwise an open point whose successor was trimmed away can grow
+    into unrelated data, or an index-only end can keep its old row offset.
+    """
     tp_path = test_dir / "testpoints.json"
     try:
         payload = json.loads(tp_path.read_text())
     except (FileNotFoundError, json.JSONDecodeError):
-        return
-    t_end = t_start + duration
+        return None
+    fs = float(old_meta["fs_hz"])
+    old_start = float(old_meta.get("t_start") or 0.0)
+    offset = max(0, int(round((t_start - old_start) * fs)))
+    points = payload.get("test_points", [])
     kept = []
-    for tp in payload.get("test_points", []):
-        start = max(float(tp["start_s"]), t_start)
-        end = tp.get("end_s")
-        if end is not None:
-            end = min(float(end), t_end)
-            if end - start < 0.01:
-                continue  # fully outside the kept range
-        elif start >= t_end:
+    for tp in points:
+        old_i0, old_i1 = _testpoint_bounds(old_meta, points, tp)
+        i0 = max(0, old_i0 - offset)
+        i1 = min(n_rows, old_i1 - offset)
+        if i1 <= i0:
             continue
         tp = dict(tp)
-        tp["start_s"] = round(start, 6)
-        tp["start_idx"] = int(round((start - t_start) * fs))
-        if end is not None:
-            tp["end_s"] = round(end, 6)
-            tp["end_idx"] = int(round((end - t_start) * fs))
+        tp["start_s"] = round(t_start + i0 / fs, 6)
+        tp["end_s"] = round(t_start + i1 / fs, 6)
+        tp["start_idx"] = i0
+        tp["end_idx"] = i1
         kept.append(tp)
     payload["test_points"] = kept
     payload["test"] = name
-    write_json_atomic(tp_path, payload)
+    return payload

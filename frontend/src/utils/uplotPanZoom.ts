@@ -26,6 +26,8 @@ export function xPanZoomPlugin(commit?: (range: [number, number]) => void): uPlo
   let destroyed = false;
   let wheelTimer = 0;
   let pending: [number, number] | null = null;
+  let detachReadyListeners: (() => void) | null = null;
+  let finishPan: (() => void) | null = null;
 
   const flush = () => {
     window.clearTimeout(wheelTimer);
@@ -47,14 +49,14 @@ export function xPanZoomPlugin(commit?: (range: [number, number]) => void): uPlo
         const onWheel = (e: WheelEvent) => {
           const min = u.scales.x.min;
           const max = u.scales.x.max;
-          if (destroyed || min == null || max == null) return;
+          if (destroyed || min == null || max == null || e.deltaY === 0) return;
           e.preventDefault();
           const rect = u.over.getBoundingClientRect();
           const xVal = u.posToVal(e.clientX - rect.left, 'x');
           const factor = e.deltaY < 0 ? WHEEL_STEP : 1 / WHEEL_STEP;
           const nMin = xVal - (xVal - min) * factor;
           const nMax = xVal + (max - xVal) * factor;
-          if (nMax - nMin < MIN_SPAN) return;
+          if (!Number.isFinite(nMin) || !Number.isFinite(nMax) || nMax - nMin < MIN_SPAN) return;
           u.setScale('x', { min: nMin, max: nMax });
           pending = [nMin, nMax];
           window.clearTimeout(wheelTimer);
@@ -80,23 +82,37 @@ export function xPanZoomPlugin(commit?: (range: [number, number]) => void): uPlo
             u.setScale('x', { min: moved[0], max: moved[1] });
           };
           const onUp = () => {
+            cleanup();
+            if (!destroyed && moved && commit) commit(moved);
+          };
+          const cleanup = () => {
             window.removeEventListener('mousemove', onMove);
             window.removeEventListener('mouseup', onUp);
             if (!destroyed) u.over.style.cursor = '';
-            if (moved && commit) commit(moved);
+            finishPan = null;
           };
+          finishPan?.();
+          finishPan = cleanup;
           window.addEventListener('mousemove', onMove);
           window.addEventListener('mouseup', onUp);
         };
 
         u.over.addEventListener('wheel', onWheel, { passive: false });
         u.over.addEventListener('mousedown', onDown);
+        detachReadyListeners = () => {
+          u.over.removeEventListener('wheel', onWheel);
+          u.over.removeEventListener('mousedown', onDown);
+        };
       },
       // Flush (not drop) a pending wheel commit: plots are rebuilt whenever new
       // data lands, and dropping here would silently lose the last wheel ticks.
       destroy: () => {
         flush();
         destroyed = true;
+        finishPan?.();
+        detachReadyListeners?.();
+        finishPan = null;
+        detachReadyListeners = null;
       },
     },
   };
@@ -136,7 +152,8 @@ export function xyPanZoomPlugin(): uPlot.Plugin {
             xMin == null ||
             xMax == null ||
             yMin == null ||
-            yMax == null
+            yMax == null ||
+            e.deltaY === 0
           ) {
             return;
           }
@@ -157,6 +174,8 @@ export function xyPanZoomPlugin(): uPlot.Plugin {
             yVal + (yMax - yVal) * factor,
           ];
           if (
+            !nextX.every(Number.isFinite) ||
+            !nextY.every(Number.isFinite) ||
             nextX[1] - nextX[0] < MIN_SPAN ||
             nextY[1] - nextY[0] < MIN_SPAN
           ) {

@@ -23,13 +23,17 @@ def id_candidates(name: str, max_unique: int = 500) -> list[dict]:
         if c == tcol:
             continue
         vals = df[c].drop_nulls().to_numpy()
-        if len(vals) == 0:
-            continue
         # Ingest keeps only numeric data columns, but stay defensive: a single
         # column that cannot be rounded/compared must skip, never 500 the whole
         # candidate list.
         try:
-            if not np.allclose(vals, np.round(vals), atol=1e-9):
+            # Acquisition gaps are missing IDs, not evidence against an ID
+            # column. Relative tolerance would also classify large fractional
+            # measurements as integers, so use only absolute tolerance.
+            vals = vals[np.isfinite(vals)]
+            if len(vals) == 0:
+                continue
+            if not np.allclose(vals, np.round(vals), atol=1e-9, rtol=0):
                 continue
             n_unique = len(np.unique(vals))
         except (TypeError, ValueError):
@@ -49,12 +53,17 @@ def autosplit(name: str, col: str, ignore_zero: bool = True,
         raise FileNotFoundError(name)
     tcol = meta["time_column"]
     fs = float(meta["fs_hz"])
+    if not np.isfinite(min_len_s) or min_len_s < 0:
+        raise ValueError("min_len_s must be a finite value >= 0")
     df = (pl.scan_parquet(TESTS_DIR / name / "data.parquet")
-          .select([tcol, col]).collect())
+          .select(list(dict.fromkeys([tcol, col]))).collect())
     t = df[tcol].to_numpy()
     v = df[col].to_numpy().astype(np.float64)
+    if not len(v):
+        return []
 
-    # run boundaries: value changes (NaN != NaN so NaN blocks break runs too)
+    # Consecutive NaNs form one missing-ID run; valid runs either side stay
+    # separate. Missing and infinite values never produce a proposed point.
     prev, curr = v[:-1], v[1:]
     changed = (curr != prev) & ~(np.isnan(curr) & np.isnan(prev))
     starts = np.concatenate([[0], np.nonzero(changed)[0] + 1])
@@ -63,11 +72,14 @@ def autosplit(name: str, col: str, ignore_zero: bool = True,
     tps = []
     for st, en in zip(starts, ends):
         val = v[st]
-        if np.isnan(val):
+        if not np.isfinite(val):
             continue
         if ignore_zero and val == 0:
             continue
-        if t[en - 1] - t[st] < min_len_s:
+        # N samples occupy N/fs seconds in a half-open point. Measuring from
+        # the first to last sample rejects runs exactly at the requested
+        # minimum, and timestamp subtraction adds rounding errors at late runs.
+        if (en - st) / fs < min_len_s:
             continue
         # end_idx is EXCLUSIVE (range is [st, en)); end_s must be the matching
         # exclusive-boundary TIME, i.e. the next run's first sample (or one

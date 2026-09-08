@@ -49,15 +49,6 @@ interface MenuPosition {
   maxHeight: number;
 }
 
-const focusableSelector = [
-  'a[href]',
-  'button:not([disabled])',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  '[tabindex]:not([tabindex="-1"])',
-].join(',');
-
 function normalize(value: string): string {
   return value
     .normalize('NFKD')
@@ -134,6 +125,7 @@ export const SearchableSelect = ({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const listboxRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listboxId = useId();
   const statusId = useId();
@@ -164,7 +156,7 @@ export const SearchableSelect = ({
     const gap = 6;
     const viewportWidth = document.documentElement.clientWidth;
     const viewportHeight = document.documentElement.clientHeight;
-    const availableWidth = Math.max(180, viewportWidth - viewportPadding * 2);
+    const availableWidth = Math.max(0, viewportWidth - viewportPadding * 2);
     const width = Math.min(
       Math.max(rect.width, Math.min(menuMinWidth, availableWidth)),
       Math.min(menuMaxWidth, availableWidth)
@@ -176,7 +168,7 @@ export const SearchableSelect = ({
     const roomBelow = viewportHeight - rect.bottom - gap - viewportPadding;
     const roomAbove = rect.top - gap - viewportPadding;
     const openAbove = roomBelow < 230 && roomAbove > roomBelow;
-    const availableHeight = Math.max(120, openAbove ? roomAbove : roomBelow);
+    const availableHeight = Math.max(0, openAbove ? roomAbove : roomBelow);
     const maxHeight = Math.min(368, availableHeight);
 
     setPlacement(openAbove ? 'above' : 'below');
@@ -218,6 +210,13 @@ export const SearchableSelect = ({
   }, [isOpen, updateMenuPosition]);
 
   useEffect(() => {
+    if (disabled || options.length === 0) {
+      setIsOpen(false);
+      setQuery('');
+    }
+  }, [disabled, options.length]);
+
+  useEffect(() => {
     if (!isOpen) return;
 
     const onPointerDown = (event: PointerEvent) => {
@@ -231,7 +230,7 @@ export const SearchableSelect = ({
       closeMenu();
     };
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
       event.preventDefault();
       closeMenu(true);
     };
@@ -252,23 +251,19 @@ export const SearchableSelect = ({
 
   useEffect(() => {
     if (!isOpen) return;
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       if (searchable) searchRef.current?.focus();
-      else menuRef.current?.focus();
+      else listboxRef.current?.focus();
+      const selected = menuRef.current?.querySelector('[aria-selected="true"]');
+      selected?.scrollIntoView({ block: 'nearest' });
     });
+    return () => cancelAnimationFrame(frame);
   }, [isOpen, searchable]);
 
   useEffect(() => {
     if (!isOpen) return;
     setActiveIndex(selectedVisibleIndex >= 0 ? selectedVisibleIndex : firstEnabledIndex);
-  }, [
-    firstEnabledIndex,
-    isOpen,
-    query,
-    selectedVisibleIndex,
-    value,
-    visibleOptionsKey,
-  ]);
+  }, [firstEnabledIndex, isOpen, query, selectedVisibleIndex, value, visibleOptionsKey]);
 
   const focusOption = (index: number) => {
     setActiveIndex(index);
@@ -281,7 +276,7 @@ export const SearchableSelect = ({
 
   const moveActive = (direction: 1 | -1) => {
     if (visibleOptions.length === 0) return;
-    let next = activeIndex;
+    let next = activeIndex < 0 && direction === -1 ? 0 : activeIndex;
     for (let checked = 0; checked < visibleOptions.length; checked += 1) {
       next = (next + direction + visibleOptions.length) % visibleOptions.length;
       if (!visibleOptions[next].disabled) {
@@ -291,37 +286,26 @@ export const SearchableSelect = ({
     }
   };
 
-  const chooseOption = (option: SearchableSelectOption) => {
-    if (option.disabled) return;
+  const chooseOption = (option: SearchableSelectOption | undefined) => {
+    if (!option || option.disabled) return;
     onChange(option.value);
     closeMenu(true);
   };
 
-  const focusAdjacentControl = (backwards: boolean) => {
-    const controls = Array.from(document.querySelectorAll<HTMLElement>(focusableSelector)).filter(
-      (element) =>
-        !menuRef.current?.contains(element) &&
-        element.getAttribute('aria-hidden') !== 'true' &&
-        element.getClientRects().length > 0
-    );
-    const triggerIndex = triggerRef.current ? controls.indexOf(triggerRef.current) : -1;
-    const nextIndex = triggerIndex + (backwards ? -1 : 1);
-    closeMenu();
-    controls[nextIndex]?.focus();
-  };
-
   const handleMenuKeyDown = (event: ReactKeyboardEvent) => {
+    if (event.nativeEvent.isComposing) return;
+    const editingQuery = event.target === searchRef.current;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       moveActive(1);
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       moveActive(-1);
-    } else if (event.key === 'Home') {
+    } else if (event.key === 'Home' && !editingQuery) {
       event.preventDefault();
       const firstEnabled = visibleOptions.findIndex((option) => !option.disabled);
       if (firstEnabled >= 0) focusOption(firstEnabled);
-    } else if (event.key === 'End') {
+    } else if (event.key === 'End' && !editingQuery) {
       event.preventDefault();
       let lastEnabled = -1;
       for (let index = visibleOptions.length - 1; index >= 0; index -= 1) {
@@ -331,12 +315,22 @@ export const SearchableSelect = ({
         }
       }
       if (lastEnabled >= 0) focusOption(lastEnabled);
-    } else if (event.key === 'Enter' && activeIndex >= 0) {
+    } else if (
+      (event.key === 'Enter' || (event.key === ' ' && !editingQuery)) &&
+      activeIndex >= 0
+    ) {
       event.preventDefault();
       chooseOption(visibleOptions[activeIndex]);
-    } else if (event.key === 'Tab') {
+    } else if (event.key === 'Escape') {
       event.preventDefault();
-      focusAdjacentControl(event.shiftKey);
+      event.stopPropagation();
+      closeMenu(true);
+    } else if (event.key === 'Tab') {
+      // The menu is portaled at the end of the document. Return to the trigger
+      // before native Tab navigation so hidden/inert controls and tab order
+      // are handled by the browser, including at the document boundaries.
+      triggerRef.current?.focus();
+      closeMenu();
     }
   };
 
@@ -373,9 +367,9 @@ export const SearchableSelect = ({
           ref={menuRef}
           className={styles.menu}
           data-placement={placement}
+          data-searchable={searchable || undefined}
           style={menuPosition}
           onKeyDown={handleMenuKeyDown}
-          tabIndex={searchable ? undefined : -1}
         >
           {searchable && (
             <div className={styles.searchBar}>
@@ -383,13 +377,16 @@ export const SearchableSelect = ({
               <input
                 ref={searchRef}
                 type="search"
+                role="combobox"
+                aria-expanded={true}
+                aria-autocomplete="list"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={searchPlaceholder ?? `Search ${pluralNoun}...`}
                 aria-label={searchPlaceholder ?? `Search ${pluralNoun}`}
                 aria-controls={listboxId}
                 aria-activedescendant={
-                  activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined
+                  visibleOptions[activeIndex] ? `${listboxId}-option-${activeIndex}` : undefined
                 }
                 aria-describedby={statusId}
                 autoComplete="off"
@@ -412,7 +409,19 @@ export const SearchableSelect = ({
             </div>
           )}
 
-          <div id={listboxId} className={styles.optionList} role="listbox" aria-label={ariaLabel}>
+          <div
+            ref={listboxRef}
+            id={listboxId}
+            className={styles.optionList}
+            role="listbox"
+            aria-label={ariaLabel}
+            tabIndex={searchable ? undefined : -1}
+            aria-activedescendant={
+              !searchable && visibleOptions[activeIndex]
+                ? `${listboxId}-option-${activeIndex}`
+                : undefined
+            }
+          >
             {visibleOptions.length === 0 ? (
               <div className={styles.emptyState}>
                 <SearchIcon />
@@ -428,7 +437,11 @@ export const SearchableSelect = ({
 
                 return (
                   <div key={`${option.group ?? ''}:${option.value}`} role="presentation">
-                    {showGroup && <div className={styles.groupLabel}>{option.group}</div>}
+                    {showGroup && (
+                      <div className={styles.groupLabel} role="presentation">
+                        {option.group}
+                      </div>
+                    )}
                     <button
                       id={`${listboxId}-option-${index}`}
                       type="button"
@@ -438,7 +451,11 @@ export const SearchableSelect = ({
                       aria-disabled={option.disabled || undefined}
                       data-active={active || undefined}
                       disabled={option.disabled}
+                      title={
+                        option.description ? `${option.label}\n${option.description}` : option.label
+                      }
                       tabIndex={-1}
+                      onMouseDown={(event) => event.preventDefault()}
                       onPointerMove={() => {
                         if (!option.disabled && activeIndex !== index) setActiveIndex(index);
                       }}
@@ -484,13 +501,13 @@ export const SearchableSelect = ({
         ref={triggerRef}
         type="button"
         className={styles.trigger}
-        role="combobox"
+        role={searchable ? undefined : 'combobox'}
         aria-label={ariaLabel}
         aria-expanded={isOpen}
         aria-controls={isOpen ? listboxId : undefined}
         aria-haspopup="listbox"
         disabled={disabled || options.length === 0}
-        title={title}
+        title={title ?? selectedOption?.label}
         onClick={() => (isOpen ? closeMenu() : openMenu())}
         onKeyDown={handleTriggerKeyDown}
       >
