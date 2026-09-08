@@ -11,6 +11,7 @@ import {
 } from '../../services/api';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import {
+  DerivedVariableProvenance,
   EditOps,
   FormulaPreview,
   FormulaRecipe,
@@ -58,6 +59,12 @@ interface FormulaNotice {
   text: string;
 }
 
+interface FormulaDraftIssue {
+  text: string;
+  draftIndex?: number;
+  field?: 'name' | 'expression';
+}
+
 const FORMULA_INSERTS = [
   { label: '+', text: ' + ' },
   { label: '−', text: ' - ' },
@@ -70,6 +77,11 @@ const FORMULA_INSERTS = [
   { label: 'max', text: 'max(, )', caret: 4 },
   { label: 'IF', text: 'IF(, , )', caret: 3 },
 ] as const;
+
+// Keep the editor aligned with the API's defensive batch ceiling. Normal
+// workflows are expected to use roughly 10-20 rows, but larger saved recipes
+// remain editable without being truncated.
+const MAX_FORMULA_DRAFTS = 64;
 
 let nextFormulaDraftId = 1;
 
@@ -92,31 +104,104 @@ function activeFormulaSpecs(drafts: FormulaDraft[]): FormulaSpec[] {
     }));
 }
 
-function formulaDraftError(
+function formulaReferences(expression: string): string[] {
+  const references: string[] = [];
+  const pattern = /\{([^{}]+)\}/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(expression)) !== null) {
+    const name = match[1].trim();
+    if (name && !references.includes(name)) references.push(name);
+  }
+  return references;
+}
+
+function formulaDraftIssue(
   drafts: FormulaDraft[],
   columns: string[],
   timeColumn: string
-): string {
-  const formulas = activeFormulaSpecs(drafts);
-  if (!formulas.length) return 'Add at least one equation.';
+): FormulaDraftIssue | null {
+  const formulas = drafts.flatMap((draft, draftIndex) => {
+    const name = draft.name.trim();
+    const expression = draft.expression.trim();
+    return name || expression
+      ? [{ name, expression, replace: Boolean(draft.replace), draftIndex }]
+      : [];
+  });
+  if (!formulas.length) {
+    return {
+      text: 'Add at least one equation.',
+      draftIndex: 0,
+      field: 'name',
+    };
+  }
+  if (formulas.length > MAX_FORMULA_DRAFTS) {
+    return {
+      text: `An equation batch cannot exceed ${MAX_FORMULA_DRAFTS} equations.`,
+    };
+  }
 
   const names = new Set<string>();
-  for (const formula of formulas) {
-    if (!formula.name || !formula.expression) {
-      return 'Every equation needs both a result name and an expression.';
+  const targetPositions = new Map(
+    formulas.map((formula, index) => [formula.name, index])
+  );
+  for (const [index, formula] of formulas.entries()) {
+    const prefix = `Equation ${formula.draftIndex + 1}`;
+    if (!formula.name) {
+      return {
+        text: `${prefix}: enter a result column.`,
+        draftIndex: formula.draftIndex,
+        field: 'name',
+      };
+    }
+    if (!formula.expression) {
+      return {
+        text: `${prefix}: enter an expression.`,
+        draftIndex: formula.draftIndex,
+        field: 'expression',
+      };
     }
     if (formula.name === timeColumn) {
-      return `The time column '${timeColumn}' is protected.`;
+      return {
+        text: `${prefix}: the time column '${timeColumn}' is protected.`,
+        draftIndex: formula.draftIndex,
+        field: 'name',
+      };
     }
     if (names.has(formula.name)) {
-      return `Result name '${formula.name}' appears more than once.`;
+      return {
+        text: `${prefix}: result name '${formula.name}' appears more than once.`,
+        draftIndex: formula.draftIndex,
+        field: 'name',
+      };
     }
     if (columns.includes(formula.name) && !formula.replace) {
-      return `'${formula.name}' already exists. Enable replace to overwrite it.`;
+      return {
+        text: `${prefix}: '${formula.name}' already exists. Enable replace to overwrite it.`,
+        draftIndex: formula.draftIndex,
+        field: 'name',
+      };
+    }
+    const references = formulaReferences(formula.expression);
+    if (references.includes(formula.name)) {
+      return {
+        text: `${prefix}: '${formula.name}' cannot reference itself. Saved equations must be reproducible.`,
+        draftIndex: formula.draftIndex,
+        field: 'expression',
+      };
+    }
+    const laterTarget = references.find(
+      (reference) => (targetPositions.get(reference) ?? -1) > index
+    );
+    if (laterTarget) {
+      return {
+        text: `${prefix}: '${formula.name}' uses later result '${laterTarget}'. Move '${laterTarget}' earlier.`,
+        draftIndex: formula.draftIndex,
+        field: 'expression',
+      };
     }
     names.add(formula.name);
   }
-  return '';
+  return null;
 }
 
 function formatPreviewValue(value: number | null): string {
@@ -126,6 +211,74 @@ function formatPreviewValue(value: number | null): string {
     return value.toExponential(3);
   }
   return Number(value.toPrecision(7)).toLocaleString();
+}
+
+function appliedEquations(meta: TestMeta): DerivedVariableProvenance[] {
+  const value = meta.derived_variables;
+  const records: DerivedVariableProvenance[] = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object'
+      ? Object.entries(value).map(([name, record]) => ({ ...record, name }))
+      : [];
+  const columns = new Set(meta.columns);
+  const seen = new Set<string>();
+  return records.flatMap((record) => {
+    if (
+      !record ||
+      typeof record.name !== 'string' ||
+      typeof record.expression !== 'string' ||
+      !columns.has(record.name) ||
+      seen.has(record.name)
+    ) {
+      return [];
+    }
+    seen.add(record.name);
+    const dependencies = Array.isArray(record.dependencies)
+      ? record.dependencies.filter(
+          (dependency): dependency is string => typeof dependency === 'string'
+        )
+      : [];
+    const missingDependencies = dependencies.filter(
+      (dependency) => !columns.has(dependency)
+    );
+    return [
+      {
+        ...record,
+        dependencies,
+        missing_dependencies: missingDependencies,
+      },
+    ];
+  });
+}
+
+function dependentEquationNames(
+  target: string,
+  equations: DerivedVariableProvenance[]
+): string[] {
+  const affected = new Set([target]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const equation of equations) {
+      if (
+        affected.has(equation.name) ||
+        !(equation.dependencies ?? []).some((dependency) => affected.has(dependency))
+      ) {
+        continue;
+      }
+      affected.add(equation.name);
+      changed = true;
+    }
+  }
+  return equations
+    .map((equation) => equation.name)
+    .filter((name) => name !== target && affected.has(name));
+}
+
+function formatFormulaTimestamp(value?: string | null): string {
+  if (!value) return '';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleString();
 }
 
 function metaRows(userMeta: TestMeta['user_meta']): MetaRow[] {
@@ -185,10 +338,17 @@ export default function EditView({
     useState<FormulaPreview | null>(null);
   const [formulaNotice, setFormulaNotice] =
     useState<FormulaNotice | null>(null);
+  const formulaRowListRef = useRef<HTMLDivElement | null>(null);
+  const nameRefs = useRef<Record<number, HTMLInputElement | null>>({});
   const expressionRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const moveUpRefs = useRef<Record<number, HTMLButtonElement | null>>({});
+  const moveDownRefs = useRef<Record<number, HTMLButtonElement | null>>({});
+  const removeRefs = useRef<Record<number, HTMLButtonElement | null>>({});
   const [recipes, setRecipes] = useState<FormulaRecipe[]>([]);
   const [selectedRecipe, setSelectedRecipe] = useState('');
   const [recipeName, setRecipeName] = useState('');
+  const [editingDerivedName, setEditingDerivedName] = useState<string | null>(null);
+  const savedEquations = appliedEquations(meta);
 
   useEffect(() => {
     let cancelled = false;
@@ -216,6 +376,7 @@ export default function EditView({
     setFormulaDrafts([blank]);
     setActiveFormulaId(blank.id);
     setSelectedVariable(firstColumn);
+    setEditingDerivedName(null);
     setFormulaPreview(null);
     setFormulaNotice(null);
   }, [test, columnSignature, firstColumn]);
@@ -289,21 +450,84 @@ export default function EditView({
   }, [test, meta.nan_policy, meta.t_start, meta.duration_s]);
 
   const formulaSpecs = activeFormulaSpecs(formulaDrafts);
-  const formulaValidation = formulaDraftError(
+  const formulaIssue = formulaDraftIssue(
     formulaDrafts,
     meta.columns,
     meta.time_column
   );
-  const formulasDirty = formulaSpecs.length > 0;
+  const formulaValidation = formulaIssue?.text ?? '';
+  const editingOriginal = editingDerivedName
+    ? savedEquations.find((record) => record.name === editingDerivedName)
+    : undefined;
+  const formulasDirty = editingOriginal
+    ? formulaSpecs.length !== 1 ||
+      formulaSpecs[0].name !== editingOriginal.name ||
+      formulaSpecs[0].expression !== editingOriginal.expression
+    : formulaSpecs.length > 0;
+  const cascadingDependents = Array.from(
+    new Set(
+      formulaSpecs.flatMap((spec) =>
+        dependentEquationNames(spec.name, savedEquations)
+      )
+    )
+  ).filter((name) => !formulaSpecs.some((spec) => spec.name === name));
 
   const clearFormulaDrafts = () => {
     const blank = createFormulaDraft();
     setFormulaDrafts([blank]);
     setActiveFormulaId(blank.id);
+    setEditingDerivedName(null);
     setSelectedRecipe('');
     setRecipeName('');
     setFormulaPreview(null);
     setFormulaNotice(null);
+  };
+
+  const editAppliedEquation = async (record: DerivedVariableProvenance) => {
+    if (pendingAction) return;
+    if (
+      formulasDirty &&
+      !(await confirmAction({
+        title: `Edit saved equation '${record.name}'?`,
+        description: 'The current unsaved equation draft will be replaced.',
+        detail: 'Applied test data will not change until you preview and rebuild.',
+        confirmLabel: 'Load equation',
+        tone: 'warning',
+      }))
+    ) {
+      return;
+    }
+
+    const draft = createFormulaDraft({
+      name: record.name,
+      expression: record.expression,
+      replace: true,
+    });
+    const dependents = dependentEquationNames(record.name, savedEquations);
+    const missing = record.missing_dependencies ?? [];
+    setFormulaDrafts([draft]);
+    setActiveFormulaId(draft.id);
+    setEditingDerivedName(record.name);
+    setSelectedRecipe('');
+    setRecipeName('');
+    setFormulaPreview(null);
+    setFormulaNotice({
+      kind: missing.length ? 'error' : 'info',
+      text: missing.length
+        ? `Loaded '${record.name}'. Repair missing reference${
+            missing.length === 1 ? '' : 's'
+          }: ${missing.join(', ')}.`
+        : dependents.length
+          ? `Loaded '${record.name}'. Applying it will also recalculate: ${dependents.join(
+              ', '
+            )}.`
+          : `Loaded '${record.name}' for editing. Its result name is locked.`,
+    });
+    window.requestAnimationFrame(() => {
+      const input = expressionRefs.current[draft.id];
+      input?.focus();
+      input?.select();
+    });
   };
 
   const updateFormulaDraft = (
@@ -317,29 +541,110 @@ export default function EditView({
     setFormulaNotice(null);
   };
 
+  const focusFormulaName = (id: number, resetListScroll = false) => {
+    window.requestAnimationFrame(() => {
+      if (resetListScroll && formulaRowListRef.current) {
+        formulaRowListRef.current.scrollTop = 0;
+        formulaRowListRef.current.scrollLeft = 0;
+      }
+      const input = nameRefs.current[id];
+      input?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      input?.focus();
+    });
+  };
+
+  const showFormulaValidation = (): boolean => {
+    if (!formulaIssue) return false;
+    setFormulaNotice({ kind: 'error', text: formulaIssue.text });
+    const draft = formulaDrafts[formulaIssue.draftIndex ?? 0];
+    if (!draft) return true;
+    setActiveFormulaId(draft.id);
+    window.requestAnimationFrame(() => {
+      const input =
+        formulaIssue.field === 'expression'
+          ? expressionRefs.current[draft.id]
+          : nameRefs.current[draft.id];
+      input?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      input?.focus();
+    });
+    return true;
+  };
+
   const addFormulaDraft = () => {
+    if (formulaDrafts.length >= MAX_FORMULA_DRAFTS) {
+      setFormulaNotice({
+        kind: 'error',
+        text: `An equation batch cannot exceed ${MAX_FORMULA_DRAFTS} rows.`,
+      });
+      return;
+    }
     const draft = createFormulaDraft();
     setFormulaDrafts((current) => [...current, draft]);
     setActiveFormulaId(draft.id);
     setFormulaPreview(null);
     setFormulaNotice(null);
-    window.requestAnimationFrame(() => expressionRefs.current[draft.id]?.focus());
+    focusFormulaName(draft.id);
   };
 
   const removeFormulaDraft = (id: number) => {
-    setFormulaDrafts((current) => {
-      const remaining = current.filter((draft) => draft.id !== id);
-      if (remaining.length) {
-        if (activeFormulaId === id) setActiveFormulaId(remaining[0].id);
-        return remaining;
-      }
-      const blank = createFormulaDraft();
-      setActiveFormulaId(blank.id);
-      return [blank];
-    });
+    const removedIndex = formulaDrafts.findIndex((draft) => draft.id === id);
+    if (removedIndex < 0) return;
+    const remaining = formulaDrafts.filter((draft) => draft.id !== id);
+    const nextDrafts = remaining.length ? remaining : [createFormulaDraft()];
+    const nextActive = nextDrafts[Math.min(removedIndex, nextDrafts.length - 1)];
+    const preservedActive = remaining.find(
+      (draft) => draft.id === activeFormulaId
+    );
+    setFormulaDrafts(nextDrafts);
+    setActiveFormulaId(preservedActive?.id ?? nextActive.id);
+    delete nameRefs.current[id];
     delete expressionRefs.current[id];
+    delete moveUpRefs.current[id];
+    delete moveDownRefs.current[id];
+    delete removeRefs.current[id];
     setFormulaPreview(null);
     setFormulaNotice(null);
+    if (preservedActive) {
+      window.requestAnimationFrame(() => {
+        const button = removeRefs.current[nextActive.id];
+        button?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        button?.focus();
+      });
+    } else {
+      focusFormulaName(nextActive.id);
+    }
+  };
+
+  const moveFormulaDraft = (id: number, offset: -1 | 1) => {
+    const index = formulaDrafts.findIndex((draft) => draft.id === id);
+    const targetIndex = index + offset;
+    if (index < 0 || targetIndex < 0 || targetIndex >= formulaDrafts.length) {
+      return;
+    }
+    const reordered = [...formulaDrafts];
+    [reordered[index], reordered[targetIndex]] = [
+      reordered[targetIndex],
+      reordered[index],
+    ];
+    setFormulaDrafts(reordered);
+    setActiveFormulaId(id);
+    setFormulaPreview(null);
+    setFormulaNotice(null);
+    window.requestAnimationFrame(() => {
+      const canContinue =
+        offset === -1
+          ? targetIndex > 0
+          : targetIndex < formulaDrafts.length - 1;
+      const button = canContinue
+        ? offset === -1
+          ? moveUpRefs.current[id]
+          : moveDownRefs.current[id]
+        : offset === -1
+          ? moveDownRefs.current[id]
+          : moveUpRefs.current[id];
+      button?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      button?.focus();
+    });
   };
 
   const insertFormulaText = (text: string, caretOffset = text.length) => {
@@ -369,19 +674,26 @@ export default function EditView({
 
   const runFormulaPreview = async () => {
     if (pendingAction) return;
-    if (formulaValidation) {
-      setFormulaNotice({ kind: 'error', text: formulaValidation });
-      return;
-    }
+    if (showFormulaValidation()) return;
     try {
       setPendingAction('Previewing equations');
       const result = await previewFormulas(test, formulaSpecs);
+      const cascadedCount = Math.max(
+        0,
+        result.formulas.length - formulaSpecs.length
+      );
       setFormulaPreview(result);
       setFormulaNotice({
         kind: 'success',
         text: `${result.formulas.length} equation${
           result.formulas.length === 1 ? '' : 's'
-        } validated on ${result.sample_size} sample rows.`,
+        } validated on ${result.sample_size} sample rows.${
+          cascadedCount
+            ? ` Includes ${cascadedCount} saved dependent equation${
+                cascadedCount === 1 ? '' : 's'
+              }.`
+            : ''
+        }`,
       });
     } catch (error) {
       setFormulaPreview(null);
@@ -414,12 +726,14 @@ export default function EditView({
       : [createFormulaDraft()];
     setFormulaDrafts(nextDrafts);
     setActiveFormulaId(nextDrafts[0].id);
+    setEditingDerivedName(null);
     setRecipeName(recipe.name);
     setFormulaPreview(null);
     setFormulaNotice({
       kind: 'info',
       text: `Loaded '${recipe.name}'. Preview it against this test before applying.`,
     });
+    focusFormulaName(nextDrafts[0].id, true);
   };
 
   const saveRecipe = async () => {
@@ -429,10 +743,7 @@ export default function EditView({
       setFormulaNotice({ kind: 'error', text: 'Enter a recipe name.' });
       return;
     }
-    if (formulaValidation) {
-      setFormulaNotice({ kind: 'error', text: formulaValidation });
-      return;
-    }
+    if (showFormulaValidation()) return;
     const replacesRecipe = recipes.some((recipe) => recipe.name === name);
     if (
       replacesRecipe &&
@@ -508,7 +819,8 @@ export default function EditView({
     ops: EditOps,
     what: string,
     onApplied: () => void,
-    discardedDrafts: string[] = []
+    discardedDrafts: string[] = [],
+    additionalDetail = ''
   ) => {
     if (pendingAction) return;
     const draftWarning = discardedDrafts.length
@@ -518,7 +830,9 @@ export default function EditView({
       !(await confirmAction({
         title: 'Rebuild test data?',
         description: `${what}.${draftWarning}`,
-        detail: "This rewrites the test's data and pyramid. The test will be unavailable until the rebuild finishes.",
+        detail: `This rewrites the test's data and pyramid. The test will be unavailable until the rebuild finishes.${
+          additionalDetail ? ` ${additionalDetail}` : ''
+        }`,
         confirmLabel: 'Rebuild test',
         tone: 'warning',
       }))
@@ -539,23 +853,22 @@ export default function EditView({
   };
 
   const applyFormulas = () => {
-    if (formulaValidation) {
-      setFormulaNotice({ kind: 'error', text: formulaValidation });
-      return;
-    }
+    if (showFormulaValidation()) return;
     const replacements = formulaSpecs.filter((formula) => formula.replace).length;
-    const summary = [
-      `materialize ${formulaSpecs.length} derived variable${
-        formulaSpecs.length === 1 ? '' : 's'
-      }`,
-      replacements
-        ? `replace ${replacements} existing column${
-            replacements === 1 ? '' : 's'
-          }`
-        : '',
-    ]
-      .filter(Boolean)
-      .join(' + ');
+    const summary = editingDerivedName
+      ? `update saved derived variable '${editingDerivedName}'`
+      : [
+          `materialize ${formulaSpecs.length} derived variable${
+            formulaSpecs.length === 1 ? '' : 's'
+          }`,
+          replacements
+            ? `replace ${replacements} existing column${
+                replacements === 1 ? '' : 's'
+              }`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' + ');
     runRebuild(
       { formulas: formulaSpecs },
       summary,
@@ -566,7 +879,12 @@ export default function EditView({
         nanPolicyDirty ? 'NaN-policy' : '',
         trimDirty ? 'trim' : '',
         columnsDirty ? 'column-change' : '',
-      ].filter(Boolean)
+      ].filter(Boolean),
+      cascadingDependents.length
+        ? `Saved dependent equations will be recalculated in dependency order: ${cascadingDependents.join(
+            ', '
+          )}.`
+        : ''
     );
   };
 
@@ -773,6 +1091,7 @@ export default function EditView({
 
   return (
     <fieldset
+      className="edit-view"
       disabled={Boolean(pendingAction)}
       aria-busy={Boolean(pendingAction)}
       style={{
@@ -907,10 +1226,11 @@ export default function EditView({
             <div className="section-title edit-formula-title">
               Derived variables
               <span className="badge">{formulaSpecs.length} drafted</span>
+              <span className="badge">{savedEquations.length} applied</span>
             </div>
             <div className="edit-formula-subtitle">
-              Build new columns from existing variables. Equations run from top
-              to bottom, so a later row can use an earlier result.
+              Build new columns or update equations saved with this test. Drafts
+              run from top to bottom, so a later row can use an earlier result.
             </div>
           </div>
           <div className="edit-formula-recipe">
@@ -966,6 +1286,98 @@ export default function EditView({
             </button>
           </div>
         </div>
+
+        <section
+          className="edit-formula-applied"
+          aria-labelledby="edit-formula-applied-title"
+        >
+          <div className="edit-formula-applied-heading">
+            <div>
+              <div id="edit-formula-applied-title">Applied equations</div>
+              <span>
+                Saved automatically with this test when a derived variable is
+                built.
+              </span>
+            </div>
+            {editingDerivedName && (
+              <span className="badge">editing {editingDerivedName}</span>
+            )}
+          </div>
+          {savedEquations.length ? (
+            <div className="edit-formula-applied-list" role="list">
+              {savedEquations.map((record) => {
+                const dependents = dependentEquationNames(
+                  record.name,
+                  savedEquations
+                );
+                const missingDependencies = record.missing_dependencies ?? [];
+                const updatedAt = formatFormulaTimestamp(record.updated_at);
+                const isEditing = editingDerivedName === record.name;
+                return (
+                  <div
+                    className={`edit-formula-applied-row${
+                      isEditing ? ' is-editing' : ''
+                    }${missingDependencies.length ? ' has-warning' : ''}`}
+                    key={record.name}
+                    role="listitem"
+                  >
+                    <div className="edit-formula-applied-body">
+                      <div className="edit-formula-applied-equation">
+                        <span className="edit-formula-sr-only">
+                          {record.name} equals {record.expression}
+                        </span>
+                        <code
+                          className="edit-formula-applied-name"
+                          aria-hidden="true"
+                        >
+                          {record.name}
+                        </code>
+                        <span aria-hidden="true">=</span>
+                        <code
+                          className="edit-formula-applied-expression"
+                          aria-hidden="true"
+                        >
+                          {record.expression}
+                        </code>
+                      </div>
+                      <div className="edit-formula-applied-meta">
+                        <span>
+                          {record.dependencies?.length
+                            ? `uses ${record.dependencies.join(', ')}`
+                            : 'uses constants only'}
+                        </span>
+                        {dependents.length > 0 && (
+                          <span>
+                            {dependents.length} dependent equation
+                            {dependents.length === 1 ? '' : 's'}
+                          </span>
+                        )}
+                        {updatedAt && <span>updated {updatedAt}</span>}
+                        {missingDependencies.length > 0 && (
+                          <span className="edit-formula-applied-warning">
+                            missing {missingDependencies.join(', ')}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      className="btn edit-formula-applied-edit"
+                      onClick={() => void editAppliedEquation(record)}
+                      disabled={Boolean(pendingAction) || isEditing}
+                      aria-label={`Edit applied equation ${record.name}`}
+                    >
+                      {isEditing ? 'editing' : 'edit'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="edit-formula-applied-empty">
+              No equations have been applied to this test yet.
+            </div>
+          )}
+        </section>
 
         <div className="edit-formula-insert-bar">
           <span className="edit-formula-insert-label">
@@ -1023,89 +1435,187 @@ export default function EditView({
           <code>e</code>, <code>nan</code>.
         </div>
 
-        <div className="edit-formula-row-list">
+        <div className="edit-formula-batch-toolbar">
+          <div>
+            <strong>Equation batch</strong>
+            <span aria-live="polite">
+              {formulaDrafts.length} row{formulaDrafts.length === 1 ? '' : 's'}
+            </span>
+            <small>
+              Designed for batches of 10–20; maximum {MAX_FORMULA_DRAFTS}.
+              Put dependencies first.
+            </small>
+          </div>
+          <button
+            type="button"
+            className="btn edit-formula-add"
+            onClick={addFormulaDraft}
+            disabled={
+              Boolean(editingDerivedName) ||
+              formulaDrafts.length >= MAX_FORMULA_DRAFTS
+            }
+            title={
+              editingDerivedName
+                ? 'Finish or cancel the applied-equation edit first'
+                : formulaDrafts.length >= MAX_FORMULA_DRAFTS
+                  ? `Maximum ${MAX_FORMULA_DRAFTS} equations per batch`
+                  : 'Add another equation to this batch'
+            }
+          >
+            + add equation
+          </button>
+        </div>
+
+        <div
+          ref={formulaRowListRef}
+          className="edit-formula-row-list"
+          role="list"
+          aria-label="Equation batch editor"
+        >
           <div className="edit-formula-row edit-formula-row-header" aria-hidden="true">
             <span>order</span>
             <span>result column</span>
             <span />
             <span>expression</span>
             <span>existing name</span>
-            <span />
+            <span>actions</span>
           </div>
-          {formulaDrafts.map((draft, index) => (
-            <div
-              key={draft.id}
-              className={`edit-formula-row${
-                draft.id === activeFormulaId ? ' is-active' : ''
-              }`}
-            >
-              <span
-                className="edit-formula-order"
-                title="Equations execute in this order"
+          {formulaDrafts.map((draft, index) => {
+            const isSavedTarget = editingDerivedName === draft.name;
+            return (
+              <div
+                key={draft.id}
+                role="listitem"
+                aria-label={`Equation ${index + 1} of ${formulaDrafts.length}`}
+                className={`edit-formula-row${
+                  draft.id === activeFormulaId ? ' is-active' : ''
+                }`}
               >
-                {index + 1}
-              </span>
-              <input
-                className="input edit-formula-name"
-                aria-label={`Equation ${index + 1} result column`}
-                placeholder="new_column"
-                value={draft.name}
-                onFocus={() => setActiveFormulaId(draft.id)}
-                onChange={(event) =>
-                  updateFormulaDraft(draft.id, { name: event.target.value })
-                }
-              />
-              <span className="edit-formula-equals" aria-hidden="true">
-                =
-              </span>
-              <input
-                ref={(input) => {
-                  expressionRefs.current[draft.id] = input;
-                }}
-                className="input edit-formula-expression"
-                aria-label={`Equation ${index + 1} expression`}
-                placeholder="{variable_a} / {variable_b}"
-                value={draft.expression}
-                onClick={() => setActiveFormulaId(draft.id)}
-                onFocus={() => setActiveFormulaId(draft.id)}
-                onSelect={() => setActiveFormulaId(draft.id)}
-                onChange={(event) =>
-                  updateFormulaDraft(draft.id, {
-                    expression: event.target.value,
-                  })
-                }
-              />
-              <label
-                className="edit-formula-replace"
-                title="Required when the result uses an existing column name"
-              >
+                <span
+                  className="edit-formula-order"
+                  title="Equations execute in this order"
+                >
+                  {index + 1}
+                </span>
                 <input
-                  type="checkbox"
-                  checked={Boolean(draft.replace)}
+                  ref={(input) => {
+                    nameRefs.current[draft.id] = input;
+                  }}
+                  className={`input edit-formula-name${
+                    isSavedTarget ? ' is-locked' : ''
+                  }`}
+                  aria-label={`Equation ${index + 1} result column`}
+                  placeholder="new_column"
+                  value={draft.name}
+                  readOnly={isSavedTarget}
+                  title={
+                    isSavedTarget
+                      ? 'The result name is locked while editing an applied equation. Rename it with the column controls.'
+                      : undefined
+                  }
+                  onFocus={() => setActiveFormulaId(draft.id)}
+                  onChange={(event) =>
+                    updateFormulaDraft(draft.id, { name: event.target.value })
+                  }
+                />
+                <span className="edit-formula-equals" aria-hidden="true">
+                  =
+                </span>
+                <input
+                  ref={(input) => {
+                    expressionRefs.current[draft.id] = input;
+                  }}
+                  className="input edit-formula-expression"
+                  aria-label={`Equation ${index + 1} expression`}
+                  placeholder="{variable_a} / {variable_b}"
+                  value={draft.expression}
+                  onClick={() => setActiveFormulaId(draft.id)}
+                  onFocus={() => setActiveFormulaId(draft.id)}
+                  onSelect={() => setActiveFormulaId(draft.id)}
                   onChange={(event) =>
                     updateFormulaDraft(draft.id, {
-                      replace: event.target.checked,
+                      expression: event.target.value,
                     })
                   }
                 />
-                replace
-              </label>
-              <button
-                className="btn edit-formula-remove"
-                aria-label={`Remove equation ${index + 1}`}
-                title={`Remove equation ${index + 1}`}
-                onClick={() => removeFormulaDraft(draft.id)}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+                <label
+                  className={`edit-formula-replace${
+                    isSavedTarget ? ' is-locked' : ''
+                  }`}
+                  title={
+                    isSavedTarget
+                      ? 'Applied equations always replace their materialized column'
+                      : 'Required when the result uses an existing column name'
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSavedTarget || Boolean(draft.replace)}
+                    disabled={isSavedTarget}
+                    onChange={(event) =>
+                      updateFormulaDraft(draft.id, {
+                        replace: event.target.checked,
+                      })
+                    }
+                  />
+                  replace
+                </label>
+                <div className="edit-formula-row-actions">
+                  <button
+                    ref={(button) => {
+                      moveUpRefs.current[draft.id] = button;
+                    }}
+                    type="button"
+                    className="btn edit-formula-move"
+                    aria-label={`Move equation ${index + 1} up`}
+                    title="Move equation earlier"
+                    onClick={() => moveFormulaDraft(draft.id, -1)}
+                    disabled={isSavedTarget || index === 0}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    ref={(button) => {
+                      moveDownRefs.current[draft.id] = button;
+                    }}
+                    type="button"
+                    className="btn edit-formula-move"
+                    aria-label={`Move equation ${index + 1} down`}
+                    title="Move equation later"
+                    onClick={() => moveFormulaDraft(draft.id, 1)}
+                    disabled={isSavedTarget || index === formulaDrafts.length - 1}
+                  >
+                    ↓
+                  </button>
+                  <button
+                    ref={(button) => {
+                      removeRefs.current[draft.id] = button;
+                    }}
+                    type="button"
+                    className="btn edit-formula-remove"
+                    aria-label={`Remove equation ${index + 1}`}
+                    title={
+                      isSavedTarget
+                        ? 'Use cancel edit below to leave this applied equation unchanged'
+                        : `Remove equation ${index + 1}`
+                    }
+                    onClick={() => removeFormulaDraft(draft.id)}
+                    disabled={isSavedTarget}
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         <div className="edit-formula-actions">
-          <button className="btn" onClick={addFormulaDraft}>
-            + equation
-          </button>
+          {editingDerivedName && (
+            <button className="btn" onClick={clearFormulaDrafts}>
+              cancel edit
+            </button>
+          )}
           <button
             className="btn"
             onClick={runFormulaPreview}
@@ -1121,8 +1631,9 @@ export default function EditView({
             apply &amp; rebuild
           </button>
           <span>
-            Preview is read-only. Apply materializes full-resolution columns and
-            rebuilds plot pyramids.
+            {editingDerivedName
+              ? 'The result name is locked. Preview and apply also recalculate saved dependent equations.'
+              : 'Preview is read-only. Apply materializes full-resolution columns and rebuilds plot pyramids.'}
           </span>
         </div>
 
@@ -1137,12 +1648,15 @@ export default function EditView({
                   : ''
             }`}
             role={
-              formulaNotice?.kind === 'error' ||
-              (!formulaNotice && formulaValidation)
-                ? 'alert'
-                : 'status'
+              formulaNotice?.kind === 'error' ? 'alert' : 'status'
             }
-            aria-live="polite"
+            aria-live={
+              formulaNotice?.kind === 'error'
+                ? 'assertive'
+                : formulaNotice
+                  ? 'polite'
+                  : 'off'
+            }
           >
             {formulaNotice?.text || formulaValidation}
           </div>

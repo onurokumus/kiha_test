@@ -526,7 +526,9 @@ gotchas), not human onboarding.
 
 - Upload is a five-route resumable protocol:
   `POST /api/uploads` initializes from
-  `{name,source_file,size_bytes,last_modified_ms,fs_hz}`;
+  `{name,source_file,uploader_name,size_bytes,last_modified_ms,fs_hz,time_mode,time_column}`
+  (`uploader_name` is UI-required self-reported attribution but remains optional
+  in the API for legacy sessions/clients);
   `GET /api/uploads/{id}?name=...` reports durable chunks;
   `PUT /api/uploads/{id}/chunks/{index}?name=...` accepts exactly one
   multipart `file` plus `X-Chunk-SHA256`;

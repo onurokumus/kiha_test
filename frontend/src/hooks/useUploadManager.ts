@@ -18,6 +18,7 @@ import {
   saveUploadRecord,
   UploadResumeRecord,
 } from '../services/uploadPersistence';
+import { normalizeUploaderName } from '../services/uploaderAttribution';
 import { TestInfo, UploadItem, UploadPhase } from '../types';
 
 interface Options {
@@ -87,6 +88,7 @@ function itemFromRecord(record: UploadResumeRecord, id: number): UploadItem {
   return {
     id,
     fileName: record.fileName,
+    uploaderName: record.uploaderName,
     testName: record.testName,
     progress: 0,
     phase: 'paused',
@@ -128,6 +130,9 @@ function uploadInit(
   return {
     name: item.testName,
     source_file: file.name,
+    ...(options.uploaderName
+      ? { uploader_name: options.uploaderName }
+      : {}),
     size_bytes: file.size,
     last_modified_ms: file.lastModified,
     ...(options.fsHz && options.fsHz > 0 ? { fs_hz: options.fsHz } : {}),
@@ -144,7 +149,11 @@ function resolveUploadOptions(
   const rawTimeColumn = selected?.timeColumn ?? '';
   const timeColumn =
     timeMode === 'column' ? rawTimeColumn : rawTimeColumn.trim();
+  const uploaderName = selected?.uploaderName
+    ? normalizeUploaderName(selected.uploaderName)
+    : '';
   return {
+    ...(uploaderName ? { uploaderName } : {}),
     fsHz: selected?.fsHz ?? fallbackFsHz,
     timeMode,
     ...(timeColumn.trim() ? { timeColumn } : {}),
@@ -165,11 +174,29 @@ function sameUploadOptions(
   const rightColumn =
     (rightMode === 'column' ? rightRawColumn : rightRawColumn.trim()) ||
     (rightMode === 'generated' ? 'time_s' : '');
+  const leftUploader = left?.uploaderName
+    ? normalizeUploaderName(left.uploaderName)
+    : '';
+  const rightUploader = right.uploaderName
+    ? normalizeUploaderName(right.uploaderName)
+    : '';
   return (
+    leftUploader === rightUploader &&
     leftMode === rightMode &&
     leftColumn === rightColumn &&
     left?.fsHz === right.fsHz
   );
+}
+
+function uploadOptionsFromSession(session: UploadSession): UploadDataOptions {
+  return {
+    ...(session.uploader_name ? { uploaderName: session.uploader_name } : {}),
+    ...(session.fs_hz !== null && session.fs_hz !== undefined
+      ? { fsHz: session.fs_hz }
+      : {}),
+    timeMode: session.time_mode ?? 'auto',
+    ...(session.time_column ? { timeColumn: session.time_column } : {}),
+  };
 }
 
 function validateDiscoveredSession(
@@ -202,13 +229,14 @@ export function useUploadManager({
   const itemsRef = useRef<UploadItem[]>(initialItems.current);
   const sequence = useRef(initialItems.current.length);
   const files = useRef(new Map<number, File>());
-  // Upload-init interpretation is immutable session identity. Keep the exact
-  // values selected for each item instead of silently switching on retry.
+  // Upload setup is immutable session identity. Keep the exact values selected
+  // for each item instead of silently switching attribution/time on retry.
   const uploadOptions = useRef<Map<number, UploadDataOptions>>(
     new Map(
       initialRecords.current.map((record, index) => [
         index + 1,
         {
+          uploaderName: record.uploaderName,
           fsHz: record.fsHz,
           timeMode: record.timeMode ?? 'auto',
           timeColumn: record.timeColumn,
@@ -262,8 +290,14 @@ export function useUploadManager({
   const rememberSession = useCallback(
     (id: number, session: UploadSession) => {
       sessionIds.current.set(id, session.upload_id);
+      const itemOptions = uploadOptions.current.get(id) ?? {};
+      const uploaderName = session.uploader_name ?? itemOptions.uploaderName;
+      if (uploaderName !== itemOptions.uploaderName) {
+        uploadOptions.current.set(id, { ...itemOptions, uploaderName });
+      }
       updateItem(id, {
         sessionId: session.upload_id,
+        uploaderName,
         totalChunks: session.total_chunks,
         committedBytes: session.received_bytes,
         completedChunks: session.received_chunks,
@@ -271,12 +305,12 @@ export function useUploadManager({
       const prior = loadUploadRecords().find(
         (record) => record.uploadId === session.upload_id
       );
-      const itemOptions = uploadOptions.current.get(id) ?? {};
       saveUploadRecord({
         version: 1,
         uploadId: session.upload_id,
         testName: session.name,
         fileName: session.source_file,
+        ...(uploaderName ? { uploaderName } : {}),
         sizeBytes: session.size_bytes,
         lastModifiedMs: session.last_modified_ms,
         ...(itemOptions.fsHz && itemOptions.fsHz > 0
@@ -385,7 +419,16 @@ export function useUploadManager({
             (sum, chunk) => sum + chunk.size,
             0
           );
+          const recordOptions = uploadOptions.current.get(item.id) ?? {};
+          const uploaderName =
+            session.uploader_name ?? recordOptions.uploaderName;
+          uploadOptions.current.set(item.id, {
+            ...recordOptions,
+            ...uploadOptionsFromSession(session),
+            ...(uploaderName ? { uploaderName } : {}),
+          });
           updateItem(item.id, {
+            uploaderName,
             progress:
               session.size_bytes > 0
                 ? Math.min(1, committedBytes / session.size_bytes)
@@ -606,7 +649,10 @@ export function useUploadManager({
       if (!uploadOptions.current.has(id)) {
         uploadOptions.current.set(
           id,
-          resolveUploadOptions(undefined, fsHz)
+          resolveUploadOptions(
+            { uploaderName: item.uploaderName },
+            fsHz
+          )
         );
       }
       paused.current.delete(id);
@@ -646,20 +692,15 @@ export function useUploadManager({
         );
       }
 
-      const authoritativeOptions: UploadDataOptions = {
-        ...(session.fs_hz !== null && session.fs_hz !== undefined
-          ? { fsHz: session.fs_hz }
-          : {}),
-        timeMode: session.time_mode ?? 'auto',
-        ...(session.time_column
-          ? { timeColumn: session.time_column }
-          : {}),
-      };
+      const authoritativeOptions = uploadOptionsFromSession(session);
       const existing = itemsRef.current.find(
         (item) => item.sessionId === session.upload_id
       );
       if (existing) {
         uploadOptions.current.set(existing.id, authoritativeOptions);
+        updateItem(existing.id, {
+          uploaderName: authoritativeOptions.uploaderName,
+        });
         if (existing.phase === 'paused' || existing.phase === 'error') {
           resumeUpload(existing.id, file);
         }
@@ -673,6 +714,7 @@ export function useUploadManager({
       const item: UploadItem = {
         id,
         fileName: session.source_file,
+        uploaderName: authoritativeOptions.uploaderName,
         testName: session.name,
         progress:
           session.size_bytes > 0
@@ -695,7 +737,7 @@ export function useUploadManager({
       canceled.current.delete(id);
       enqueue(id, file);
     },
-    [enqueue, rememberSession, resumeUpload, updateUploads]
+    [enqueue, rememberSession, resumeUpload, updateItem, updateUploads]
   );
 
   const startUploads = useCallback(
@@ -731,6 +773,7 @@ export function useUploadManager({
             {
               id,
               fileName: file.name,
+              uploaderName: resolvedOptions.uploaderName,
               testName: testName || '(invalid name)',
               progress: 0,
               phase: 'error',
@@ -761,11 +804,11 @@ export function useUploadManager({
             updateItem(resumable.id, {
               phase: 'error',
               error:
-                'this paused upload uses different time settings; cancel it ' +
+                'this paused upload uses different import settings; cancel it ' +
                 'before importing the file with the new setup',
             });
             onNotice(
-              `${file.name}: cancel the paused upload before changing its time setup`
+              `${file.name}: cancel the paused upload before changing its import setup`
             );
             continue;
           }
@@ -784,6 +827,7 @@ export function useUploadManager({
         const item: UploadItem = {
           id,
           fileName: file.name,
+          uploaderName: resolvedOptions.uploaderName,
           testName,
           progress: 0,
           phase: duplicate ? 'error' : 'queued',

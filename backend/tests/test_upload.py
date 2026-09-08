@@ -71,6 +71,7 @@ class UploadTests(DataDirTestCase):
         fs_hz: float | None = 10.0,
         time_mode: str = "auto",
         time_column: str | None = None,
+        uploader_name: str | None = None,
     ):
         payload = {
             "name": name,
@@ -81,6 +82,8 @@ class UploadTests(DataDirTestCase):
             "time_mode": time_mode,
             "time_column": time_column,
         }
+        if uploader_name is not None:
+            payload["uploader_name"] = uploader_name
         response = self.client.post("/api/uploads", json=payload)
         return response
 
@@ -181,6 +184,53 @@ class UploadTests(DataDirTestCase):
         self.assertEqual(second["size_bytes"], first["size_bytes"])
         self.assertEqual(
             [p.name for p in self.tests.iterdir()], ["alpha"])
+
+    def test_init_normalizes_and_persists_uploader_provenance(self):
+        body = small_csv()
+        session = self.init_ok(
+            body, uploader_name="  Jose\u0301 / Лабораторія  ")
+        expected = "José / Лабораторія"
+
+        self.assertEqual(session["uploader_name"], expected)
+        fetched = self.get_session(session["upload_id"])
+        self.assertEqual(fetched.status_code, 200, fetched.text)
+        self.assertEqual(fetched.json()["uploader_name"], expected)
+
+        directory = self.tests / "alpha"
+        manifest = json.loads(
+            (directory / ".upload" / "manifest.json").read_text())
+        self.assertEqual(manifest["uploader_name"], expected)
+        self.assertEqual(store.get_status("alpha")["uploader_name"], expected)
+        row = next(
+            row for row in store.list_tests() if row["name"] == "alpha")
+        self.assertEqual(row["uploader_name"], expected)
+
+    def test_uploader_provenance_is_part_of_resumable_identity(self):
+        body = small_csv()
+        first = self.init_ok(body, uploader_name="Alex Kim")
+
+        same = self.init_upload(body, uploader_name="  Alex Kim  ")
+        self.assertEqual(same.status_code, 200, same.text)
+        self.assertEqual(same.json()["upload_id"], first["upload_id"])
+
+        changed = self.init_upload(body, uploader_name="Test Lab")
+        self.assertEqual(changed.status_code, 409, changed.text)
+        self.assertEqual(
+            self.get_session(first["upload_id"]).json()["uploader_name"],
+            "Alex Kim",
+        )
+
+    def test_init_validates_uploader_provenance(self):
+        body = small_csv()
+        for bad in ("", " \u2003 ", "Alex\nKim", "名" * 81):
+            with self.subTest(uploader_name=repr(bad)):
+                response = self.init_upload(body, uploader_name=bad)
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertFalse((self.tests / "alpha").exists())
+
+        accepted = self.init_upload(body, uploader_name="名" * 80)
+        self.assertEqual(accepted.status_code, 201, accepted.text)
+        self.assertEqual(accepted.json()["uploader_name"], "名" * 80)
 
     def test_init_persists_time_setup_and_includes_it_in_identity(self):
         body = small_csv()
@@ -607,7 +657,11 @@ class UploadTests(DataDirTestCase):
     def test_complete_assembles_exact_raw_bytes_and_runs_existing_ingest(self):
         body = small_csv()
         session = self.init_ok(
-            body, source_file="Original Rig Export.csv", fs_hz=10.0)
+            body,
+            source_file="Original Rig Export.csv",
+            fs_hz=10.0,
+            uploader_name="Test Lab",
+        )
         for index in reversed(range(session["total_chunks"])):
             self.put_ok(
                 session["upload_id"], index, self.chunk_bytes(body, index))
@@ -622,9 +676,14 @@ class UploadTests(DataDirTestCase):
         self.assertEqual(store.get_status("alpha")["status"], "ready")
         meta = store.get_meta("alpha")
         self.assertEqual(meta["source_file"], "Original Rig Export.csv")
+        self.assertEqual(meta["uploader_name"], "Test Lab")
         self.assertEqual(meta["n_rows"], 64)
         self.assertEqual(meta["time_column"], "time")
         self.assertEqual(meta["fs_hz"], 10.0)
+        self.assertEqual(store.get_status("alpha")["uploader_name"], "Test Lab")
+        row = next(
+            row for row in store.list_tests() if row["name"] == "alpha")
+        self.assertEqual(row["uploader_name"], "Test Lab")
         self.assertTrue((self.tests / "alpha" / "data.parquet").is_file())
 
     def test_complete_forwards_generated_time_column_and_rate(self):
@@ -767,6 +826,14 @@ class UploadTests(DataDirTestCase):
         fetched = self.get_session(session["upload_id"])
         self.assertEqual(fetched.status_code, 200, fetched.text)
         self.assertEqual(fetched.json()["received_chunks"], 0)
+        self.assertIsNone(fetched.json()["uploader_name"])
+        manifest = json.loads(
+            (self.tests / "alpha" / ".upload" / "manifest.json").read_text())
+        self.assertNotIn("uploader_name", manifest)
+        self.assertNotIn("uploader_name", store.get_status("alpha"))
+        row = next(
+            row for row in store.list_tests() if row["name"] == "alpha")
+        self.assertIsNone(row["uploader_name"])
 
     def test_restart_reconciles_ready_status_with_ingesting_manifest(self):
         body = small_csv()
@@ -1117,7 +1184,7 @@ class UploadTests(DataDirTestCase):
 
     def test_ingest_wrapper_repairs_missing_error_status(self):
         body = small_csv()
-        session = self.init_ok(body)
+        session = self.init_ok(body, uploader_name="Failure Lab")
         for index in range(session["total_chunks"]):
             self.put_ok(
                 session["upload_id"], index, self.chunk_bytes(body, index))
@@ -1141,6 +1208,10 @@ class UploadTests(DataDirTestCase):
         status = store.get_status("alpha")
         self.assertEqual(status["status"], "error")
         self.assertIn("synthetic ingest failure", status["error"])
+        self.assertEqual(status["uploader_name"], "Failure Lab")
+        row = next(
+            row for row in store.list_tests() if row["name"] == "alpha")
+        self.assertEqual(row["uploader_name"], "Failure Lab")
         self.assertEqual(main.api_delete_test("alpha")["deleted"], "alpha")
 
     def test_ingest_wrapper_does_not_recreate_concurrently_deleted_test(self):

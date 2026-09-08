@@ -48,6 +48,8 @@ def list_tests() -> list[dict]:
                     # tests (no meta.json yet) still sort chronologically.
                     "source_file": (meta.get("source_file")
                                     or status.get("source_file")),
+                    "uploader_name": (meta.get("uploader_name")
+                                      or status.get("uploader_name")),
                     "created_at": meta.get("created_at") or _dir_created_at(d),
                     "edited_at": meta.get("edited_at"),
                     "ingest_seconds": meta.get("ingest_seconds"),

@@ -1,8 +1,8 @@
 import { useState, useCallback, useMemo } from 'react';
 import { PLOT_INSET, PLOT_INSET_X, PLOT_INSET_Y } from '../constants/scatterGeometry';
+import { ScatterRangePoint, ScatterRangeVisibility, scatterExtents } from '../utils/scatterRanges';
 
 type ZoomDomain = [number, number, number, number] | null;
-type PlotCoordinate = { x: number; y: number };
 
 const paddedAxis = (min: number, max: number): [number, number] => {
   const span = max - min;
@@ -11,27 +11,24 @@ const paddedAxis = (min: number, max: number): [number, number] => {
 };
 
 export const useMainPlotZoom = (
-  scatterData: PlotCoordinate[],
-  initialZoom: ZoomDomain = null
+  scatterData: ScatterRangePoint[],
+  initialZoom: ZoomDomain = null,
+  rangeVisibility: ScatterRangeVisibility = { horizontal: false, vertical: false }
 ) => {
   const [mainZoom, setMainZoom] = useState<ZoomDomain>(initialZoom);
+  const horizontalRangesVisible = rangeVisibility.horizontal;
+  const verticalRangesVisible = rangeVisibility.vertical;
 
   // Calculate default bounds - reused for consistency
   const defaultBounds = useMemo(() => {
-    if (!scatterData.length) {
+    const extents = scatterExtents(scatterData, {
+      horizontal: horizontalRangesVisible,
+      vertical: verticalRangesVisible,
+    });
+    if (!extents) {
       return { xMin: 0, xMax: 1, yMin: 0, yMax: 1 };
     }
-    let xMin = scatterData[0].x;
-    let xMax = scatterData[0].x;
-    let yMin = scatterData[0].y;
-    let yMax = scatterData[0].y;
-    for (let index = 1; index < scatterData.length; index += 1) {
-      const point = scatterData[index];
-      if (point.x < xMin) xMin = point.x;
-      if (point.x > xMax) xMax = point.x;
-      if (point.y < yMin) yMin = point.y;
-      if (point.y > yMax) yMax = point.y;
-    }
+    const { xMin, xMax, yMin, yMax } = extents;
     const [paddedXMin, paddedXMax] = paddedAxis(xMin, xMax);
     const [paddedYMin, paddedYMax] = paddedAxis(yMin, yMax);
 
@@ -41,7 +38,7 @@ export const useMainPlotZoom = (
       yMin: paddedYMin,
       yMax: paddedYMax,
     };
-  }, [scatterData]);
+  }, [horizontalRangesVisible, scatterData, verticalRangesVisible]);
 
   const handleMainWheel = useCallback(
     (e: React.WheelEvent<HTMLDivElement>) => {

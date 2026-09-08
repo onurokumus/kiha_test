@@ -11,6 +11,12 @@ import {
   UploadTimeMode,
 } from '../../services/resumableUpload';
 import { removeUploadRecord } from '../../services/uploadPersistence';
+import {
+  loadRememberedUploaderName,
+  normalizeUploaderName,
+  rememberUploaderName,
+  uploaderNameError,
+} from '../../services/uploaderAttribution';
 import { TestInfo, UploadItem } from '../../types';
 import { isBusyStatus } from '../../constants/status';
 import { useConfirm } from '../feedback/confirm';
@@ -201,12 +207,16 @@ export default function UploadView({
 }: Props) {
   const confirmAction = useConfirm();
   const fileRef = useRef<HTMLInputElement>(null);
+  const uploaderRef = useRef<HTMLInputElement>(null);
   const setupRef = useRef<HTMLElement>(null);
   // Names deleted from this page and still restorable (session-local undo).
   const [restorable, setRestorable] = useState<string[]>([]);
   const [busyRow, setBusyRow] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
   const [actionNote, setActionNote] = useState('');
+  const [uploaderName, setUploaderName] = useState(
+    loadRememberedUploaderName
+  );
   const [timeMode, setTimeMode] = useState<UploadTimeMode>('auto');
   const [timeColumn, setTimeColumn] = useState('');
   const [generatedColumn, setGeneratedColumn] = useState('time_s');
@@ -273,7 +283,14 @@ export default function UploadView({
 
   useEffect(() => {
     if (pendingFiles.length === 0) return;
-    const frame = window.requestAnimationFrame(() => setupRef.current?.focus());
+    const uploaderInput = uploaderRef.current;
+    const frame = window.requestAnimationFrame(() => {
+      if (uploaderInput && !uploaderInput.value.trim()) {
+        uploaderInput.focus();
+      } else {
+        setupRef.current?.focus();
+      }
+    });
     return () => window.cancelAnimationFrame(frame);
   }, [pendingFiles]);
 
@@ -288,11 +305,14 @@ export default function UploadView({
       (workingTimeColumn === `${column}__min` ||
         workingTimeColumn === `${column}__max`)
   );
+  const uploaderError = uploaderNameError(uploaderName);
   const setupError =
     pendingFiles.length === 0
       ? ''
-      : headersLoading
-        ? 'Inspecting the selected CSV headers…'
+      : uploaderError
+        ? uploaderError
+        : headersLoading
+          ? 'Inspecting the selected CSV headers…'
         : timeMode === 'column' && !selectedTimeColumn.trim()
         ? 'Choose the CSV column that contains time.'
         : timeMode === 'column' &&
@@ -311,7 +331,11 @@ export default function UploadView({
 
   const beginConfiguredUpload = () => {
     if (setupError || pendingFiles.length === 0) return;
+    const normalizedUploaderName = normalizeUploaderName(uploaderName);
+    setUploaderName(normalizedUploaderName);
+    rememberUploaderName(normalizedUploaderName);
     onStartUpload(pendingFiles, {
+      uploaderName: normalizedUploaderName,
       timeMode,
       ...(validFs ? { fsHz: parsedFs } : {}),
       ...(timeMode === 'column'
@@ -664,7 +688,7 @@ export default function UploadView({
           >
             <div className="upload-setup-heading">
               <div>
-                <div className="section-title">Time setup</div>
+                <div className="section-title">Import setup</div>
                 <div className="upload-setup-subtitle">
                   Every imported test uses elapsed seconds beginning at 0.
                 </div>
@@ -676,6 +700,29 @@ export default function UploadView({
                   </span>
                 ))}
               </div>
+            </div>
+
+            <div className="upload-uploader">
+              <label className="upload-setup-field">
+                <span>Uploaded by</span>
+                <input
+                  ref={uploaderRef}
+                  className="input"
+                  type="text"
+                  name="uploaderName"
+                  autoComplete="name"
+                  required
+                  value={uploaderName}
+                  placeholder="e.g. Alex Kim or Test Lab"
+                  aria-invalid={!!uploaderError}
+                  aria-describedby="upload-uploader-help upload-setup-feedback"
+                  onChange={(event) => setUploaderName(event.target.value)}
+                />
+              </label>
+              <span id="upload-uploader-help" className="upload-uploader-help">
+                For attribution only—no account is created. Applies to all
+                selected files and is remembered in this browser.
+              </span>
             </div>
 
             <div className="upload-setup-grid">
@@ -836,6 +883,14 @@ export default function UploadView({
                   <div className="upload-transfer-meta">
                     <strong title={u.testName}>{u.testName}</strong>
                     <span title={u.fileName}>{u.fileName}</span>
+                    <span
+                      className="upload-transfer-uploader"
+                      title={u.uploaderName ?? 'Uploader not recorded'}
+                    >
+                      {u.uploaderName
+                        ? `by ${u.uploaderName}`
+                        : 'Uploader not recorded'}
+                    </span>
                     {u.error && (
                       <span className="upload-transfer-error" title={u.error}>
                         {u.error}
@@ -852,6 +907,14 @@ export default function UploadView({
                     <strong title={test.name}>{test.name}</strong>
                     <span title={test.source_file ?? undefined}>
                       {test.source_file ?? 'Upload from another browser'}
+                    </span>
+                    <span
+                      className="upload-transfer-uploader"
+                      title={test.uploader_name ?? 'Uploader not recorded'}
+                    >
+                      {test.uploader_name
+                        ? `by ${test.uploader_name}`
+                        : 'Uploader not recorded'}
                     </span>
                   </div>
                   <div className="upload-transfer-progress">{serverProgressCell(test)}</div>
@@ -990,6 +1053,14 @@ export default function UploadView({
                         <span className="upload-history-ellipsis" title={t.name}>
                           {t.name}
                         </span>
+                        <span
+                          className="upload-history-test-uploader"
+                          title={t.uploader_name ?? 'Uploader not recorded'}
+                        >
+                          {t.uploader_name
+                            ? `by ${t.uploader_name}`
+                            : 'Uploader not recorded'}
+                        </span>
                       </td>
                       <td style={{ ...tdStyle, overflow: 'hidden' }}>
                         <div className="upload-history-status">
@@ -1006,8 +1077,18 @@ export default function UploadView({
                         style={{ ...tdStyle, overflow: 'hidden' }}
                         title={t.edited_at ? `edited ${fmtDate(t.edited_at)}` : undefined}
                       >
-                        {fmtDate(t.created_at)}
-                        {t.edited_at ? ' *' : ''}
+                        <div>
+                          {fmtDate(t.created_at)}
+                          {t.edited_at ? ' *' : ''}
+                        </div>
+                        <div
+                          className="upload-history-uploaded-secondary"
+                          title={t.uploader_name ?? 'Uploader not recorded'}
+                        >
+                          {t.uploader_name
+                            ? `by ${t.uploader_name}`
+                            : 'Uploader not recorded'}
+                        </div>
                       </td>
                       <td
                         className="upload-history-source"

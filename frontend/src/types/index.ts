@@ -18,6 +18,8 @@ export interface TestInfo {
   missing_rows_inserted?: number | null;
   time_gap_seconds?: number | null;
   source_file?: string | null;
+  /** Self-reported attribution; it does not identify an authenticated user. */
+  uploader_name?: string | null;
   /** UTC ISO; from meta.json, or dir creation time while receiving/ingesting
    *  (same format — lexicographic sort is chronological). */
   created_at?: string | null;
@@ -48,6 +50,8 @@ export type UploadPhase =
 export interface UploadItem {
   id: number;
   fileName: string;
+  /** Self-reported attribution captured when the upload session was created. */
+  uploaderName?: string;
   /** Sanitized server-side test name used to associate pre-session state with
    *  the backend's receiving transfer until an upload ID is available. */
   testName: string;
@@ -83,11 +87,18 @@ export interface TestMeta {
   duration_s: number;
   t_start?: number | null;
   source_file?: string;
+  /** Self-reported attribution; absent on tests imported before this field. */
+  uploader_name?: string | null;
   nan_counts?: Record<string, number>;
   nan_policy?: string;
   jitter_warning?: boolean;
   /** Free-form user descriptors: prop, motor, ESC, ambient conditions... */
   user_meta?: Record<string, string>;
+  /** Equations materialized into this test's working data. Older tests may
+   * omit the field until their first derived variable is created. */
+  derived_variables?:
+    | DerivedVariableProvenance[]
+    | Record<string, Omit<DerivedVariableProvenance, 'name'>>;
 }
 
 /** One materialized derived-variable equation. Expressions use
@@ -97,6 +108,16 @@ export interface FormulaSpec {
   expression: string;
   /** Existing data columns are protected unless replacement is explicit. */
   replace?: boolean;
+}
+
+/** Persisted formula metadata returned inside TestMeta. */
+export interface DerivedVariableProvenance extends FormulaSpec {
+  dependencies?: string[];
+  missing_dependencies?: string[];
+  engine?: string;
+  replaced_existing?: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface FormulaPreviewItem extends FormulaSpec {
@@ -248,6 +269,10 @@ export interface SelectedTestPoint {
 export interface ScatterDataPoint {
   x: number;
   y: number;
+  /** Asymmetric distances from the X mean to [minimum, maximum]. */
+  xError?: [number, number];
+  /** Asymmetric distances from the Y mean to [minimum, maximum]. */
+  yError?: [number, number];
   id: string; // `${test}:${tp.id}`
   test: string;
   name: string;

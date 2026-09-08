@@ -120,15 +120,15 @@
 }
 
 .popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 30;
+  position: fixed;
+  z-index: 1000;
   display: grid;
   gap: 5px;
   width: 294px;
-  max-width: min(calc(100vw - 24px), 100cqw);
+  max-width: calc(100vw - 16px);
   padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   color: #d7dde3;
   background: rgba(37, 37, 38, 0.98);
   border: 1px solid #4a5a67;

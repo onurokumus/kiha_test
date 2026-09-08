@@ -368,6 +368,10 @@ input[type='checkbox'] {
   letter-spacing: 0.5px;
 }
 
+.edit-view > * {
+  flex-shrink: 0;
+}
+
 /* Edit tab: the equation workbench stays dense like an instrument panel.
    Amber marks computed/output values; signal blue marks the active editor. */
 .edit-formula-panel {
@@ -388,6 +392,7 @@ input[type='checkbox'] {
 .edit-formula-title {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 7px;
   margin: 0 0 3px;
   color: #d0d0d0;
@@ -419,6 +424,143 @@ input[type='checkbox'] {
 .edit-formula-delete-recipe:not(:disabled) {
   color: #f48771;
   border-color: #74413a;
+}
+
+.edit-formula-applied {
+  padding: 8px 10px 9px;
+  background: #1f2021;
+  border-bottom: 1px solid #343434;
+}
+
+.edit-formula-applied-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  color: #c6c6c6;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.35px;
+  text-transform: uppercase;
+}
+
+.edit-formula-applied-heading > div > span {
+  display: block;
+  margin-top: 2px;
+  color: #9a9a9a;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.35;
+  text-transform: none;
+}
+
+.edit-formula-applied-heading .badge {
+  max-width: 50%;
+  overflow: hidden;
+  color: #9fc7df;
+  background: #1c2d38;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edit-formula-applied-list {
+  max-height: min(30vh, 270px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  border: 1px solid #363a3d;
+  border-radius: 3px;
+}
+
+.edit-formula-applied-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px;
+  border-left: 2px solid transparent;
+}
+
+.edit-formula-applied-row + .edit-formula-applied-row {
+  border-top: 1px solid #303234;
+}
+
+.edit-formula-applied-row.is-editing {
+  background: #242c31;
+  border-left-color: #569cd6;
+}
+
+.edit-formula-applied-row.has-warning {
+  border-left-color: #d7ba7d;
+}
+
+.edit-formula-applied-body {
+  min-width: 0;
+}
+
+.edit-formula-applied-equation {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  color: #dcdcaa;
+  font: 11px/1.4 Consolas, 'Cascadia Mono', 'Courier New', monospace;
+}
+
+.edit-formula-applied-name {
+  flex: none;
+  max-width: 35%;
+  overflow-wrap: anywhere;
+  color: #dcdcaa;
+  font: inherit;
+}
+
+.edit-formula-applied-expression {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #d9eaf5;
+  font: inherit;
+}
+
+.edit-formula-applied-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  margin-top: 3px;
+  color: #9a9a9a;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.edit-formula-applied-warning {
+  color: #d7ba7d;
+}
+
+.edit-formula-applied-edit {
+  min-width: 54px;
+}
+
+.edit-formula-applied-empty {
+  padding: 7px 8px;
+  color: #9a9a9a;
+  font-size: 10px;
+  background: #202020;
+  border: 1px dashed #3b3b3b;
+  border-radius: 3px;
+}
+
+.edit-formula-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .edit-formula-insert-bar {
@@ -489,6 +631,7 @@ input[type='checkbox'] {
 }
 
 .edit-formula-token:focus-visible,
+.edit-formula-move:focus-visible,
 .edit-formula-remove:focus-visible,
 .edit-formula-panel .btn:focus-visible {
   outline: 2px solid #7ec8f2;
@@ -505,19 +648,67 @@ input[type='checkbox'] {
   font-family: Consolas, 'Cascadia Mono', 'Courier New', monospace;
 }
 
+.edit-formula-batch-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  background: #252526;
+  border-bottom: 1px solid #343434;
+}
+
+.edit-formula-batch-toolbar > div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.edit-formula-batch-toolbar strong {
+  color: #c6c6c6;
+  font-size: 10px;
+  letter-spacing: 0.35px;
+  text-transform: uppercase;
+}
+
+.edit-formula-batch-toolbar span {
+  padding: 1px 5px;
+  color: #dcdcaa;
+  font: 600 9px/1.5 Consolas, 'Cascadia Mono', 'Courier New', monospace;
+  background: #393926;
+  border-radius: 999px;
+}
+
+.edit-formula-batch-toolbar small {
+  color: #858585;
+  font-size: 9px;
+}
+
+.edit-formula-add {
+  flex: none;
+  color: #cde7f7;
+  background: #173d55;
+  border-color: #426d89;
+}
+
 .edit-formula-row-list {
-  padding: 5px 8px 2px;
-  overflow-x: auto;
+  max-height: min(52vh, 520px);
+  padding: 0 8px 2px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .edit-formula-row {
   display: grid;
   grid-template-columns:
     30px minmax(130px, 0.6fr) 18px minmax(280px, 1.8fr) 92px
-    30px;
+    84px;
   align-items: center;
   gap: 5px;
-  min-width: 700px;
+  min-width: 754px;
   padding: 4px 3px;
   border-left: 2px solid transparent;
 }
@@ -532,12 +723,17 @@ input[type='checkbox'] {
 }
 
 .edit-formula-row-header {
-  padding-top: 1px;
-  padding-bottom: 2px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding-top: 5px;
+  padding-bottom: 4px;
   color: #747474;
   font-size: 9px;
   letter-spacing: 0.4px;
   text-transform: uppercase;
+  background: #252526;
+  border-bottom: 1px solid #3a3a3a;
 }
 
 .edit-formula-order {
@@ -559,6 +755,13 @@ input[type='checkbox'] {
 
 .edit-formula-name {
   color: #dcdcaa;
+}
+
+.edit-formula-name.is-locked {
+  color: #aeb0b2;
+  background: #242628;
+  border-style: dashed;
+  cursor: not-allowed;
 }
 
 .edit-formula-expression {
@@ -586,11 +789,25 @@ input[type='checkbox'] {
   white-space: nowrap;
 }
 
+.edit-formula-row-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 25px);
+  gap: 3px;
+}
+
+.edit-formula-move,
 .edit-formula-remove {
-  width: 27px;
+  width: 25px;
   padding-right: 0;
   padding-left: 0;
   color: #a0a0a0;
+}
+
+.edit-formula-move {
+  font-size: 12px;
+}
+
+.edit-formula-remove {
   font-size: 14px;
 }
 
@@ -638,14 +855,20 @@ input[type='checkbox'] {
 }
 
 .edit-formula-preview {
+  max-height: min(52vh, 520px);
   margin: 0 10px 10px;
-  overflow: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   background: #202020;
   border: 1px solid #3d464c;
   border-radius: 3px;
 }
 
 .edit-formula-preview-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   padding: 5px 8px;
   color: #9fc7df;
   font-size: 9px;
@@ -746,11 +969,85 @@ input[type='checkbox'] {
   .edit-formula-preview-deps {
     grid-column: 1 / -1;
   }
+
+  .edit-formula-row-list {
+    padding-top: 4px;
+    overflow-x: hidden;
+  }
+
+  .edit-formula-row-header {
+    display: none;
+  }
+
+  .edit-formula-row {
+    grid-template-areas:
+      'order name name actions'
+      '. equals expression expression'
+      '. replace replace replace';
+    grid-template-columns: 28px 18px minmax(0, 1fr) 81px;
+    gap: 6px 5px;
+    min-width: 0;
+    padding: 8px 3px;
+  }
+
+  .edit-formula-order {
+    grid-area: order;
+  }
+
+  .edit-formula-name {
+    grid-area: name;
+    min-width: 0;
+  }
+
+  .edit-formula-equals {
+    grid-area: equals;
+  }
+
+  .edit-formula-expression {
+    grid-area: expression;
+    min-width: 0;
+  }
+
+  .edit-formula-replace {
+    grid-area: replace;
+  }
+
+  .edit-formula-row-actions {
+    grid-area: actions;
+    justify-self: end;
+  }
 }
 
 @media (max-width: 560px) {
+  .edit-formula-applied-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .edit-formula-applied-heading .badge {
+    align-self: flex-start;
+    max-width: 100%;
+  }
+
+  .edit-formula-applied-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .edit-formula-applied-edit {
+    width: 100%;
+  }
+
   .edit-formula-token-divider {
     display: none;
+  }
+
+  .edit-formula-batch-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .edit-formula-add {
+    align-self: flex-start;
   }
 
   .edit-formula-insert-bar > select {
@@ -1135,6 +1432,29 @@ input[type='checkbox'] {
   white-space: nowrap;
 }
 
+.edit-formula-replace.is-locked {
+  color: #737373;
+  cursor: not-allowed;
+}
+
+.upload-uploader {
+  display: grid;
+  grid-template-columns: minmax(240px, 360px) minmax(220px, 1fr);
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #353535;
+}
+
+.upload-uploader-help {
+  min-height: 24px;
+  padding-bottom: 6px;
+  color: #909090;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 .upload-setup-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(160px, 1fr));
@@ -1276,6 +1596,11 @@ input[type='checkbox'] {
   color: #f48771;
 }
 
+.upload-transfer-meta > .upload-transfer-uploader {
+  color: #777;
+  font-size: 9px;
+}
+
 .upload-transfer-progress {
   min-width: 0;
 }
@@ -1329,6 +1654,19 @@ input[type='checkbox'] {
   white-space: nowrap;
 }
 
+.upload-history-uploaded-secondary {
+  margin-top: 2px;
+  overflow: hidden;
+  color: #777;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-history-test-uploader {
+  display: none;
+}
+
 .upload-history-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1360,6 +1698,10 @@ input[type='checkbox'] {
     grid-template-columns: repeat(2, minmax(150px, 1fr));
   }
 
+  .upload-uploader {
+    grid-template-columns: minmax(220px, 360px) 1fr;
+  }
+
   .upload-time-preview {
     grid-template-columns: auto 1fr;
   }
@@ -1387,9 +1729,29 @@ input[type='checkbox'] {
   .upload-history-uploaded {
     display: none;
   }
+
+  .upload-history-test-uploader {
+    display: block;
+    margin-top: 2px;
+    overflow: hidden;
+    color: #777;
+    font-size: 9px;
+    font-weight: 400;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 @media (max-width: 520px) {
+  .upload-uploader {
+    grid-template-columns: 1fr;
+  }
+
+  .upload-uploader-help {
+    min-height: 0;
+    padding-bottom: 0;
+  }
+
   .upload-setup-grid {
     grid-template-columns: 1fr;
   }

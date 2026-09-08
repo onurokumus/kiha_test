@@ -23,6 +23,7 @@ import pyarrow.parquet as pq
 from .config import (DEFAULT_FS_HZ, INGEST_BATCH, PYRAMID_LEVELS,
                      ROW_GROUP_SIZE, TESTS_DIR)
 from .locks import test_write
+from .provenance import normalize_uploader_name
 from .status import write_status
 from .store import bucket_minmax, write_json_atomic
 
@@ -362,7 +363,8 @@ def ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
                source_name: str | None = None,
                assume_fs: float | None = None,
                time_mode: str = "auto",
-               time_column: str | None = None) -> dict:
+               time_column: str | None = None,
+               uploader_name: str | None = None) -> dict:
     """Ingest one test while excluding lifecycle operations for that name.
 
     source_name: original file name for meta.source_file — API uploads
@@ -372,22 +374,32 @@ def ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
     time_mode: ``auto`` detects a time column, ``column`` uses the exact
     existing ``time_column``, and ``generated`` creates/replaces it from row
     number and ``assume_fs``.
+    uploader_name: optional self-reported attribution stored as immutable
+    provenance in the resulting metadata and lifecycle status.
     """
     with test_write(name):
         return _ingest_csv(
             csv_path, name, copy_raw, source_name, assume_fs,
-            time_mode, time_column)
+            time_mode, time_column, uploader_name)
 
 
 def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
                 source_name: str | None = None,
                 assume_fs: float | None = None,
                 time_mode: str = "auto",
-                time_column: str | None = None) -> dict:
+                time_column: str | None = None,
+                uploader_name: str | None = None) -> dict:
+    if uploader_name is not None:
+        uploader_name = normalize_uploader_name(uploader_name)
+    provenance = (
+        {"uploader_name": uploader_name}
+        if uploader_name is not None
+        else {}
+    )
     csv_path = Path(csv_path)
     test_dir = TESTS_DIR / name
     test_dir.mkdir(parents=True, exist_ok=True)
-    write_status(test_dir, "ingesting")
+    write_status(test_dir, "ingesting", **provenance)
     logger.info("ingest '%s': started (%s)", name, csv_path.name)
     t0 = time.time()
     try:
@@ -611,13 +623,15 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
             "pyramid_rows": level_rows,
             "ingest_seconds": round(time.time() - t0, 1),
         }
+        if uploader_name is not None:
+            meta["uploader_name"] = uploader_name
         write_json_atomic(test_dir / "meta.json", meta)
-        write_status(test_dir, "ready")
+        write_status(test_dir, "ready", **provenance)
         logger.info("ingest '%s': ready — %d rows x %d cols in %.1f s",
                     name, n_rows, len(columns), meta["ingest_seconds"])
         return meta
     except Exception as e:
-        write_status(test_dir, "error", repr(e))
+        write_status(test_dir, "error", repr(e), **provenance)
         logger.exception("ingest '%s': FAILED", name)
         raise
 

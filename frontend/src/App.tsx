@@ -19,6 +19,8 @@ import { useUploadManager } from './hooks/useUploadManager';
 import { UploadDataOptions } from './services/resumableUpload';
 import { useUnsavedChanges } from './hooks/useUnsavedChanges';
 import { assignColor } from './utils/colorManager';
+import { tpStatErrorRange } from './utils/scatterRanges';
+import { MAX_SELECTED_TEST_POINTS } from './constants/selection';
 import {
   fetchTests,
   fetchMeta,
@@ -141,6 +143,8 @@ function App() {
   const [expandedPlot, setExpandedPlot] = useState<number | null>(null);
   const [clusteringEnabled, setClusteringEnabled] = useState(settings.clustering);
   const [datasheetVisible, setDatasheetVisible] = useState(settings.datasheetVisible);
+  const [showHorizontalErrorBars, setShowHorizontalErrorBars] = useState(false);
+  const [showVerticalErrorBars, setShowVerticalErrorBars] = useState(false);
   const [datasheetLine, setDatasheetLine] = useState<{
     key: string;
     points: DatasheetDataPoint[];
@@ -284,8 +288,6 @@ function App() {
     }, 2500);
   }, []);
 
-  const MAX_SELECTED_POINTS = 6;
-
   const {
     selectedTPs,
     hiddenTPs,
@@ -295,7 +297,7 @@ function App() {
     clearAll,
     setSelectedTPs,
     setHiddenTPs,
-  } = useTestPointSelection(MAX_SELECTED_POINTS);
+  } = useTestPointSelection(MAX_SELECTED_TEST_POINTS);
   const [selectionSessionHydrated, setSelectionSessionHydrated] = useState(
     !hasRestoredSession || restoredSession.selections.length === 0
   );
@@ -536,7 +538,7 @@ function App() {
     const hidden = new Set<string>();
     const stillPending: typeof pendingRestoredSelections = [];
     const selectedIds = new Set(selectedTPs.map((selection) => selection.id));
-    let remainingSlots = Math.max(0, MAX_SELECTED_POINTS - selectedTPs.length);
+    let remainingSlots = Math.max(0, MAX_SELECTED_TEST_POINTS - selectedTPs.length);
 
     pendingRestoredSelections.forEach(({ test, tpId, hidden: wasHidden }) => {
       const info = tests.find((candidate) => candidate.name === test);
@@ -1041,14 +1043,27 @@ function App() {
       const yStats = statsCache[test]?.[yAxis];
       if (!xStats || !yStats) return;
       tps.forEach((tp) => {
-        const x = xStats[tp.id]?.mean;
-        const y = yStats[tp.id]?.mean;
-        if (x === null || x === undefined || y === null || y === undefined) return;
+        const xStat = xStats[tp.id];
+        const yStat = yStats[tp.id];
+        const x = xStat?.mean;
+        const y = yStat?.mean;
+        if (
+          typeof x !== 'number' ||
+          !Number.isFinite(x) ||
+          typeof y !== 'number' ||
+          !Number.isFinite(y)
+        ) {
+          return;
+        }
         const id = `${test}:${tp.id}`;
         const sel = selectedMap.get(id);
+        const xError = tpStatErrorRange(xStat);
+        const yError = tpStatErrorRange(yStat);
         data.push({
           x,
           y,
+          ...(xError ? { xError } : {}),
+          ...(yError ? { yError } : {}),
           id,
           test,
           name: tp.name,
@@ -1453,7 +1468,11 @@ function App() {
 
   const { mainZoom, handleMainWheel, handlePan, resetZoom } = useMainPlotZoom(
     scatterDomainData,
-    hasRestoredSession ? restoredSession.mainZoom : null
+    hasRestoredSession ? restoredSession.mainZoom : null,
+    {
+      horizontal: showHorizontalErrorBars,
+      vertical: showVerticalErrorBars,
+    }
   );
   resetMainZoomRef.current = resetZoom;
 
@@ -1480,7 +1499,7 @@ function App() {
                 (selection) => selection.test === pending.test && selection.tpId === pending.tpId
               )
           ),
-        ].slice(0, MAX_SELECTED_POINTS),
+        ].slice(0, MAX_SELECTED_TEST_POINTS),
         filterState,
         mainZoom,
         timeZoom,
@@ -1619,6 +1638,13 @@ function App() {
 
   const handleScatterToggle = useCallback(
     (point: ScatterDataPoint) => {
+      if (!point.isSelected && selectedTPs.length >= MAX_SELECTED_TEST_POINTS) {
+        setNotice(
+          `Selection limit reached (${MAX_SELECTED_TEST_POINTS}). Remove a point to select another.`
+        );
+        return;
+      }
+
       // An explicit selection action supersedes any still-unavailable points
       // from the restored session; they must not appear later against intent.
       setPendingRestoredSelections([]);
@@ -1636,7 +1662,7 @@ function App() {
       }
       toggleTestPoint(point.test, point.tp, endS);
     },
-    [toggleTestPoint, metaByTest, tpsByTest]
+    [toggleTestPoint, metaByTest, tpsByTest, selectedTPs.length]
   );
 
   // -- Edit tab callbacks --
@@ -1949,6 +1975,10 @@ function App() {
                 datasheetVisible={datasheetVisible}
                 datasheetStatus={datasheetStatus}
                 onDatasheetVisibilityChange={setDatasheetVisible}
+                horizontalErrorBars={showHorizontalErrorBars}
+                verticalErrorBars={showVerticalErrorBars}
+                onHorizontalErrorBarsChange={setShowHorizontalErrorBars}
+                onVerticalErrorBarsChange={setShowVerticalErrorBars}
               />
               <FilterControls
                 filterState={filterState}
@@ -1976,6 +2006,8 @@ function App() {
                   onWheel={handleMainWheel}
                   onPan={handlePan}
                   clusteringEnabled={clusteringEnabled}
+                  showHorizontalErrorBars={showHorizontalErrorBars}
+                  showVerticalErrorBars={showVerticalErrorBars}
                 />
                 <PlotStateOverlay
                   loading={scatterStatsLoading || datasheetLine.loading}
@@ -2063,7 +2095,7 @@ function App() {
               }}
               timeZoom={activeTimeZoom}
               onResetTimeZoom={resetActiveTimeZoom}
-              maxPoints={MAX_SELECTED_POINTS}
+              maxPoints={MAX_SELECTED_TEST_POINTS}
               loadingTestPointIds={loadingTestPointIds}
               isEditMode={isEditMode}
               onToggleEditMode={() => setIsEditMode(!isEditMode)}

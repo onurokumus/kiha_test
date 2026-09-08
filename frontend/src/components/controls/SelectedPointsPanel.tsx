@@ -7,6 +7,7 @@ import {
   WindowDisplayMode,
 } from '../../types';
 import { PlotDensity } from '../../services/analysisSession';
+import { MAX_SELECTED_TEST_POINTS } from '../../constants/selection';
 import { SearchableSelect } from './SearchableSelect';
 import { TestSelect } from './TestSelect';
 import styles from './SelectedPointsPanel.module.css';
@@ -86,8 +87,6 @@ const FULL_PLOT_MODES: Array<{
   },
 ];
 
-const RACK_SLOT_COUNT = 6;
-
 export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
   selectedTPs,
   hiddenTPs,
@@ -96,7 +95,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
   onClearAll,
   timeZoom,
   onResetTimeZoom,
-  maxPoints = 6,
+  maxPoints = MAX_SELECTED_TEST_POINTS,
   loadingTestPointIds = new Set(),
   isEditMode = false,
   onToggleEditMode,
@@ -366,7 +365,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
         >
           <span className={styles.trayTitle}>Selected points</span>
           <span className={styles.colorRack} aria-hidden="true">
-            {Array.from({ length: RACK_SLOT_COUNT }, (_, index) => {
+            {Array.from({ length: maxPoints }, (_, index) => {
               const point = selectedTPs[index];
               const pointStyle = point
                 ? ({ '--rack-color': point.color } as CSSProperties)
@@ -382,7 +381,12 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
               );
             })}
           </span>
-          <span className={styles.selectionCount} aria-live="polite" aria-atomic="true">
+          <span
+            className={styles.selectionCount}
+            data-at-limit={selectedTPs.length >= maxPoints || undefined}
+            aria-live="polite"
+            aria-atomic="true"
+          >
             <strong>{selectedTPs.length}</strong>
             <span aria-hidden="true"> / </span>
             <span className={styles.screenReaderOnly}> of </span>

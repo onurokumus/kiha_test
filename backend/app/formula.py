@@ -291,6 +291,12 @@ def compile_formula_batch(
         raise FormulaError(
             f"a formula batch cannot exceed {MAX_FORMULAS} formulas")
 
+    target_positions: dict[str, int] = {}
+    for index, spec in enumerate(specs):
+        name = _spec_value(spec, "name")
+        if isinstance(name, str):
+            target_positions.setdefault(name, index)
+
     available = set(columns)
     compiled: list[CompiledFormula] = []
     for index, spec in enumerate(specs):
@@ -306,6 +312,18 @@ def compile_formula_batch(
             expression = _spec_value(spec, "expression")
             replace = bool(_spec_value(spec, "replace", False))
             parsed = parse_expression(expression)
+            if name in parsed.dependencies:
+                raise FormulaError(
+                    f"target '{name}' cannot reference itself; saved "
+                    "equations must be reproducible")
+            later_targets = [
+                dependency for dependency in parsed.dependencies
+                if target_positions.get(dependency, index) > index
+            ]
+            if later_targets:
+                raise FormulaError(
+                    f"target '{name}' references later target(s) "
+                    f"{later_targets}; move dependencies earlier")
             unknown = [
                 dependency for dependency in parsed.dependencies
                 if dependency not in available
@@ -340,6 +358,11 @@ def validate_recipe_formulas(specs: Sequence[Any]) -> list[dict]:
     if len(specs) > MAX_FORMULAS:
         raise FormulaError(
             f"a recipe cannot exceed {MAX_FORMULAS} formulas")
+    target_positions: dict[str, int] = {}
+    for index, spec in enumerate(specs):
+        name = _spec_value(spec, "name")
+        if isinstance(name, str):
+            target_positions.setdefault(name, index)
     defined: set[str] = set()
     normalized: list[dict] = []
     for index, spec in enumerate(specs):
@@ -352,6 +375,18 @@ def validate_recipe_formulas(specs: Sequence[Any]) -> list[dict]:
                     f"target '{name}' is repeated; the later formula must set "
                     "replace=true")
             parsed = parse_expression(_spec_value(spec, "expression"))
+            if name in parsed.dependencies:
+                raise FormulaError(
+                    f"target '{name}' cannot reference itself; saved "
+                    "equations must be reproducible")
+            later_targets = [
+                dependency for dependency in parsed.dependencies
+                if target_positions.get(dependency, index) > index
+            ]
+            if later_targets:
+                raise FormulaError(
+                    f"target '{name}' references later target(s) "
+                    f"{later_targets}; move dependencies earlier")
             normalized.append({
                 "name": name,
                 "expression": parsed.expression,
@@ -361,6 +396,189 @@ def validate_recipe_formulas(specs: Sequence[Any]) -> list[dict]:
         except FormulaError as exc:
             raise FormulaError(f"formula {index + 1}: {exc}") from None
     return normalized
+
+
+def _provenance_records(value: Any) -> list[dict]:
+    """Normalize legacy mapping and current list provenance shapes."""
+    if isinstance(value, Mapping):
+        return [
+            {"name": key, **record}
+            for key, record in value.items()
+            if isinstance(record, Mapping)
+        ]
+    if isinstance(value, list):
+        return [
+            dict(record) for record in value if isinstance(record, Mapping)
+        ]
+    return []
+
+
+def _provenance_dependencies(record: Mapping[str, Any]) -> tuple[str, ...]:
+    """Read dependencies from the expression, with legacy metadata fallback."""
+    expression = record.get("expression")
+    if isinstance(expression, str):
+        try:
+            _, _, dependencies = _replace_column_references(expression)
+            return dependencies
+        except FormulaError:
+            pass
+    raw_dependencies = record.get("dependencies", [])
+    if not isinstance(raw_dependencies, list):
+        return ()
+    return tuple(dict.fromkeys(
+        dependency for dependency in raw_dependencies
+        if isinstance(dependency, str)
+    ))
+
+
+def expand_formula_dependents(
+    specs: Sequence[Any],
+    provenance: Any,
+) -> list[dict]:
+    """Expand formula writes to their transitive saved dependents.
+
+    Any formula target can be a source for a previously materialized equation,
+    including a raw column replacement or a recreated dropped column. Recompute
+    every affected saved formula from the expressions themselves, then order the
+    batch topologically. This is automatic so callers cannot accidentally leave
+    downstream materialized values stale.
+    """
+    if not specs:
+        return []
+
+    explicit: list[dict] = []
+    explicit_parsed: list[ParsedExpression] = []
+    explicit_names: set[str] = set()
+    for index, spec in enumerate(specs):
+        try:
+            name = _spec_value(spec, "name")
+            validate_column_name(name)
+            if name in explicit_names:
+                raise FormulaError(
+                    f"target '{name}' appears more than once; dependency-aware "
+                    "updates require one equation per target")
+            parsed = parse_expression(_spec_value(spec, "expression"))
+            explicit.append({
+                "name": name,
+                "expression": parsed.expression,
+                "replace": bool(_spec_value(spec, "replace", False)),
+            })
+            explicit_parsed.append(parsed)
+            explicit_names.add(name)
+        except FormulaError as exc:
+            raise FormulaError(f"formula {index + 1}: {exc}") from None
+
+    explicit_rank = {
+        spec["name"]: index for index, spec in enumerate(explicit)
+    }
+    for index, (spec, parsed) in enumerate(zip(explicit, explicit_parsed)):
+        name = spec["name"]
+        for dependency in parsed.dependencies:
+            dependency_index = explicit_rank.get(dependency)
+            if dependency == name:
+                raise FormulaError(
+                    f"formula {index + 1}: target '{name}' cannot reference "
+                    "itself; saved equations must be reproducible")
+            if dependency_index is not None and dependency_index > index:
+                raise FormulaError(
+                    f"formula {index + 1}: target '{name}' references later "
+                    f"target '{dependency}'; move '{dependency}' earlier")
+
+    records = _provenance_records(provenance)
+    record_by_name: dict[str, dict] = {}
+    record_order: dict[str, int] = {}
+    dependencies_by_name: dict[str, tuple[str, ...]] = {}
+    for index, record in enumerate(records):
+        name = record.get("name")
+        expression = record.get("expression")
+        if not isinstance(name, str) or not isinstance(expression, str):
+            continue
+        record_by_name[name] = record
+        record_order.setdefault(name, index)
+        dependencies_by_name[name] = _provenance_dependencies(record)
+
+    # Seed the closure with every write, not only saved formula targets. A raw
+    # column replacement (or recreation after a drop) can also invalidate saved
+    # derived values that reference it.
+    affected = set(explicit_names)
+    changed = True
+    while changed:
+        changed = False
+        for name, dependencies in dependencies_by_name.items():
+            if name in affected:
+                continue
+            if any(dependency in affected for dependency in dependencies):
+                affected.add(name)
+                changed = True
+
+    if not (affected & set(record_by_name)):
+        return explicit
+
+    expanded = list(explicit)
+    for name in sorted(
+            affected - explicit_names,
+            key=lambda item: record_order.get(item, len(records))):
+        record = record_by_name[name]
+        expanded.append({
+            "name": name,
+            "expression": record["expression"],
+            "replace": True,
+        })
+
+    if len(expanded) > MAX_FORMULAS:
+        raise FormulaError(
+            f"dependency-aware update expands to {len(expanded)} formulas; "
+            f"the maximum is {MAX_FORMULAS}")
+
+    rank = {
+        spec["name"]: index
+        for index, spec in enumerate(expanded)
+    }
+    parsed_by_name: dict[str, ParsedExpression] = {}
+    spec_by_name = {spec["name"]: spec for spec in expanded}
+    for spec in expanded:
+        try:
+            parsed_by_name[spec["name"]] = parse_expression(
+                spec["expression"])
+        except FormulaError as exc:
+            raise FormulaError(
+                f"saved formula '{spec['name']}' cannot be recomputed: {exc}"
+            ) from None
+
+    batch_names = set(spec_by_name)
+    indegree = {name: 0 for name in batch_names}
+    children = {name: [] for name in batch_names}
+    for name, parsed in parsed_by_name.items():
+        for dependency in parsed.dependencies:
+            if dependency not in batch_names:
+                continue
+            indegree[name] += 1
+            children[dependency].append(name)
+
+    ready = sorted(
+        (name for name, degree in indegree.items() if degree == 0),
+        key=rank.__getitem__,
+    )
+    ordered: list[str] = []
+    while ready:
+        name = ready.pop(0)
+        ordered.append(name)
+        for child in sorted(children[name], key=rank.__getitem__):
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                ready.append(child)
+                ready.sort(key=rank.__getitem__)
+
+    if len(ordered) != len(batch_names):
+        cycle = sorted(
+            (name for name, degree in indegree.items() if degree > 0),
+            key=rank.__getitem__,
+        )
+        raise FormulaError(
+            "cannot safely update saved equations because their dependency "
+            f"graph contains a cycle: {cycle}")
+
+    return [spec_by_name[name] for name in ordered]
 
 
 def _representative_indices(n_rows: int, sample_size: int) -> np.ndarray:
@@ -491,18 +709,7 @@ def rewrite_provenance(
     """Keep persisted formula provenance coherent after column edits."""
     rename = dict(rename or {})
     dropped = set(drop or [])
-    if isinstance(value, Mapping):
-        records = [
-            {"name": key, **record}
-            for key, record in value.items()
-            if isinstance(record, Mapping)
-        ]
-    elif isinstance(value, list):
-        records = [
-            dict(record) for record in value if isinstance(record, Mapping)
-        ]
-    else:
-        records = []
+    records = _provenance_records(value)
 
     rewritten: list[dict] = []
     for record in records:
@@ -513,8 +720,7 @@ def rewrite_provenance(
         updated["name"] = rename.get(old_name, old_name)
         dependencies = [
             rename.get(dependency, dependency)
-            for dependency in record.get("dependencies", [])
-            if isinstance(dependency, str)
+            for dependency in _provenance_dependencies(record)
         ]
         updated["dependencies"] = list(dict.fromkeys(dependencies))
         expression = record.get("expression")
@@ -534,6 +740,34 @@ def rewrite_provenance(
             updated.pop("missing_dependencies", None)
         rewritten.append(updated)
     return rewritten
+
+
+def refresh_missing_dependencies(
+    value: Any,
+    columns: Iterable[str],
+) -> list[dict]:
+    """Recompute missing dependency markers against the final schema.
+
+    Unlike the per-operation ``drop`` hint used by :func:`rewrite_provenance`,
+    this remains correct across later unrelated rebuilds and when a previously
+    missing source column is materialized again.
+    """
+    available = set(columns)
+    refreshed: list[dict] = []
+    for record in _provenance_records(value):
+        updated = dict(record)
+        dependencies = list(_provenance_dependencies(record))
+        updated["dependencies"] = dependencies
+        missing = [
+            dependency for dependency in dependencies
+            if dependency not in available
+        ]
+        if missing:
+            updated["missing_dependencies"] = missing
+        else:
+            updated.pop("missing_dependencies", None)
+        refreshed.append(updated)
+    return refreshed
 
 
 def merge_provenance(

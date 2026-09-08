@@ -56,6 +56,22 @@ class IngestDialectTests(DataDirTestCase):
         plain.write_text("time,rpm\n0.0,1.5\n0.1,2.5\n", encoding="utf-8")
         self.assertEqual(ingest.sniff_dialect(plain), (",", False))
 
+    def test_ingest_records_normalized_uploader_provenance(self):
+        plain = Path(self.temp.name) / "attributed.csv"
+        plain.write_text("time,rpm\n0.0,1.5\n0.1,2.5\n", encoding="utf-8")
+
+        meta = ingest.ingest_csv(
+            plain, "attributed", uploader_name="  Jose\u0301  ")
+
+        self.assertEqual(meta["uploader_name"], "José")
+        self.assertEqual(
+            store.get_status("attributed")["uploader_name"], "José")
+        row = next(
+            row for row in store.list_tests()
+            if row["name"] == "attributed"
+        )
+        self.assertEqual(row["uploader_name"], "José")
+
     def test_dialect_file_ingests_to_ready_dataset(self):
         meta = ingest.ingest_csv(self.src, "kiha", source_name="kiha.csv")
         self.assertEqual(meta["csv_separator"], ";")

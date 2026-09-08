@@ -1,4 +1,5 @@
 import { DEFAULT_FILTER_UI, FilterUi } from '../constants/filters';
+import { MAX_SELECTED_TEST_POINTS } from '../constants/selection';
 import { AggMode, ScatterFilterState, SpectrumXAxis, WindowDisplayMode } from '../types';
 
 export type AnalysisViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
@@ -203,7 +204,7 @@ export function normalizeAnalysisSession(value: unknown): AnalysisSession {
     xAxis: stringValue(value.xAxis),
     yAxis: stringValue(value.yAxis),
     axesUserSet: !!value.axesUserSet,
-    selections: selections.slice(0, 6),
+    selections: selections.slice(0, MAX_SELECTED_TEST_POINTS),
     filterState: normalizeFilterState(value.filterState),
     mainZoom: zoom(value.mainZoom),
     timeZoom: pair(value.timeZoom),

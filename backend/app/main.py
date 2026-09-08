@@ -459,10 +459,12 @@ def api_preview_formulas(name: str, payload: FormulaPreviewRequest):
         if store.get_status(name).get("status") != "ready":
             raise HTTPException(409, f"test '{name}' is not ready")
         try:
+            specs = formula.expand_formula_dependents(
+                payload.formulas, meta.get("derived_variables"))
             return formula.preview_formulas(
                 TESTS_DIR / name / "data.parquet",
                 meta,
-                payload.formulas,
+                specs,
                 payload.sample_size,
             )
         except formula.FormulaError as exc:
@@ -500,8 +502,10 @@ def api_edit(name: str, ops: EditOps, background: BackgroundTasks):
 
     if ops.formulas:
         try:
+            specs = formula.expand_formula_dependents(
+                ops.formulas, meta.get("derived_variables"))
             formula.compile_formula_batch(
-                ops.formulas, meta["columns"], tcol)
+                specs, meta["columns"], tcol)
         except formula.FormulaError as exc:
             raise HTTPException(400, str(exc)) from None
 

@@ -6,11 +6,14 @@
  * hash before trusting the server-side partial file.
  */
 
+import { uploaderNameError } from './uploaderAttribution';
+
 export interface UploadResumeRecord {
   version: 1;
   uploadId: string;
   testName: string;
   fileName: string;
+  uploaderName?: string;
   sizeBytes: number;
   lastModifiedMs: number;
   fsHz?: number;
@@ -33,6 +36,9 @@ function isRecord(value: unknown): value is UploadResumeRecord {
     typeof item.testName === 'string' &&
     !!item.testName &&
     typeof item.fileName === 'string' &&
+    (item.uploaderName === undefined ||
+      (typeof item.uploaderName === 'string' &&
+        !uploaderNameError(item.uploaderName))) &&
     Number.isFinite(item.sizeBytes) &&
     (item.sizeBytes ?? -1) >= 0 &&
     Number.isFinite(item.lastModifiedMs) &&

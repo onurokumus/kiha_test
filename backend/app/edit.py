@@ -107,6 +107,9 @@ def _rebuild(name: str, ops: dict) -> None:
         trim_t1 = ops.get("trim_t1")
         policy = ops.get("nan_policy")
         formula_specs: list = ops.get("formulas") or []
+        if formula_specs:
+            formula_specs = formula.expand_formula_dependents(
+                formula_specs, meta.get("derived_variables"))
 
         if formula_specs and (
                 rename or drop or policy
@@ -177,6 +180,16 @@ def _rebuild(name: str, ops: dict) -> None:
             first = next(pf.iter_batches(batch_size=1, columns=[new_tcol]))
             t_start = float(first.column(0)[0].as_py())
         duration = float(n_rows / fs)
+        edited_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        # Validate and build all metadata before the live-file swap. Legacy or
+        # malformed provenance must never fail after data/pyramid are committed.
+        derived_variables = formula.rewrite_provenance(
+            meta.get("derived_variables"), rename, drop)
+        if compiled_formulas:
+            derived_variables = formula.merge_provenance(
+                derived_variables, compiled_formulas, edited_at)
+        derived_variables = formula.refresh_missing_dependencies(
+            derived_variables, columns)
         nan_counts, level_rows = build_pyramid(tmp_parquet, tmp_pyramid,
                                                new_tcol)
         gap_ranges = _updated_gap_ranges(
@@ -191,13 +204,6 @@ def _rebuild(name: str, ops: dict) -> None:
             os.replace(pyr_dir, old_pyramid)   # move the old pyramid aside
         os.replace(tmp_pyramid, pyr_dir)        # swap the new one in
         _discard(old_pyramid)
-
-        edited_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        derived_variables = formula.rewrite_provenance(
-            meta.get("derived_variables"), rename, drop)
-        if compiled_formulas:
-            derived_variables = formula.merge_provenance(
-                derived_variables, compiled_formulas, edited_at)
 
         meta.update({
             "columns": columns,

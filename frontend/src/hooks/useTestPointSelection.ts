@@ -1,8 +1,9 @@
 import { useState, useCallback } from 'react';
 import { SelectedTestPoint, TestPoint } from '../types';
 import { assignColor } from '../utils/colorManager';
+import { MAX_SELECTED_TEST_POINTS } from '../constants/selection';
 
-export const useTestPointSelection = (maxPoints: number = 6) => {
+export const useTestPointSelection = (maxPoints: number = MAX_SELECTED_TEST_POINTS) => {
   const [selectedTPs, setSelectedTPs] = useState<SelectedTestPoint[]>([]);
   const [hiddenTPs, setHiddenTPs] = useState<Set<string>>(new Set());
 

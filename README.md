@@ -85,7 +85,9 @@ Test data is not stored in git, so a fresh clone starts empty:
 2. Open the **Split** tab to define test points — auto-split from an
    ID-like column, or place and drag them manually — then **save**.
 3. Analyze: the scatter shows the test points of every loaded test;
-   click points to overlay them in the time / spectrum / XY views.
+   click points to overlay them in the time / spectrum / XY views. Open
+   **More** to show independent horizontal (X) and vertical (Y) min-max range
+   bars around the test-point means.
 4. The **Edit** tab holds derived-variable equations and reusable formula
    recipes, existing-column rename/drop, metadata, NaN policy, trimming, and
    test rename/delete.
@@ -121,11 +123,21 @@ Rows execute from top to bottom, so a later equation may reference an earlier
 result. Existing columns require an explicit **replace** choice, and the time
 column is protected.
 
+Use **+ add equation** to build an ordered batch. The editor is designed to stay
+compact with 10–20 equations, supports reordering with the row arrows, and
+accepts up to 64 equations in one preview or rebuild.
+
 Applying equations rewrites the working Parquet data and plot pyramids through
 the same staged rebuild used by other edits; the untouched original CSV is not
-changed. Saved equation sets are reusable across tests as formula recipes in
-the human-readable `data/formula_recipes.json` file. Existing columns can be
-renamed independently in **Rename or remove existing columns**.
+changed. Every applied equation is saved with its test and appears under
+**Applied equations** in the Edit tab. Select **edit** to modify one and preview
+the result before rebuilding; saved downstream equations are recalculated in
+dependency order so their materialized values stay consistent. Result names are
+locked during equation edits—rename or remove the column with **Rename or
+remove existing columns** instead.
+
+Formula recipes are separate, reusable equation sets shared across tests. They
+are stored in the human-readable `data/formula_recipes.json` file.
 
 ## Plot filters
 
@@ -153,7 +165,14 @@ cannot retain access to the local `File`; select the same file again and PTT
 will verify its already-committed chunk hashes before resuming. Canceling an
 upload removes its partial server-side data and releases the test name.
 
-Time setup is part of the resumable session identity. In **Auto-detect** and
+The import setup also asks for **Uploaded by**. This is a self-reported
+attribution label, not an account or permission: one value applies to every
+file in the selected batch and the browser remembers the last submitted value
+for convenience. It is stored with the resumable session and final test
+metadata so active transfers and upload history keep showing the attribution.
+
+Uploader attribution and time setup are part of the resumable session identity.
+In **Auto-detect** and
 **Use CSV column** modes, a supplied Hz value is a fallback for an unusable
 clock. **Generate from sample rate** makes the chosen Hz authoritative and
 stores `sample index / Hz` in the requested time column (default `time_s`).

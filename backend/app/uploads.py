@@ -30,7 +30,7 @@ from urllib.parse import parse_qs
 from fastapi import (APIRouter, BackgroundTasks, Header, HTTPException, Query,
                      Request)
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
@@ -45,6 +45,7 @@ from .config import (
 )
 from .ingest import ingest_csv
 from .locks import catalog_write, drop_test_lock, test_write
+from .provenance import MAX_UPLOADER_NAME_LENGTH, normalize_uploader_name
 from .status import write_status
 from .store import get_status, write_json_atomic
 
@@ -76,6 +77,15 @@ class UploadInit(BaseModel):
     fs_hz: float | None = None
     time_mode: Literal["auto", "column", "generated"] = "auto"
     time_column: str | None = Field(default=None, max_length=255)
+    uploader_name: str | None = Field(
+        default=None, max_length=MAX_UPLOADER_NAME_LENGTH)
+
+    @field_validator("uploader_name", mode="before")
+    @classmethod
+    def normalize_uploader_attribution(cls, value):
+        if value is None or not isinstance(value, str):
+            return value
+        return normalize_uploader_name(value)
 
 
 class _RequestBodyTooLarge(Exception):
@@ -287,6 +297,19 @@ def _validate_manifest(value: dict | None, name: str) -> dict:
     if time_mode == "auto" and time_column is not None:
         raise UploadStateError(
             "upload manifest has time_column in automatic mode")
+    uploader_name = value.get("uploader_name")
+    if uploader_name is not None:
+        if not isinstance(uploader_name, str):
+            raise UploadStateError(
+                "upload manifest has invalid uploader_name")
+        try:
+            normalized_uploader = normalize_uploader_name(uploader_name)
+        except (TypeError, ValueError):
+            raise UploadStateError(
+                "upload manifest has invalid uploader_name")
+        if normalized_uploader != uploader_name:
+            raise UploadStateError(
+                "upload manifest has non-canonical uploader_name")
     return value
 
 
@@ -349,6 +372,7 @@ def _session_payload(manifest: dict) -> dict:
         "fs_hz": manifest.get("fs_hz"),
         "time_mode": manifest.get("time_mode", "auto"),
         "time_column": manifest.get("time_column"),
+        "uploader_name": manifest.get("uploader_name"),
         "chunk_size": manifest["chunk_size"],
         "total_chunks": manifest["total_chunks"],
         "state": manifest["state"],
@@ -369,6 +393,7 @@ def _publish_receiving(manifest: dict, payload: dict | None = None) -> None:
         received_bytes=payload["received_bytes"],
         total_chunks=manifest["total_chunks"],
         received_chunks=payload["received_chunks"],
+        **_uploader_status_details(manifest),
     )
 
 
@@ -408,6 +433,16 @@ def _identity_matches(manifest: dict, request: UploadInit) -> bool:
         and manifest.get("fs_hz") == request.fs_hz
         and manifest.get("time_mode", "auto") == request.time_mode
         and manifest.get("time_column") == request.time_column
+        and manifest.get("uploader_name") == request.uploader_name
+    )
+
+
+def _uploader_status_details(manifest: dict) -> dict:
+    uploader_name = manifest.get("uploader_name")
+    return (
+        {"uploader_name": uploader_name}
+        if uploader_name is not None
+        else {}
     )
 
 
@@ -575,6 +610,8 @@ def _init_upload(request: UploadInit) -> tuple[dict, bool]:
                 "updated_at": now,
                 "updated_at_epoch": time.time(),
             }
+            if request.uploader_name is not None:
+                manifest["uploader_name"] = request.uploader_name
             try:
                 _write_manifest(manifest, touch=False)
                 payload = _session_payload(manifest)
@@ -893,6 +930,7 @@ def _finalize_locked(manifest: dict) -> None:
         received_bytes=manifest["size_bytes"],
         total_chunks=manifest["total_chunks"],
         received_chunks=manifest["total_chunks"],
+        **_uploader_status_details(manifest),
     )
 
 
@@ -910,6 +948,7 @@ def ingest_completed_upload(name: str, upload_id: str) -> None:
             fs_hz = manifest.get("fs_hz")
             time_mode = manifest.get("time_mode", "auto")
             time_column = manifest.get("time_column")
+            uploader_name = manifest.get("uploader_name")
             raw_path = _test_dir(name) / "raw.csv"
         ingest_csv(
             raw_path,
@@ -918,6 +957,7 @@ def ingest_completed_upload(name: str, upload_id: str) -> None:
             assume_fs=fs_hz,
             time_mode=time_mode,
             time_column=time_column,
+            uploader_name=uploader_name,
         )
     except Exception as exc:
         logger.exception("upload '%s': ingestion failed", name)
@@ -943,8 +983,13 @@ def ingest_completed_upload(name: str, upload_id: str) -> None:
                 # delete/rename from moving the test and this writer from
                 # recreating a ghost directory under the old name.
                 try:
-                    if get_status(name).get("status") != "error":
-                        write_status(_test_dir(name), "error", detail)
+                    current_status = get_status(name)
+                    write_status(
+                        _test_dir(name),
+                        "error",
+                        current_status.get("error") or detail,
+                        **_uploader_status_details(manifest),
+                    )
                 except Exception:
                     logger.exception(
                         "upload '%s': could not publish status error state",
@@ -1013,6 +1058,7 @@ def _complete_upload(name: str, upload_id: str) -> tuple[dict, bool]:
                     "error",
                     manifest.get("error")
                     or "upload failed; delete this test and upload it again",
+                    **_uploader_status_details(manifest),
                 )
             raise HTTPException(
                 409, "upload failed; delete this test and upload it again")
@@ -1033,6 +1079,7 @@ def _complete_upload(name: str, upload_id: str) -> tuple[dict, bool]:
                 _test_dir(name),
                 "error",
                 detail,
+                **_uploader_status_details(manifest),
             )
             raise HTTPException(409, str(exc))
         return {"name": name, "status": "ingesting"}, True
@@ -1084,11 +1131,13 @@ def cancel_upload(upload_id: str, name: str = Query(...)):
     return {"ok": True, "canceled": name}
 
 
-def _mark_recovery_error(directory: Path, detail: str) -> None:
+def _mark_recovery_error(directory: Path, detail: str,
+                         manifest: dict | None = None) -> None:
     write_status(
         directory,
         "error",
         f"upload/ingestion was interrupted by a backend restart; {detail}",
+        **(_uploader_status_details(manifest) if manifest is not None else {}),
     )
 
 
@@ -1102,6 +1151,7 @@ def _publish_ingesting(manifest: dict) -> None:
         received_bytes=manifest["size_bytes"],
         total_chunks=manifest["total_chunks"],
         received_chunks=manifest["total_chunks"],
+        **_uploader_status_details(manifest),
     )
 
 
@@ -1199,7 +1249,11 @@ def recover_uploads() -> list[tuple[str, str]]:
                         if (manifest["state"] == "ready"
                                 and (directory / "raw.csv").is_file()
                                 and (directory / "meta.json").is_file()):
-                            write_status(directory, "ready")
+                            write_status(
+                                directory,
+                                "ready",
+                                **_uploader_status_details(manifest),
+                            )
                             continue
                         raise UploadStateError(
                             "manifest cannot reconstruct missing status")
@@ -1223,7 +1277,11 @@ def recover_uploads() -> list[tuple[str, str]]:
                         if (manifest["state"] == "ready"
                                 and (directory / "raw.csv").is_file()
                                 and (directory / "meta.json").is_file()):
-                            write_status(directory, "ready")
+                            write_status(
+                                directory,
+                                "ready",
+                                **_uploader_status_details(manifest),
+                            )
                             continue
                         raise UploadStateError(
                             "receiving status contradicts manifest state")
@@ -1236,7 +1294,11 @@ def recover_uploads() -> list[tuple[str, str]]:
                     elif (manifest["state"] == "ready"
                           and (directory / "raw.csv").is_file()
                           and (directory / "meta.json").is_file()):
-                        write_status(directory, "ready")
+                        write_status(
+                            directory,
+                            "ready",
+                            **_uploader_status_details(manifest),
+                        )
                         continue
                     elif manifest["state"] != "ingesting":
                         raise UploadStateError(
@@ -1258,5 +1320,6 @@ def recover_uploads() -> list[tuple[str, str]]:
                     _mark_recovery_error(
                         directory,
                         f"{exc}; delete this test and upload it again",
+                        manifest,
                     )
     return jobs

@@ -126,23 +126,23 @@ class FormulaParserTests(unittest.TestCase):
     def test_batch_chaining_and_explicit_overwrite(self):
         compiled = formula.compile_formula_batch(
             [
-                {"name": "sum", "expression": "{a} + {b}"},
-                {"name": "scaled", "expression": "{sum} * 2"},
                 {
                     "name": "a",
-                    "expression": "{scaled} - {b}",
+                    "expression": "{b} + 1",
                     "replace": True,
                 },
+                {"name": "sum", "expression": "{a} + {b}"},
+                {"name": "scaled", "expression": "{sum} * 2"},
             ],
             ["time_s", "a", "b"],
             "time_s",
         )
         self.assertEqual(
             [item.dependencies for item in compiled],
-            [("a", "b"), ("sum",), ("scaled", "b")],
+            [("b",), ("a", "b"), ("sum",)],
         )
-        self.assertFalse(compiled[0].replaces_existing)
-        self.assertTrue(compiled[2].replaces_existing)
+        self.assertTrue(compiled[0].replaces_existing)
+        self.assertFalse(compiled[2].replaces_existing)
 
         frame = pl.DataFrame({
             "time_s": [0.0, 1.0],
@@ -151,9 +151,9 @@ class FormulaParserTests(unittest.TestCase):
         })
         for item in compiled:
             frame = frame.with_columns(item.polars_expr)
-        self.assertEqual(frame["sum"].to_list(), [4.0, 6.0])
-        self.assertEqual(frame["scaled"].to_list(), [8.0, 12.0])
-        self.assertEqual(frame["a"].to_list(), [5.0, 8.0])
+        self.assertEqual(frame["a"].to_list(), [4.0, 5.0])
+        self.assertEqual(frame["sum"].to_list(), [7.0, 9.0])
+        self.assertEqual(frame["scaled"].to_list(), [14.0, 18.0])
 
     def test_batch_rejects_unknown_forward_self_overwrite_and_time_target(self):
         cases = [
@@ -170,11 +170,19 @@ class FormulaParserTests(unittest.TestCase):
             ),
             (
                 [{"name": "self", "expression": "{self} + 1"}],
-                "unknown column",
+                "cannot reference itself",
             ),
             (
-                [{"name": "a", "expression": "{a} + 1"}],
+                [{"name": "a", "expression": "{b} + 1"}],
                 "replace=true",
+            ),
+            (
+                [{
+                    "name": "a",
+                    "expression": "{a} + 1",
+                    "replace": True,
+                }],
+                "cannot reference itself",
             ),
             (
                 [{"name": "time_s", "expression": "{a} + 1",
@@ -221,6 +229,119 @@ class FormulaParserTests(unittest.TestCase):
             formula.rewrite_provenance(source_dropped, drop=["power_w"]),
             [],
         )
+
+    def test_saved_formula_update_expands_and_orders_transitive_dependents(self):
+        provenance = [
+            {
+                "name": "triple",
+                "expression": "{double} + {base}",
+                "dependencies": ["double", "base"],
+            },
+            {
+                "name": "base",
+                "expression": "{a} + 1",
+                "dependencies": ["a"],
+            },
+            {
+                "name": "double",
+                "expression": "{base} * 2",
+                "dependencies": ["base"],
+            },
+        ]
+        expanded = formula.expand_formula_dependents(
+            [{
+                "name": "base",
+                "expression": "{a} + 2",
+                "replace": True,
+            }],
+            provenance,
+        )
+        self.assertEqual(
+            [item["name"] for item in expanded],
+            ["base", "double", "triple"],
+        )
+        self.assertTrue(all(item["replace"] for item in expanded))
+
+    def test_saved_formula_update_rejects_dependency_cycles(self):
+        provenance = [
+            {
+                "name": "left",
+                "expression": "{a} + 1",
+                "dependencies": ["a"],
+            },
+            {
+                "name": "right",
+                "expression": "{left} * 2",
+                "dependencies": ["left"],
+            },
+        ]
+        with self.assertRaisesRegex(formula.FormulaError, "cycle"):
+            formula.expand_formula_dependents(
+                [{
+                    "name": "left",
+                    "expression": "{right} + 1",
+                    "replace": True,
+                }],
+                provenance,
+            )
+
+    def test_formula_write_expands_legacy_dependents_from_expressions(self):
+        provenance = [
+            {
+                "name": "double_sum",
+                "expression": "{sum} * 2",
+                "dependencies": None,
+            },
+            {
+                "name": "sum",
+                "expression": "{a} + {b}",
+                # Legacy records may omit dependencies entirely.
+            },
+        ]
+        expanded = formula.expand_formula_dependents(
+            [{"name": "a", "expression": "100", "replace": True}],
+            provenance,
+        )
+        self.assertEqual(
+            [item["name"] for item in expanded],
+            ["a", "sum", "double_sum"],
+        )
+        self.assertTrue(all(item["replace"] for item in expanded))
+
+    def test_saved_equations_reject_self_and_later_target_references(self):
+        with self.assertRaisesRegex(formula.FormulaError, "cannot reference itself"):
+            formula.expand_formula_dependents(
+                [{"name": "a", "expression": "{a} + 1", "replace": True}],
+                [],
+            )
+
+        with self.assertRaisesRegex(formula.FormulaError, "later target 'a'"):
+            formula.expand_formula_dependents(
+                [
+                    {
+                        "name": "b",
+                        "expression": "{a} * 10",
+                        "replace": True,
+                    },
+                    {"name": "a", "expression": "5", "replace": True},
+                ],
+                [],
+            )
+
+    def test_missing_dependencies_refresh_against_final_schema(self):
+        provenance = [{
+            "name": "power",
+            "expression": "{torque} * {rpm}",
+            "dependencies": ["torque", "rpm"],
+            "missing_dependencies": ["stale-marker"],
+        }]
+        missing = formula.refresh_missing_dependencies(
+            provenance, ["time_s", "torque", "power"])
+        self.assertEqual(missing[0]["missing_dependencies"], ["rpm"])
+
+        repaired = formula.refresh_missing_dependencies(
+            missing, ["time_s", "torque", "rpm", "power"])
+        self.assertNotIn("missing_dependencies", repaired[0])
 
 
 class FormulaDataTests(DataDirTestCase):
@@ -301,6 +422,47 @@ class FormulaDataTests(DataDirTestCase):
         self.assertEqual(
             preview["formulas"][1]["stats"]["valid_count"], 5)
 
+    def test_twenty_formula_chain_previews_and_rebuilds_in_order(self):
+        names = [f"v{index}" for index in range(20)]
+        specs = [
+            {
+                "name": name,
+                "expression": (
+                    "{a} + 1" if index == 0
+                    else f"{{v{index - 1}}} + 1"
+                ),
+            }
+            for index, name in enumerate(names)
+        ]
+
+        preview = main.api_preview_formulas(
+            "alpha",
+            FormulaPreviewRequest(formulas=specs, sample_size=5),
+        )
+        indices = preview["row_indices"]
+        self.assertEqual(
+            [item["name"] for item in preview["formulas"]], names)
+        np.testing.assert_allclose(
+            preview["formulas"][-1]["values"],
+            self.a[indices] + 20,
+            atol=1e-12,
+        )
+
+        edit._rebuild("alpha", {"formulas": specs})
+        meta = store.get_meta("alpha")
+        self.assertEqual(meta["columns"][-20:], names)
+        self.assertEqual(
+            [item["name"] for item in meta["derived_variables"]], names)
+        self.assertEqual(
+            [item["dependencies"] for item in meta["derived_variables"]],
+            [["a"], *[[names[index - 1]] for index in range(1, 20)]],
+        )
+
+        data = pl.read_parquet(
+            self.tests / "alpha" / "data.parquet", columns=[names[-1]])
+        np.testing.assert_allclose(
+            data[names[-1]].to_numpy(), self.a + 20, atol=1e-12)
+
     def test_preview_returns_json_safe_missing_values(self):
         preview = main.api_preview_formulas(
             "alpha",
@@ -350,8 +512,16 @@ class FormulaDataTests(DataDirTestCase):
                 "unknown column",
             ),
             (
-                [{"name": "a", "expression": "{a} + 1"}],
+                [{"name": "a", "expression": "{b} + 1"}],
                 "replace=true",
+            ),
+            (
+                [{
+                    "name": "a",
+                    "expression": "{a} + 1",
+                    "replace": True,
+                }],
+                "cannot reference itself",
             ),
             (
                 [{
@@ -474,6 +644,165 @@ class FormulaDataTests(DataDirTestCase):
             round(float((2 * (self.a + self.b)).mean()), 6),
             places=6,
         )
+
+    def test_saved_formula_edit_recomputes_transitive_dependents(self):
+        edit._rebuild("alpha", {"formulas": self.specs()})
+        before = store.get_meta("alpha")
+        before_columns = list(before["columns"])
+        created_at = {
+            item["name"]: item["created_at"]
+            for item in before["derived_variables"]
+        }
+
+        preview = main.api_preview_formulas(
+            "alpha",
+            FormulaPreviewRequest(
+                formulas=[{
+                    "name": "sum",
+                    "expression": "{a} - {b}",
+                    "replace": True,
+                }],
+                sample_size=5,
+            ),
+        )
+        self.assertEqual(
+            [item["name"] for item in preview["formulas"]],
+            ["sum", "double_sum"],
+        )
+
+        edit._rebuild(
+            "alpha",
+            {
+                "formulas": [{
+                    "name": "sum",
+                    "expression": "{a} - {b}",
+                    "replace": True,
+                }],
+            },
+        )
+
+        meta = store.get_meta("alpha")
+        self.assertEqual(meta["columns"], before_columns)
+        provenance = {
+            item["name"]: item for item in meta["derived_variables"]
+        }
+        self.assertEqual(provenance["sum"]["expression"], "{a} - {b}")
+        self.assertEqual(
+            provenance["double_sum"]["expression"], "{sum} * 2")
+        self.assertEqual(provenance["sum"]["created_at"], created_at["sum"])
+        self.assertEqual(
+            provenance["double_sum"]["created_at"],
+            created_at["double_sum"],
+        )
+        self.assertTrue(provenance["sum"]["replaced_existing"])
+        self.assertTrue(provenance["double_sum"]["replaced_existing"])
+
+        data = pl.read_parquet(self.tests / "alpha" / "data.parquet")
+        expected_sum = self.a - self.b
+        np.testing.assert_allclose(
+            data["sum"].to_numpy(), expected_sum, atol=1e-12)
+        np.testing.assert_allclose(
+            data["double_sum"].to_numpy(), 2 * expected_sum, atol=1e-12)
+
+    def test_api_rejects_cyclic_saved_formula_edit_before_rebuild(self):
+        edit._rebuild("alpha", {"formulas": self.specs()})
+        with self.assertRaises(HTTPException) as caught:
+            main.api_edit(
+                "alpha",
+                EditOps(
+                    formulas=[{
+                        "name": "sum",
+                        "expression": "{double_sum} + 1",
+                        "replace": True,
+                    }],
+                ),
+                BackgroundTasks(),
+            )
+        self.assertEqual(caught.exception.status_code, 400)
+        self.assertIn("cycle", str(caught.exception.detail))
+        self.assertEqual(store.get_status("alpha")["status"], "ready")
+
+    def test_missing_dependency_marker_survives_unrelated_formula_rebuild(self):
+        edit._rebuild("alpha", {"formulas": self.specs()})
+        edit._rebuild("alpha", {"drop": ["a"]})
+        dropped = {
+            item["name"]: item
+            for item in store.get_meta("alpha")["derived_variables"]
+        }
+        self.assertEqual(dropped["sum"]["missing_dependencies"], ["a"])
+
+        edit._rebuild(
+            "alpha",
+            {"formulas": [{"name": "constant", "expression": "1"}]},
+        )
+        after = {
+            item["name"]: item
+            for item in store.get_meta("alpha")["derived_variables"]
+        }
+        self.assertEqual(after["sum"]["missing_dependencies"], ["a"])
+
+    def test_recreated_source_recomputes_saved_dependents_automatically(self):
+        edit._rebuild("alpha", {"formulas": self.specs()})
+        edit._rebuild("alpha", {"drop": ["a"]})
+
+        edit._rebuild(
+            "alpha",
+            {"formulas": [{"name": "a", "expression": "100"}]},
+        )
+
+        data = pl.read_parquet(self.tests / "alpha" / "data.parquet")
+        expected_sum = 100 + self.b
+        np.testing.assert_allclose(
+            data["a"].to_numpy(), np.full(N, 100.0), atol=1e-12)
+        np.testing.assert_allclose(
+            data["sum"].to_numpy(), expected_sum, atol=1e-12)
+        np.testing.assert_allclose(
+            data["double_sum"].to_numpy(), 2 * expected_sum, atol=1e-12)
+        provenance = {
+            item["name"]: item
+            for item in store.get_meta("alpha")["derived_variables"]
+        }
+        self.assertNotIn("missing_dependencies", provenance["sum"])
+
+    def test_raw_source_replacement_recomputes_saved_dependents(self):
+        edit._rebuild("alpha", {"formulas": self.specs()})
+        edit._rebuild(
+            "alpha",
+            {
+                "formulas": [{
+                    "name": "a",
+                    "expression": "100",
+                    "replace": True,
+                }],
+            },
+        )
+
+        data = pl.read_parquet(self.tests / "alpha" / "data.parquet")
+        expected_sum = 100 + self.b
+        np.testing.assert_allclose(
+            data["sum"].to_numpy(), expected_sum, atol=1e-12)
+        np.testing.assert_allclose(
+            data["double_sum"].to_numpy(), 2 * expected_sum, atol=1e-12)
+
+    def test_legacy_null_dependencies_do_not_break_atomic_trim(self):
+        meta_path = self.tests / "alpha" / "meta.json"
+        meta = store.get_meta("alpha")
+        meta["derived_variables"] = [{
+            "name": "a",
+            "expression": "(",
+            "dependencies": None,
+        }]
+        store.write_json_atomic(meta_path, meta)
+
+        edit._rebuild("alpha", {"trim_t0": 1.0})
+
+        after = store.get_meta("alpha")
+        parquet_rows = pl.read_parquet(
+            self.tests / "alpha" / "data.parquet"
+        ).height
+        self.assertEqual(after["n_rows"], parquet_rows)
+        self.assertEqual(store.get_status("alpha")["status"], "ready")
+        self.assertEqual(after["derived_variables"][0]["dependencies"], [])
 
     def test_rebuild_rename_updates_derived_provenance_and_storage(self):
         edit._rebuild("alpha", {"formulas": self.specs()})
