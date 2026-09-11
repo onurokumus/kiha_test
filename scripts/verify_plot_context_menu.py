@@ -207,8 +207,8 @@ def run_checks(web, api, dataset, temporary, output):
             page.keyboard.press('Escape'); expect(dialog.get_by_role('alert')).to_contain_text('discard')
             dialog.get_by_role('button', name='Confirm', exact=True).click(); expect(dialog).not_to_be_visible()
             open_menu(target).get_by_role('menuitemcheckbox', name='Show time notes (all plots)', exact=True).click()
-            expect(page.get_by_role('checkbox', name='Show time notes', exact=True)).not_to_be_checked()
-            page.get_by_role('checkbox', name='Show time notes', exact=True).check()
+            expect(page.get_by_role('button', name='Show time notes', exact=True)).to_have_attribute('aria-pressed', 'false')
+            page.get_by_role('button', name='Show time notes', exact=True).click()
             print('PASS: real source-specific marker/interval, exact origin, failure/retry, draft guard and shared note visibility', flush=True)
 
             action(target, 'Reset linked time / TP Y axes'); settle()

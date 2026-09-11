@@ -12,7 +12,7 @@ interface FilterRowProps {
   title?: string;
 }
 
-/** Compact, labelled DSP controls for one plot's independent filter. */
+/** Labelled DSP controls laid out for the on-demand plot filter dialog. */
 export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title }) => {
   const hintId = useId();
   const windowMs = Number(ui.despikeWindowMs);
@@ -55,7 +55,7 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
         ui.kind === 'bandpass' ||
         ui.kind === 'bandstop') && (
         <>
-          <label className={`${styles.field} ${styles.orderField}`}>
+          <label className={styles.field}>
             <span>Order</span>
             <input
               type="number"
@@ -68,7 +68,7 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
               title="Butterworth filter order, from 1 to 10"
             />
           </label>
-          <label className={`${styles.field} ${styles.frequencyField}`}>
+          <label className={styles.field}>
             <span>
               {ui.kind === 'bandpass' || ui.kind === 'bandstop' ? 'Low cutoff (Hz)' : 'Cutoff (Hz)'}
             </span>
@@ -83,7 +83,7 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
             />
           </label>
           {(ui.kind === 'bandpass' || ui.kind === 'bandstop') && (
-            <label className={`${styles.field} ${styles.frequencyField}`}>
+            <label className={styles.field}>
               <span>High cutoff (Hz)</span>
               <input
                 type="number"
@@ -105,7 +105,7 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
       )}
 
       {ui.kind === 'moving_avg' && (
-        <label className={`${styles.field} ${styles.durationField}`}>
+        <label className={styles.field}>
           <span>Window (s)</span>
           <input
             type="number"
@@ -121,7 +121,7 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
 
       {ui.kind === 'despike' && (
         <>
-          <label className={`${styles.field} ${styles.durationField}`}>
+          <label className={styles.field}>
             <span>Window (ms)</span>
             <input
               type="number"
@@ -135,7 +135,7 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
               title="Local-median window in milliseconds; must exceed twice the maximum spike duration"
             />
           </label>
-          <label className={`${styles.field} ${styles.durationField}`}>
+          <label className={styles.field}>
             <span>Max spike (ms)</span>
             <input
               type="number"
@@ -149,7 +149,7 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
               title="Longest consecutive spike to replace, in milliseconds"
             />
           </label>
-          <label className={`${styles.field} ${styles.sensitivityField}`}>
+          <label className={styles.field}>
             <span>Threshold (MAD)</span>
             <input
               type="number"
@@ -163,7 +163,7 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
               title="Deviation threshold in robust MAD sigmas; lower values detect more spikes"
             />
           </label>
-          <label className={`${styles.field} ${styles.floorField}`}>
+          <label className={styles.field}>
             <span>Min jump (units)</span>
             <input
               type="number"
@@ -177,7 +177,7 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
               title="Ignore deviations smaller than this value in the plotted signal's units"
             />
           </label>
-          <label className={`${styles.field} ${styles.fillField}`}>
+          <label className={styles.field}>
             <span>Replacement</span>
             <select
               value={ui.replacement}

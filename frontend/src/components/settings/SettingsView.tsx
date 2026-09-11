@@ -417,21 +417,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontSize: 10, color: '#909090', width: 14 }}>Y</span>
-                  <ColSelect
-                    value={view.xyYCols[i] ?? ''}
-                    onChange={(v) => {
-                      const next = [...view.xyYCols];
-                      next[i] = v;
-                      edit({ xyYCols: next });
-                    }}
-                    columns={xyColumns}
-                    autoLabel={`(same as cell ${i + 1})`}
-                    width={150}
-                    ariaLabel={`Preferred Y signal for XY cell ${i + 1}`}
-                  />
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                   <span style={{ fontSize: 10, color: '#909090', width: 14 }}>X</span>
                   <ColSelect
                     value={view.xyXCols[i] ?? ''}
@@ -444,6 +429,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     autoLabel="(auto)"
                     width={150}
                     ariaLabel={`Preferred X signal for XY cell ${i + 1}`}
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ fontSize: 10, color: '#909090', width: 14 }}>Y</span>
+                  <ColSelect
+                    value={view.xyYCols[i] ?? ''}
+                    onChange={(v) => {
+                      const next = [...view.xyYCols];
+                      next[i] = v;
+                      edit({ xyYCols: next });
+                    }}
+                    columns={xyColumns}
+                    autoLabel={`(same as cell ${i + 1})`}
+                    width={150}
+                    ariaLabel={`Preferred Y signal for XY cell ${i + 1}`}
                   />
                 </div>
               </div>

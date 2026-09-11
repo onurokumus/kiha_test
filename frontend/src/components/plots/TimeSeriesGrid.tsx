@@ -20,6 +20,7 @@ import { createPlotExportRegistry } from '../../utils/plotExportRegistry';
 import { MultiPlotExportControls } from '../controls/MultiPlotExportControls';
 import { useAnnotations } from '../../hooks/useAnnotations';
 import styles from './TimeSeriesGrid.module.css';
+import toolbar from '../controls/PlotToolbarButton.module.css';
 
 export type TimeViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
 export type TimeSeriesGridDensity = 'single' | 'quad' | 'nine';
@@ -223,10 +224,16 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   return (
     <div className={styles.gridShell}>
       <div className={styles.exportToolbar}>
-        {(viewMode === 'tp' || viewMode === 'full') && <label>
-          <input type="checkbox" checked={annotationsVisible}
-            onChange={(event) => onAnnotationsVisibleChange(event.target.checked)} /> Show time notes
-        </label>}
+        {(viewMode === 'tp' || viewMode === 'full') && <button type="button"
+          className={toolbar.button} aria-label="Show time notes" aria-pressed={annotationsVisible}
+          data-tooltip="Show or hide time notes"
+          onClick={() => onAnnotationsVisibleChange(!annotationsVisible)}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M5 3h14v14H9l-4 4V3Z" />
+            <path d="M9 7h6M9 11h4" />
+          </svg>
+        </button>}
         <MultiPlotExportControls registry={exportRegistry}
           contextKey={JSON.stringify([viewMode, test, density, expandedPlot, visibleSelectionFingerprint, plotConfigs, plotFilterSpecs, plotShowOriginal, fullPlotMode, timeZoom, waterfallWindow, waterfallOverlap, specSource, specMode, specXAxis, specRpmCol, specLogY, xySource, xyXCols, xyYCols])}
           kind={viewMode === 'spectrum' && specMode === 'waterfall' ? 'waterfall' : viewMode === 'spectrum' || viewMode === 'xy' ? viewMode : 'time'}
@@ -244,14 +251,14 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
             <section key={`plot-${idx}`} className={`${wrapperClass} ${styles.unavailable}`} aria-label={`Unavailable plot ${idx + 1}`}>
               <strong>{displayedY} · variable unavailable</strong>
               <p>Saved plot {idx + 1} stays in this slot. Choose an available variable to resume analysis.</p>
-              {missingY && <label>Y variable <select className="input" aria-label={`Variable for plot ${idx + 1}`} value={displayedY}
-                onChange={event => viewMode === 'xy' ? onXYYColChange?.(idx, event.target.value) : handleConfigChange(idx, event.target.value)}>
-                <option value={displayedY}>{displayedY} (unavailable)</option>
-                {columns.map(column => <option key={column} value={column}>{column}</option>)}
-              </select></label>}
               {missingX && <label>X variable <select className="input" aria-label={`X variable for plot ${idx + 1}`} value={xyXCols[idx] ?? ''}
                 onChange={event => onXYXColChange?.(idx, event.target.value)}>
                 <option value={xyXCols[idx] ?? ''}>{xyXCols[idx] || 'Choose X'} (unavailable)</option>
+                {columns.map(column => <option key={column} value={column}>{column}</option>)}
+              </select></label>}
+              {missingY && <label>Y variable <select className="input" aria-label={`Variable for plot ${idx + 1}`} value={displayedY}
+                onChange={event => viewMode === 'xy' ? onXYYColChange?.(idx, event.target.value) : handleConfigChange(idx, event.target.value)}>
+                <option value={displayedY}>{displayedY} (unavailable)</option>
                 {columns.map(column => <option key={column} value={column}>{column}</option>)}
               </select></label>}
               <button className="btn" onClick={() => onToggleExpand(idx)}>{expandedPlot === idx ? 'Restore grid' : 'Maximize slot'}</button>

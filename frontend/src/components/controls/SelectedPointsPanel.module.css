@@ -209,9 +209,14 @@
   font-size: 11px;
 }
 
+.testControl {
+  flex: 1 1 320px;
+}
+
 .testSelect {
-  min-width: 132px;
-  max-width: 206px;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
   height: 32px;
 }
 
@@ -531,6 +536,10 @@ button.itemAction {
 
   .contextControl {
     flex: 1 1 150px;
+  }
+
+  .testControl {
+    flex-basis: 100%;
   }
 
   .select,

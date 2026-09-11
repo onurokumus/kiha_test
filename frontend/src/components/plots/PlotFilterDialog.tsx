@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import styles from '../controls/PlotExportControls.module.css';
+import styles from './PlotFilterDialog.module.css';
 
 /** Mount on demand from the plot menu; native modal keeps dense filter fields
  * outside grid clipping and restores keyboard focus to the menu opener. */
@@ -22,6 +22,6 @@ export function PlotFilterDialog({ label, onClose, children }: {
       <button type="button" onClick={onClose} aria-label="Close filter settings">×</button>
     </div>
     <p>Changes apply to this plot as you edit.</p>
-    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>{children}</div>
+    <div className={styles.fields}>{children}</div>
   </dialog>, document.body);
 }

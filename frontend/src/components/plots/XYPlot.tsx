@@ -380,23 +380,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
               zIndex: 5,
             }}
           >
-            <SearchableSelect
-              value={cfg.key}
-              onChange={(nextKey) => onConfigChange?.(nextKey)}
-              options={allConfigs.map((config) => ({
-                value: config.key,
-                label: config.label,
-                keywords: [config.key],
-              }))}
-              style={editSelectStyle}
-              ariaLabel="Y variable"
-              title="Y column"
-              searchPlaceholder="Search Y variables..."
-              optionNoun="variable"
-              appearance="plot"
-              size="compact"
-            />
-            <span style={{ fontSize: 10, color: '#909090', flexShrink: 0 }}>vs</span>
+            <span aria-hidden="true" style={{ fontSize: 10, color: '#909090', flexShrink: 0 }}>X</span>
             <SearchableSelect
               value={xCol}
               onChange={(nextKey) => onXColChange?.(nextKey)}
@@ -409,6 +393,23 @@ export const XYPlot: React.FC<XYPlotProps> = ({
               ariaLabel="X variable"
               title="X column (this plot only)"
               searchPlaceholder="Search X variables..."
+              optionNoun="variable"
+              appearance="plot"
+              size="compact"
+            />
+            <span aria-hidden="true" style={{ fontSize: 10, color: '#909090', flexShrink: 0 }}>Y</span>
+            <SearchableSelect
+              value={cfg.key}
+              onChange={(nextKey) => onConfigChange?.(nextKey)}
+              options={allConfigs.map((config) => ({
+                value: config.key,
+                label: config.label,
+                keywords: [config.key],
+              }))}
+              style={editSelectStyle}
+              ariaLabel="Y variable"
+              title="Y column"
+              searchPlaceholder="Search Y variables..."
               optionNoun="variable"
               appearance="plot"
               size="compact"

@@ -2,6 +2,18 @@
 
 Open items below are listed in recommended implementation order. Complete each phase before moving to the next, except for independent small fixes.
 
+## Requested UI fixes (2026-09-11)
+
+- [x] Make Show time notes and Export selected plots icon-only with hover tooltips; make filter-dialog fields readable and styled; widen the right-side test selector; show X before Y in XY variable selection; keep overlapping-point selection above the scatter divider and adjacent plots.
+
+User-requested polish takes priority over the independent Phase 11b side panel.
+Completed with readable modal fields, shared icon controls, flexible test width,
+explicit X/Y order and a body-level clustered-point menu. Build/lint, all 453
+backend tests/370 subtests, focused UI/scatter checks and existing XY-time,
+compact-controls, Y-axis and rendering regressions pass. Keyboard, resize,
+maximize/restore and actual 125%/150% zoom verified; fixture sources unchanged.
+See [UI polish verification](docs/UI_POLISH_VERIFICATION.md).
+
 ## Linux deployment regression (2026-09-11)
 
 - [x] Fix the analysis-source/Trash API failures on the Linux Python 3.11 baseline and the ready-test count that only appears after opening Uploads.

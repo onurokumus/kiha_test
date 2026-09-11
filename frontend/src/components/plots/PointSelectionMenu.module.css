@@ -1,0 +1,100 @@
+.menu {
+  position: fixed;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  max-width: calc(100vw - 20px);
+  max-height: min(400px, calc(100vh - 20px));
+  overflow: hidden;
+  box-sizing: border-box;
+  background: #2d2d2d;
+  border: 1px solid #569cd6;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px #0006;
+  font-family: 'Segoe UI', sans-serif;
+}
+
+.header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #3c3c3c;
+  color: #a0a0a0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.close {
+  padding: 2px 4px;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: #b0b0b0;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.search {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid #3c3c3c;
+}
+
+.search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  color: #e0e0e0;
+  font: 12px 'Segoe UI', sans-serif;
+}
+
+.points {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #4a6b8a #1e1e1e;
+}
+
+.point {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #3c3c3c;
+  color: #e0e0e0;
+  text-align: left;
+  font: 12px 'Segoe UI', sans-serif;
+  cursor: pointer;
+}
+
+.point:last-child { border-bottom: 0; }
+.point:hover, .point:focus-visible { background: #3c3c3c; }
+.point:focus-visible { outline: 2px solid #7ec8f2; outline-offset: -2px; }
+.close:focus-visible, .search input:focus-visible { outline: 2px solid #7ec8f2; outline-offset: 1px; }
+
+.swatch {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid transparent;
+  border-radius: 50%;
+}
+
+.description { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.name, .details { display: block; }
+.details { margin-top: 2px; color: #a0a0a0; font-size: 11px; }
+.selected { flex: 0 0 auto; color: #75b4e8; font-size: 10px; }
+.empty { padding: 16px 12px; color: #909090; text-align: center; font-size: 12px; }

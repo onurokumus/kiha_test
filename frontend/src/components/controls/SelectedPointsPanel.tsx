@@ -254,7 +254,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
           )}
 
           {hasTestControl && (
-            <div className={styles.contextControl}>
+            <div className={`${styles.contextControl} ${styles.testControl}`}>
               <span className={styles.utilityLabel}>Test</span>
               <TestSelect
                 tests={tests}

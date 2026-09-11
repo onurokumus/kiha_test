@@ -378,9 +378,10 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
     [onToggleTestPoint]
   );
 
-  const handleMenuClose = useCallback(() => {
+  const handleMenuClose = useCallback((restoreFocus = false) => {
     setMenuState(null);
     setHighlightedPointId(null);
+    if (restoreFocus) chartRef.current?.focus({ preventScroll: true });
   }, []);
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {

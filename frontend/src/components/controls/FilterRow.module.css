@@ -1,9 +1,9 @@
 .row {
-  display: flex;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
+  display: grid;
+  flex: 1 0 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: end;
-  gap: 4px 6px;
+  gap: 16px;
   min-width: 0;
   color: #c7cdd2;
   font-family: 'Segoe UI', sans-serif;
@@ -11,98 +11,64 @@
 
 .field {
   display: grid;
-  flex: 0 0 auto;
-  gap: 2px;
+  gap: 6px;
   min-width: 0;
 }
 
 .field > span {
-  color: #929ca3;
-  font-size: 8px;
-  font-weight: 650;
-  line-height: 1;
-  letter-spacing: 0.035em;
-  white-space: nowrap;
+  color: #b7c3cc;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 .field input,
 .field select,
 .clearButton {
   box-sizing: border-box;
-  height: 26px;
+  height: 36px;
   min-width: 0;
   color: #e2e7ea;
   background: #373a3d;
   border: 1px solid #555d63;
-  border-radius: 3px;
+  border-radius: 4px;
   outline: 0;
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   color-scheme: dark;
 }
 
 .field input {
   width: 100%;
-  padding: 2px 6px;
-  font-family: Consolas, 'Cascadia Mono', monospace;
+  padding: 7px 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .field select {
   width: 100%;
-  padding: 2px 22px 2px 6px;
+  padding: 7px 28px 7px 10px;
 }
 
 .kindField {
-  width: 104px;
-}
-
-.orderField {
-  width: 48px;
-}
-
-.frequencyField {
-  width: 78px;
-}
-
-.durationField {
-  width: 72px;
-}
-
-.sensitivityField {
-  width: 92px;
-}
-
-.floorField {
-  width: 86px;
-}
-
-.fillField {
-  width: 102px;
+  grid-column: 1 / -1;
 }
 
 .nyquist {
-  align-self: end;
-  min-height: 26px;
-  box-sizing: border-box;
-  padding: 7px 2px 0;
-  color: #88939a;
-  font-family: Consolas, 'Cascadia Mono', monospace;
-  font-size: 9px;
-  white-space: nowrap;
+  grid-column: 1 / -1;
+  color: #aab8c2;
+  font-size: 12px;
 }
 
 .explanation,
 .validation {
-  flex: 1 1 210px;
-  align-self: end;
-  min-width: 170px;
-  padding: 0 2px 3px;
-  font-size: 9px;
-  line-height: 1.25;
+  grid-column: 1 / -1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .explanation {
-  color: #8fa8b7;
+  color: #aab8c2;
 }
 
 .validation {
@@ -110,9 +76,10 @@
 }
 
 .clearButton {
-  align-self: end;
-  padding: 0 8px;
-  color: #aeb7bd;
+  grid-column: 1 / -1;
+  justify-self: end;
+  padding: 0 14px;
+  color: #c7d3dc;
   cursor: pointer;
 }
 
@@ -132,11 +99,4 @@
 
 .field input[aria-invalid='true'] {
   border-color: #b6924d;
-}
-
-@media (max-width: 520px) {
-  .explanation,
-  .validation {
-    flex-basis: 100%;
-  }
 }

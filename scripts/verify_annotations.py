@@ -205,14 +205,15 @@ def run_checks(web, api, dataset, temporary, output):
 
             png('tp-annotations')
             png('multi-annotations', multiple=True)
-            checkbox = page.get_by_role('checkbox', name='Show time notes', exact=True)
-            checkbox.uncheck()
+            notes_toggle = page.get_by_role('button', name='Show time notes', exact=True)
+            expect(notes_toggle).to_have_attribute('aria-pressed', 'true')
+            notes_toggle.click()
             expect(plot().locator('.uplot')).to_have_attribute('data-annotation-count', '0')
             page.wait_for_function("JSON.parse(localStorage.getItem('ptt.analysis-session.v1')).annotationsVisible === false")
             page.reload(); settle()
-            expect(page.get_by_role('checkbox', name='Show time notes', exact=True)).not_to_be_checked()
+            expect(notes_toggle).to_have_attribute('aria-pressed', 'false')
             png('hidden-annotations', hidden=True)
-            checkbox.check(); assert_drawing(expected_count=3)
+            notes_toggle.click(); assert_drawing(expected_count=3)
 
             # Failed reads cannot be presented as an empty annotation document.
             page.route(url, lambda route: route.fulfill(status=503, json={'detail': 'Injected annotation read failure'}))

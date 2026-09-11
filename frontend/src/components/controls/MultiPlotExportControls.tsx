@@ -8,6 +8,7 @@ import { downloadPlotLayoutPng } from '../../utils/plotPngExport';
 import type { PlotExportHandle, PlotExportRegistry } from '../../utils/plotExportRegistry';
 import base from './PlotExportControls.module.css';
 import styles from './MultiPlotExportControls.module.css';
+import toolbar from './PlotToolbarButton.module.css';
 
 interface Props {
   registry: PlotExportRegistry;
@@ -89,13 +90,20 @@ export function MultiPlotExportControls({ registry, contextKey, defaultColumns, 
   };
 
   return <>
-    <button ref={trigger} type="button" className={`${base.trigger} ${styles.trigger}`}
-      disabled={!!disabledReason || plots.length === 0} title={disabledReason ?? undefined}
+    <button ref={trigger} type="button" className={toolbar.button}
+      disabled={!!disabledReason || plots.length === 0}
+      aria-label="Export selected plots"
+      data-tooltip={disabledReason ?? (plots.length === 0 ? 'No plots available to export.' : 'Export selected plots')}
       aria-haspopup="dialog" aria-expanded={open} onClick={() => {
         setSelected(plots.map((entry) => entry.slot));
         setData(Object.fromEntries(plots.map(({ slot, handle }) => [slot, handle.defaultData])));
         setColumns(defaultColumns); clearFeedback(); setOpen(true);
-      }}>Export selected plots</button>
+      }}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M4 3h6v6H4zM14 3h6v6h-6zM4 13h6v6H4zM17 12v9m-3-3 3 3 3-3" />
+      </svg>
+    </button>
     {open && createPortal(<dialog ref={dialog} className={`${base.dialog} ${styles.dialog}`}
       aria-label="Export selected plots" aria-describedby={`${id}-scope`}
       onCancel={(event) => { event.preventDefault(); close(); }} onClose={() => setOpen(false)}>

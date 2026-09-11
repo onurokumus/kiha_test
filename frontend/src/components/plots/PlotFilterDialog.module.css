@@ -1,0 +1,34 @@
+.dialog {
+  width: min(540px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  box-sizing: border-box;
+  overflow: auto;
+  margin: auto;
+  padding: 22px;
+  color: #d6e3ed;
+  background: #252526;
+  border: 1px solid #6d899a;
+  border-radius: 6px;
+  box-shadow: 0 10px 40px #0009;
+  font: 13px/1.5 'Segoe UI', sans-serif;
+}
+
+.dialog::backdrop { background: #0008; }
+.heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.heading strong { overflow-wrap: anywhere; font-size: 16px; font-weight: 600; }
+.heading button {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid #58636c;
+  border-radius: 4px;
+  background: #303438;
+  color: #d6e3ed;
+  font-size: 20px;
+  cursor: pointer;
+}
+.heading button:hover { border-color: #adcfe2; }
+.heading button:focus-visible { outline: 2px solid #a0d7fa; outline-offset: 2px; }
+.dialog p { margin: 10px 0 20px; color: #aab8c2; }
+.fields { min-width: 0; }
