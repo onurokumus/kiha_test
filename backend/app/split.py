@@ -106,11 +106,12 @@ def autosplit(name: str, col: str, ignore_zero: bool = True,
 
 def preview_autosplit(name: str, columns: list[str], ignore_zero: bool = True,
                       min_len_s: float = 1.0) -> dict:
-    """Preview constant tuples; changing ANY selected value starts a new run.
+    """Preview intervals where ALL selected values stay constant together.
 
     Read only selected native columns. Missing values break runs; valid tuples
     on either side never join. Exclusion sample counts are disjoint: missing
-    first, then zero. A short run counts only after those exclusions. No writes,
+    first, then zero, then isolated samples (no unchanged adjacent tuple).
+    A short run counts only after those exclusions. No writes,
     downsampling, tolerance, value rounding, or silent proposal truncation.
     The caller holds data_read so metadata and samples belong to one read.
     """
@@ -153,7 +154,8 @@ def preview_autosplit(name: str, columns: list[str], ignore_zero: bool = True,
         "method": "value_changes", "columns": list(columns),
         "ignore_zero": ignore_zero, "min_len_s": min_len_s,
         "sample_count": n_rows, "fs_hz": fs, "test_points": [],
-        "excluded": {"missing_samples": 0, "zero_samples": 0, "short_runs": 0},
+        "excluded": {"missing_samples": 0, "zero_samples": 0,
+                     "isolated_samples": 0, "short_runs": 0},
     }
     if n_rows == 0:
         return proposal
@@ -170,10 +172,14 @@ def preview_autosplit(name: str, columns: list[str], ignore_zero: bool = True,
     starts = np.concatenate([[0], np.flatnonzero(changed) + 1])
     ends = np.concatenate([starts[1:], [n_rows]])
     eligible = finite[starts] & ~zero[starts]
+    # A single sample cannot establish constancy over time. Without this
+    # condition, a ramp becomes one TP per sample whenever min_len_s <= 1/fs,
+    # even if another selected variable stays flat for the entire test.
+    constant = ends - starts >= 2
     # Duration belongs to the half-open sample interval, independent of
     # timestamp subtraction errors and coarse source-clock quantization.
     long_enough = (ends - starts) / fs >= min_len_s
-    kept = np.flatnonzero(eligible & long_enough)
+    kept = np.flatnonzero(eligible & constant & long_enough)
     if len(kept) > MAX_SPLIT_POINTS:
         raise ValueError(
             f"auto-split found more than {MAX_SPLIT_POINTS:,} test points; "
@@ -181,7 +187,8 @@ def preview_autosplit(name: str, columns: list[str], ignore_zero: bool = True,
     proposal["excluded"] = {
         "missing_samples": int(np.count_nonzero(~finite)),
         "zero_samples": int(np.count_nonzero(finite & zero)),
-        "short_runs": int(np.count_nonzero(eligible & ~long_enough)),
+        "isolated_samples": int(np.count_nonzero(eligible & ~constant)),
+        "short_runs": int(np.count_nonzero(eligible & constant & ~long_enough)),
     }
     for run_index in kept:
         st, en = int(starts[run_index]), int(ends[run_index])

@@ -260,10 +260,10 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
     <section ref={panelRef} className={`panel ${styles.panel}`} aria-label="Auto-split">
       <header className={styles.header}>
         <div>
-          <h2 id={headingId}>Auto-split by variable changes</h2>
+          <h2 id={headingId}>Auto-split constant intervals</h2>
           <p id={explanationId}>
-            Create a test point for each continuous run. A new run starts when <strong>any</strong>{' '}
-            selected variable changes its exact value.
+            Create a test point only while <strong>all</strong> selected variables stay constant together.
+            {' '}If any selected variable changes, the interval ends.
           </p>
         </div>
         <button type="button" className="btn" onClick={close} aria-label="Close auto-split">Close</button>
@@ -335,8 +335,8 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
           </div>
 
           <p className={styles.methodNote}>
-            Best for IDs, modes and stepped setpoints. Continuously changing or noisy signals may create
-            many short runs; this method does not detect thresholds or stable ranges.
+            Best for IDs, modes and stepped setpoints. Values must match exactly in at least two
+            consecutive samples. No tolerance or smoothing is applied.
           </p>
 
           <div className={styles.filters}>
@@ -361,6 +361,7 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
             Missing or non-finite values in any selected variable always break a run and are excluded.
             {ignoreZero && ' Any zero in a selected variable is excluded too.'}
             {' '}Runs shorter than the minimum duration are discarded.
+            {' '}Isolated samples are excluded even when the minimum duration is zero.
             {' '}Duration is the number of samples in a run divided by the sample rate.
           </p>
           <div className={styles.previewAction}>
@@ -398,6 +399,9 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
             <dl className={styles.excluded} aria-label="Excluded from proposal">
               <div><dt>Missing / non-finite samples</dt><dd>{proposal.excluded.missing_samples.toLocaleString()}</dd></div>
               <div><dt>Zero-value samples</dt><dd>{proposal.excluded.zero_samples.toLocaleString()}</dd></div>
+              {proposal.excluded.isolated_samples !== undefined && <div>
+                <dt>Isolated samples (no constant interval)</dt><dd>{proposal.excluded.isolated_samples.toLocaleString()}</dd>
+              </div>}
               <div><dt>Runs below {seconds(proposal.min_len_s)} s</dt><dd>{proposal.excluded.short_runs.toLocaleString()}</dd></div>
             </dl>
             {proposal.test_points.length ? <>

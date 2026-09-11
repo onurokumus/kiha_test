@@ -23,17 +23,23 @@ class WaterfallRequest(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
     kind: Literal['waterfall'] = 'waterfall'
     column: str = Field(min_length=1, max_length=1024)
-    method_version: Literal['kiha-waterfall-v1']
+    method_version: Literal['kiha-waterfall-v1', 'kiha-waterfall-v2']
     sources: list[WaterfallSource] = Field(min_length=1, max_length=shared.MAX_EXPORT_SOURCES)
     nperseg: StrictInt = 1024
     overlap: StrictInt = 50
+    resolution_hz: float | None = None
+    grid_frequency_range_hz: tuple[float, float] | None = None
+    grid_time_range_s: tuple[float, float] | None = None
     x_range: tuple[float, float] | None = None
     y_range: tuple[float, float] | None = None
     include_metadata: bool = False
 
     @model_validator(mode='after')
     def validate_options(self):
-        if self.nperseg not in waterfall.WINDOWS or self.overlap not in (0, 25, 50, 75):
+        waterfall.validate_detail_options(self.method_version == waterfall.DETAIL_VERSION,
+            self.resolution_hz, self.grid_frequency_range_hz, self.grid_time_range_s)
+        if ((self.resolution_hz is None and self.nperseg not in waterfall.WINDOWS)
+                or self.overlap not in (0, 25, 50, 75)):
             raise ValueError('invalid waterfall window/overlap')
         for bounds in (self.x_range, self.y_range):
             if bounds and bounds[0] >= bounds[1]:
@@ -64,7 +70,9 @@ def prepare_export(request, *, row_budget=None, metadata=None):
         progress.update('Calculating waterfall FFT')
         try:
             result = waterfall.calculate(source.test, request.column, source.t0, source.t1,
-                tp_id=source.tp_id, nperseg=request.nperseg, overlap=request.overlap)
+                tp_id=source.tp_id, nperseg=request.nperseg, overlap=request.overlap,
+                high_detail=request.method_version == waterfall.DETAIL_VERSION, resolution_hz=request.resolution_hz,
+                frequency_range=request.grid_frequency_range_hz, time_range=request.grid_time_range_s)
         except (ValueError, KeyError) as exc:
             raise HTTPException(400, str(exc)) from exc
         if (result['i0'], result['i1']) != (i0, i1):
@@ -74,8 +82,8 @@ def prepare_export(request, *, row_budget=None, metadata=None):
             record['csv_values'] = 'Linear peak amplitude; cells intersecting the viewport; explicit aggregate bounds'
         f = np.asarray(result['frequency_edges_hz'])
         t = np.asarray(result['time_edges_s'])
-        cols = np.arange(len(f) - 1)
-        rows = np.arange(len(t) - 1)
+        cols = np.arange(max(0, len(f) - 1))
+        rows = np.arange(max(0, len(t) - 1))
         if request.x_range:
             cols = cols[(f[1:] >= request.x_range[0]) & (f[:-1] <= request.x_range[1])]
         if request.y_range:
@@ -87,7 +95,7 @@ def prepare_export(request, *, row_budget=None, metadata=None):
                 continue
             scalar = {'source_test': source.test, 'test_point_id': source.tp_id, 'variable': request.column,
                 'source_i0': i0, 'source_i1': i1, 'fs_hz': result['fs_hz'],
-                'method_version': waterfall.VERSION, 'nperseg': request.nperseg,
+                'method_version': result['method']['version'], 'nperseg': result['method']['nperseg'],
                 'noverlap': result['method']['noverlap'], 'nan_count': result['nan_count'],
                 'time_factor': result['reduction']['time_factor'], 'frequency_factor': result['reduction']['frequency_factor'],
                 'elapsed_start_s': t[row], 'elapsed_end_s': t[row + 1],
@@ -99,7 +107,8 @@ def prepare_export(request, *, row_budget=None, metadata=None):
             pa_csv.write_csv(pa.table(arrays), output, write_options=pa_csv.WriteOptions(include_header=header and total == 0))
             total += len(cols)
         return total
-    return shared.stage_export(request, write, row_budget=row_budget, metadata=metadata)
+    return shared.stage_export(request, write, row_budget=row_budget, metadata=metadata,
+                               empty_message='the selected waterfall viewport contains no cells')
 
 
 @router.post('/api/waterfall-export')

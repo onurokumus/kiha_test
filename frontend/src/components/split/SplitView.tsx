@@ -47,7 +47,7 @@ function sameTestPoints(left: TestPoint[], right: TestPoint[]): boolean {
 }
 
 /** Split editor: define/adjust test points over the full test.
- *  Auto-split previews TPs from changes across selected variables; nothing persists until
+ *  Auto-split previews intervals where all selected variables stay constant; nothing persists until
  *  Save (PUT /testpoints with the full TestPointsFile wrapper). */
 export default function SplitView({
   test,

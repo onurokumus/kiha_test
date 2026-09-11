@@ -203,6 +203,8 @@ function App() {
   );
   const [waterfallWindow, setWaterfallWindow] = useState(restoredSession.waterfallWindow);
   const [waterfallOverlap, setWaterfallOverlap] = useState(restoredSession.waterfallOverlap);
+  const [waterfallResolution, setWaterfallResolution] = useState(restoredSession.waterfallResolution);
+  const [waterfallBand, setWaterfallBand] = useState(restoredSession.waterfallBand);
   const [specMode, setSpecMode] = useState<'fft' | 'welch' | 'waterfall'>(
     hasRestoredSession ? restoredSession.specMode : settings.specMode
   );
@@ -1599,6 +1601,8 @@ function App() {
     setFullPlotMode(session.fullPlotMode);
     setWaterfallWindow(session.waterfallWindow);
     setWaterfallOverlap(session.waterfallOverlap);
+    setWaterfallResolution(session.waterfallResolution);
+    setWaterfallBand(session.waterfallBand);
     setSpecMode(session.specMode);
     setSpecXAxis(session.specXAxis);
     setSpecRpmCol(session.specRpmCol);
@@ -1725,7 +1729,7 @@ function App() {
       fullRange,
       viewMode,
       fullPlotMode,
-      waterfallWindow, waterfallOverlap,
+      waterfallWindow, waterfallOverlap, waterfallResolution, waterfallBand,
       specMode,
       specXAxis,
       specRpmCol,
@@ -2309,9 +2313,13 @@ function App() {
               onViewModeChange={setViewMode}
               waterfallWindow={waterfallWindow}
               waterfallOverlap={waterfallOverlap}
+              waterfallResolution={waterfallResolution}
+              waterfallBand={waterfallBand}
               specMode={specMode}
               onWaterfallWindowChange={setWaterfallWindow}
               onWaterfallOverlapChange={setWaterfallOverlap}
+              onWaterfallResolutionChange={setWaterfallResolution}
+              onWaterfallBandChange={setWaterfallBand}
               onSpecModeChange={(mode) => {
                 setSpecMode(mode);
                 if (mode === 'waterfall') setSpecSource('full');
@@ -2358,6 +2366,8 @@ function App() {
               fullPlotMode={fullPlotMode}
               waterfallWindow={waterfallWindow}
               waterfallOverlap={waterfallOverlap}
+              waterfallResolution={waterfallResolution}
+              waterfallBand={waterfallBand}
               specMode={specMode}
               specXAxis={specXAxis}
               specRpmCol={specRpmCol}

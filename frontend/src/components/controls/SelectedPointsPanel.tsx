@@ -8,6 +8,7 @@ import {
 } from '../../types';
 import { PlotDensity } from '../../services/analysisSession';
 import { MAX_SELECTED_TEST_POINTS } from '../../constants/selection';
+import { WATERFALL_WINDOWS, WATERFALL_OVERLAPS, WATERFALL_RESOLUTIONS, WaterfallBand } from '../../constants/waterfall';
 import { SearchableSelect } from './SearchableSelect';
 import { TestSelect } from './TestSelect';
 import styles from './SelectedPointsPanel.module.css';
@@ -32,8 +33,12 @@ interface SelectedPointsPanelProps {
   onViewModeChange: (mode: PanelViewMode) => void;
   onWaterfallWindowChange: (value: number) => void;
   onWaterfallOverlapChange: (value: number) => void;
+  onWaterfallResolutionChange: (value: number | null) => void;
+  onWaterfallBandChange: (value: WaterfallBand) => void;
   waterfallWindow: number;
   waterfallOverlap: number;
+  waterfallResolution: number | null;
+  waterfallBand: WaterfallBand;
   specMode: 'fft' | 'welch' | 'waterfall';
   onSpecModeChange: (mode: 'fft' | 'welch' | 'waterfall') => void;
   specXAxis: SpectrumXAxis;
@@ -108,6 +113,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
   viewMode,
   onViewModeChange,
   waterfallWindow, waterfallOverlap, onWaterfallWindowChange, onWaterfallOverlapChange,
+  waterfallResolution, waterfallBand, onWaterfallResolutionChange, onWaterfallBandChange,
   specMode,
   onSpecModeChange,
   specXAxis,
@@ -329,14 +335,33 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
                 </div>
               </div>}
               {specMode === 'waterfall' && <>
-                <label className={styles.contextControl}>Window (samples)
-                  <select className={styles.select} value={waterfallWindow} onChange={e => onWaterfallWindowChange(Number(e.target.value))}>
-                    {[64,128,256,512,1024,2048,4096,8192,16384].map(n => <option key={n} value={n}>{n}</option>)}
+                <label className={styles.contextControl}
+                  title="FFT bin spacing determines the required signal duration per window. Longer windows reveal closer frequencies but blur rapid time changes. The selected interval must contain a complete window; each map reports its actual spacing.">
+                  <span className={styles.utilityLabel}>Bin spacing</span>
+                  <select className={styles.select} value={waterfallResolution ?? 'manual'}
+                    onChange={event => onWaterfallResolutionChange(event.target.value === 'manual' ? null : Number(event.target.value))}>
+                    {WATERFALL_RESOLUTIONS.map(({ hz, label }) => <option key={hz} value={hz}>{label}</option>)}
+                    <option value="manual">Manual window</option>
                   </select>
                 </label>
-                <label className={styles.contextControl}>Overlap
+                <label className={styles.contextControl}>
+                  <span className={styles.utilityLabel}>Band</span>
+                  <select className={styles.select} value={waterfallBand}
+                    onChange={event => onWaterfallBandChange(event.target.value as WaterfallBand)}>
+                    <option value="low">0–200 Hz</option>
+                    <option value="full">Full range</option>
+                  </select>
+                </label>
+                {waterfallResolution === null && <label className={styles.contextControl}>
+                  <span className={styles.utilityLabel}>Window (samples)</span>
+                  <select className={styles.select} value={waterfallWindow} onChange={e => onWaterfallWindowChange(Number(e.target.value))}>
+                    {WATERFALL_WINDOWS.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>}
+                <label className={styles.contextControl}>
+                  <span className={styles.utilityLabel}>Overlap</span>
                   <select className={styles.select} value={waterfallOverlap} onChange={e => onWaterfallOverlapChange(Number(e.target.value))}>
-                    {[0,25,50,75].map(n => <option key={n} value={n}>{n}%</option>)}
+                    {WATERFALL_OVERLAPS.map(n => <option key={n} value={n}>{n}%</option>)}
                   </select>
                 </label>
               </>}

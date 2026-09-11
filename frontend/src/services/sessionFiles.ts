@@ -1,5 +1,6 @@
 import { AnalysisSession, normalizeAnalysisSession } from './analysisSession';
 import { validAxisRange } from '../utils/timePlotRanges';
+import { WATERFALL_WINDOWS, WATERFALL_OVERLAPS, WATERFALL_RESOLUTIONS } from '../constants/waterfall';
 
 export const MAX_SESSION_FILE_BYTES = 2 * 1024 * 1024;
 export interface SessionFile {
@@ -66,8 +67,10 @@ export function parseSessionFile(text: string): SessionFile {
     viewMode: ['tp', 'full', 'spectrum', 'xy'],
     fullPlotMode: ['auto', 'line', 'envelope'],
     specMode: ['fft', 'welch', 'waterfall'],
-    waterfallWindow: [64,128,256,512,1024,2048,4096,8192,16384],
-    waterfallOverlap: [0,25,50,75],
+    waterfallWindow: WATERFALL_WINDOWS,
+    waterfallOverlap: WATERFALL_OVERLAPS,
+    waterfallResolution: [null, ...WATERFALL_RESOLUTIONS.map(item => item.hz)],
+    waterfallBand: ['low', 'full'],
     specXAxis: ['hz', 'per_rev'],
     specSource: ['tp', 'full'],
     xySource: ['tp', 'full'],

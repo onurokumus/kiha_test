@@ -1,8 +1,74 @@
 # Multi-variable auto-split verification
 
-Date: 2026-09-11. Scope: reviewable proposals for splitting at changes in any
-selected ID/state variable, then explicitly applying the proposal to the current
-TP draft and saving through the existing workflow.
+Date: 2026-09-11. Scope: reviewable proposals for intervals where every selected
+ID/state variable is constant together, then explicitly applying the proposal
+to the current TP draft and saving through the existing workflow.
+
+## Constant-interval correction
+
+The user clarified that if even one selected variable is changing, that part
+must not become a test point. The existing change mask already combined all
+variables: any value change ended the current tuple run. However, it accepted
+one-sample runs when `min_len_s <= 1/fs`. At 1 Hz with the default one-second
+minimum, a flat first variable and a continuously changing second variable
+therefore produced one TP per sample.
+
+The structured `/split/preview` endpoint now requires **at least two consecutive
+samples with identical values in every selected variable**, plus the configured
+minimum duration. The whole tuple must stay identical within a retained run;
+different constant tuples may form adjacent TPs. A changing stretch separates
+plateaus even when the same values recur later. Comparisons use full-resolution
+native values with exact equality, without tolerance, smoothing or rounding.
+
+For example, at 1 Hz, `A=[1,1,1,1,1,1]` and `B=[10,11,20,20,21,22]` keep only
+rows `[2,4)`. The changing rows are excluded even with minimum duration zero.
+The minimum uses the existing half-open sample duration `N/fs`. Native row
+indices and source-time boundaries retain their existing Save/export meaning.
+
+`excluded.isolated_samples` counts otherwise eligible single-sample runs.
+Missing, zero and isolated sample counts are disjoint; `short_runs` now counts
+only eligible runs of at least two samples below minimum duration. The UI
+states the all-variable condition and shows isolated-sample exclusions.
+The additive response field is optional in the frontend type for older
+responses. The historical single-variable `/split/auto` endpoint remains
+compatible; the current UI uses `/split/preview` for one or multiple variables.
+Existing saved definitions change only after explicitly applying and saving a
+new proposal.
+
+Focused backend verification passes: **25 tests, 37 subtests**. New cases cover
+ramps in either variable order, a third selected variable, 1 Hz/default duration,
+zero duration, overlapping plateaus, same-value recurrence across interruptions,
+singleton-only data, zero inclusion, disjoint exclusion counts and legacy API
+compatibility. Proposal-limit and source-clock tests now use repeated plateaus
+so they continue exercising their original validation rules.
+
+Full backend verification passes: **481 tests, 421 subtests**, 48.59s, using
+`backend/.venv/Scripts/python.exe -m pytest backend/tests -q -p no:cacheprovider`.
+Only the two existing dependency deprecations remain. Frontend build, lint and
+all 13 Split export/preferences/Y-range helper tests pass; the existing bundle
+size notice remains. Independent production diff review found no material issue.
+The extended Chromium suite passes all **nine assertion groups**, retaining the
+original six and adding:
+
+- A selected continuously changing signal at 10 Hz with minimum duration zero:
+  no TPs, 67 isolated samples, existing definitions unchanged.
+- A 1 Hz changing signal at untouched one-second minimum: no TPs, 26 isolated
+  samples, existing definitions unchanged.
+- Staggered plateaus/ramping of each variable in turn: only native row intervals
+  `[4,9)`, `[13,17)`, `[20,23)`, `[23,26)` survive at default and zero minimum;
+  11 isolated samples are excluded. All eight draft/saved CSVs for these four
+  TPs match source values and indices, and each selected column is constant
+  across every exported row. Including the original fixture, ten CSV downloads
+  were verified.
+
+Preview and Apply leave saved files unchanged; explicit Save persists only the
+expected definitions. All 15 source CSV/Parquet/pyramid files stay unchanged.
+No unexpected browser errors; all owned servers, fixtures, profile and extension
+cleaned up. Keyboard, 1100px resizing and actual 125%/150% browser zoom pass.
+Screenshots reviewed: `staggered-constant-preview.png`, `preview-1440-1.5.png`;
+additional ramp/1100px/125% evidence and `results.json` are under the ignored
+`data/verification/multi-variable-autosplit/` directory. The command is unchanged
+from the isolated browser verification section below.
 
 ## Isolated browser verification
 
@@ -44,7 +110,7 @@ compares displayed source-time boundaries numerically, allowing floating-point
 representation at the last boundary (`7.199999999999999` represents 7.2 seconds),
 while enforcing exact native indices and byte-identical saved/draft CSV content.
 
-## Results
+## Original implementation results
 
 The complete Chromium suite **passed**: six assertion groups, 16 browser preview
 requests, zero unexpected console/page errors, and all 10 original

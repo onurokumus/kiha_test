@@ -72,7 +72,75 @@ class AutoSplitTests(DataDirTestCase):
         self.assertEqual(preview["sample_count"], 24)
         self.assertEqual(preview["fs_hz"], 8)
         self.assertEqual(preview["excluded"], {
-            "missing_samples": 0, "zero_samples": 8, "short_runs": 0})
+            "missing_samples": 0, "zero_samples": 8,
+            "isolated_samples": 0, "short_runs": 0})
+
+    def test_preview_rejects_ramps_when_any_selected_variable_changes(self):
+        self.make_test({
+            "id": [1.0] * 8,
+            "changing": np.arange(8, dtype=float) + 10,
+            "mode": [2.0] * 8,
+        }, fs=1)
+        client = TestClient(main.app)
+        for columns in (["id", "changing"], ["changing", "id"],
+                        ["id", "changing", "mode"], ["changing"]):
+            for duration in (None, 0):
+                with self.subTest(columns=columns, minimum=duration):
+                    payload = {"columns": columns}
+                    if duration is not None:
+                        payload["min_len_s"] = duration
+                    response = client.post("/api/tests/alpha/split/preview", json=payload)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    preview = response.json()
+                    self.assertEqual(preview["test_points"], [])
+                    self.assertEqual(preview["excluded"], {
+                        "missing_samples": 0, "zero_samples": 0,
+                        "isolated_samples": 8, "short_runs": 0})
+        # The historical single-variable API keeps its original contract.
+        response = client.post("/api/tests/alpha/split/auto", params={"col": "changing"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(response.json()), 8)
+
+    def test_preview_keeps_only_overlapping_constant_periods(self):
+        self.make_test({
+            "id": [1.0] * 6 + [2.0] * 4 + [3.0] * 4,
+            "mode": [10.0, 11.0] + [20.0] * 6 + [21.0, 22.0] + [30.0] * 4,
+        })
+        for duration in (0, 0.2):
+            with self.subTest(minimum=duration):
+                preview = split.preview_autosplit("alpha", ["id", "mode"], min_len_s=duration)
+                self.assertEqual(
+                    [(p["start_idx"], p["end_idx"]) for p in preview["test_points"]],
+                    [(2, 6), (6, 8), (10, 14)])
+                self.assertEqual(preview["excluded"], {
+                    "missing_samples": 0, "zero_samples": 0,
+                    "isolated_samples": 4, "short_runs": 0})
+
+    def test_preview_does_not_join_same_plateau_across_changing_samples(self):
+        self.make_test({
+            "id": [1.0] * 10,
+            "mode": [10.0] * 3 + [11.0] + [10.0] * 3 + [12.0, 13.0, 14.0],
+        })
+        preview = split.preview_autosplit("alpha", ["id", "mode"], min_len_s=0.3)
+        self.assertEqual(
+            [(p["start_idx"], p["end_idx"]) for p in preview["test_points"]],
+            [(0, 3), (4, 7)])
+        self.assertEqual(preview["excluded"], {
+            "missing_samples": 0, "zero_samples": 0,
+            "isolated_samples": 4, "short_runs": 0})
+        longer = split.preview_autosplit("alpha", ["id", "mode"], min_len_s=0.4)
+        self.assertEqual(longer["test_points"], [])
+        self.assertEqual(longer["excluded"], {
+            "missing_samples": 0, "zero_samples": 0,
+            "isolated_samples": 4, "short_runs": 2})
+
+    def test_preview_single_sample_does_not_establish_a_constant_period(self):
+        self.make_test({"id": [1.0], "mode": [2.0]}, fs=1)
+        preview = split.preview_autosplit("alpha", ["id", "mode"], min_len_s=0)
+        self.assertEqual(preview["test_points"], [])
+        self.assertEqual(preview["excluded"], {
+            "missing_samples": 0, "zero_samples": 0,
+            "isolated_samples": 1, "short_runs": 0})
 
     def test_preview_any_changed_variable_splits_repeated_combinations(self):
         self.make_test({
@@ -97,13 +165,28 @@ class AutoSplitTests(DataDirTestCase):
         self.assertEqual([(p["start_idx"], p["end_idx"]) for p in preview["test_points"]],
                          [(0, 2), (4, 6)])
         self.assertEqual(preview["excluded"], {
-            "missing_samples": 3, "zero_samples": 2, "short_runs": 2})
+            "missing_samples": 3, "zero_samples": 2,
+            "isolated_samples": 2, "short_runs": 0})
         include_zero = split.preview_autosplit(
             "alpha", ["id", "mode"], ignore_zero=False, min_len_s=0)
         self.assertEqual(include_zero["excluded"], {
-            "missing_samples": 3, "zero_samples": 0, "short_runs": 0})
-        self.assertIn("id=0, mode=2", [p["label"] for p in include_zero["test_points"]])
-        self.assertIn("id=1, mode=0", [p["label"] for p in include_zero["test_points"]])
+            "missing_samples": 3, "zero_samples": 0,
+            "isolated_samples": 4, "short_runs": 0})
+        self.assertEqual([(p["start_idx"], p["end_idx"]) for p in include_zero["test_points"]],
+                         [(0, 2), (4, 6)])
+
+    def test_preview_can_include_constant_zero_in_either_variable(self):
+        self.make_test({
+            "id": [0.0, 0.0, 1.0, 1.0],
+            "mode": [2.0, 2.0, 0.0, 0.0],
+        })
+        preview = split.preview_autosplit(
+            "alpha", ["id", "mode"], ignore_zero=False, min_len_s=0)
+        self.assertEqual([p["label"] for p in preview["test_points"]],
+                         ["id=0, mode=2", "id=1, mode=0"])
+        self.assertEqual(preview["excluded"], {
+            "missing_samples": 0, "zero_samples": 0,
+            "isolated_samples": 0, "short_runs": 0})
 
     def test_preview_exact_minimum_in_late_run_and_nonzero_origin(self):
         self.make_test({"id": [0.0] * 100_003 + [1.0] * 10 + [2.0] * 9}, t_start=8123.4)
@@ -139,7 +222,8 @@ class AutoSplitTests(DataDirTestCase):
         preview = split.preview_autosplit("alpha", ["id", "mode"])
         self.assertEqual(preview["test_points"], [])
         self.assertEqual(preview["excluded"], {
-            "missing_samples": 2, "zero_samples": 1, "short_runs": 0})
+            "missing_samples": 2, "zero_samples": 1,
+            "isolated_samples": 0, "short_runs": 0})
 
     def test_preview_api_is_structured_and_never_writes(self):
         self.make_test({"mode, rig": [1.0] * 10, "id": [2.0] * 10})
@@ -174,7 +258,7 @@ class AutoSplitTests(DataDirTestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_preview_output_cap_rejects_instead_of_truncating(self):
-        self.make_test({"id": np.arange(split.MAX_SPLIT_POINTS + 1, dtype=float) + 1})
+        self.make_test({"id": np.repeat(np.arange(split.MAX_SPLIT_POINTS + 1, dtype=float) + 1, 2)})
         response = TestClient(main.app).post("/api/tests/alpha/split/preview", json={
             "columns": ["id"], "min_len_s": 0})
         self.assertEqual(response.status_code, 400)
@@ -184,7 +268,7 @@ class AutoSplitTests(DataDirTestCase):
                          split.MAX_SPLIT_POINTS + 1)
 
     def test_preview_output_cap_accepts_exact_limit(self):
-        self.make_test({"id": np.arange(split.MAX_SPLIT_POINTS, dtype=float) + 1})
+        self.make_test({"id": np.repeat(np.arange(split.MAX_SPLIT_POINTS, dtype=float) + 1, 2)})
         points = split.preview_autosplit("alpha", ["id"], min_len_s=0)["test_points"]
         self.assertEqual(len(points), split.MAX_SPLIT_POINTS)
 
@@ -206,7 +290,7 @@ class AutoSplitTests(DataDirTestCase):
                 self.assertEqual(response.status_code, 400)
 
     def test_preview_rejects_collapsed_clock_boundaries_without_rounding(self):
-        self.make_test({"id": [1.0, 2.0, 2.0]}, times=[0.0, 0.0, 0.2])
+        self.make_test({"id": [1.0, 1.0, 2.0, 2.0]}, times=[0.0, 0.0, 0.0, 0.2])
         with self.assertRaisesRegex(ValueError, "source-clock resolution"):
             split.preview_autosplit("alpha", ["id"], min_len_s=0)
 

@@ -2,6 +2,35 @@
 
 Open items below are listed in recommended implementation order. Complete each phase before moving to the next, except for independent small fixes.
 
+## Requested high-detail waterfall (2026-09-11)
+
+- [x] Preserve fine waterfall detail, especially 0–200 Hz, with Hz-based resolution choices, refinement when zooming, and matching saved sessions and exports.
+
+User-requested milestone completed ahead of independent Phase 11b. New default:
+0–200 Hz / 0.25 Hz / 75% overlap, optional 0.5 and 0.1 Hz bins and explicit
+short-source errors. V2 crops native bins and anchored frames before bounded
+display reduction; old API and manual session settings/axes remain compatible.
+All 489 backend tests, frontend build/lint, 18 helper tests, new eight-group native
+browser suite and existing waterfall regression pass. Nearby tones, exact CSV
+grid parity, PNG/bundles, failure/Retry, empty-view recovery, keyboard/resize/
+maximize and actual 125%/150% zoom verified; both browser suites preserve 14
+fixture files each. See [detail verification](docs/WATERFALL_DETAIL_VERIFICATION.md)
+and [method](docs/WATERFALL_FFT.md). No dataset changes or deployment.
+
+## Requested auto-split constant intervals (2026-09-11)
+
+- [x] Only create an auto-split test point where all selected variables remain constant together; exclude intervals where any selected variable changes.
+
+User-requested correction completed ahead of independent Phase 11b. The existing
+tuple change mask combined every variable, but accepted isolated samples when
+minimum duration was at most one sample period. Preview now requires at least
+two equal consecutive tuples plus minimum duration and explains/counts excluded
+isolated samples. All 481 backend tests/421 subtests, frontend build/lint, 13
+helper tests and the extended nine-check Chromium suite pass. Ramp rejection,
+overlapping plateaus, Preview/Apply/Save, ten native CSV downloads, keyboard,
+resize and 125%/150% zoom verified; 15 source files unchanged. See
+[auto-split verification](docs/MULTI_VARIABLE_AUTOSPLIT_VERIFICATION.md).
+
 ## Requested component sets and telemetry (2026-09-11)
 
 - [x] Support multiple named propeller / motor / ESC sets per test, each with its own RPM column and optional motor temperature and power columns.

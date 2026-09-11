@@ -960,10 +960,19 @@ def api_spectrum(name: str, col: str = Query(...),
 @with_test_read
 def api_waterfall(name: str, col: str = Query(...),
                   t0: float | None = None, t1: float | None = None,
-                  tp_id: int | None = None, nperseg: int = 1024, overlap: int = 50):
+                  tp_id: int | None = None, nperseg: int = 1024, overlap: int = 50,
+                  high_detail: bool = False, resolution_hz: float | None = None,
+                  frequency_min_hz: float | None = None, frequency_max_hz: float | None = None,
+                  elapsed_min_s: float | None = None, elapsed_max_s: float | None = None):
     from .waterfall import calculate
     try:
-        return calculate(name, col, t0, t1, tp_id=tp_id, nperseg=nperseg, overlap=overlap)
+        if ((frequency_min_hz is None) != (frequency_max_hz is None)
+                or (elapsed_min_s is None) != (elapsed_max_s is None)):
+            raise ValueError("provide both minimum and maximum for each grid axis range")
+        return calculate(name, col, t0, t1, tp_id=tp_id, nperseg=nperseg, overlap=overlap,
+                         high_detail=high_detail, resolution_hz=resolution_hz,
+                         frequency_range=(frequency_min_hz, frequency_max_hz) if frequency_min_hz is not None else None,
+                         time_range=(elapsed_min_s, elapsed_max_s) if elapsed_min_s is not None else None)
     except FileNotFoundError:
         raise HTTPException(404, f"test '{name}' not found")
     except KeyError:

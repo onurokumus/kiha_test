@@ -22,7 +22,20 @@ from verify_data_quality import ROOT, servers, upload
 
 ALPHA = 'auto_split_alpha'
 BETA = 'auto_split_beta'
+GAMMA = 'auto_split_staggered'
 EXPECTED = [(5, 15), (15, 25), (32, 42), (47, 57), (62, 72)]
+STAGGERED_EXPECTED = [(4, 9), (13, 17), (20, 23), (23, 26)]
+
+
+def staggered_rows():
+    # Independent hand-authored plateaus overlap only on STAGGERED_EXPECTED.
+    # At 1 Hz a changing singleton previously met the default 1 s minimum.
+    pairs = ([(1, 10 + index) for index in range(4)] + [(1, 20)] * 5
+             + [(2 + index, 20) for index in range(4)] + [(8, 20)] * 4
+             + [(8, 30 + index) for index in range(3)] + [(8, 40)] * 3
+             + [(9, 40)] * 3)
+    return [(index, first, second, 100.125 + index * .25)
+            for index, (first, second) in enumerate(pairs)]
 
 
 def fixtures(request):
@@ -36,11 +49,14 @@ def fixtures(request):
     beta = 'time,beta_mode,beta_step\n' + '\n'.join(
         f'{index / 10},{1 + index // 20},{4 + index // 10}' for index in range(40))
     assert upload(request, BETA, beta)['status'] == 'ready'
-    for test, count in [(ALPHA, 72), (BETA, 40)]:
+    gamma = 'time,control_a,control_b,ramp_N\n' + '\n'.join(
+        ','.join(str(value) for value in row) for row in staggered_rows())
+    assert upload(request, GAMMA, gamma)['status'] == 'ready'
+    for test, count, sample_rate in [(ALPHA, 72, 10), (BETA, 40, 10), (GAMMA, 26, 1)]:
         response = request.put(f'tests/{test}/testpoints', data={
             'version': 1, 'test': test, 'test_points': [{
                 'id': 99, 'name': 'Existing saved interval', 'label': 'Original saved definition',
-                'start_s': 0, 'end_s': count / 10, 'start_idx': 0,
+                'start_s': 0, 'end_s': count / sample_rate, 'start_idx': 0,
                 'end_idx': count, 'notes': 'Must survive proposal review'}]})
         assert response.ok, response.text()
 
@@ -65,6 +81,9 @@ def run_checks(web, api, dataset, temporary, output):
         saved_path = dataset / 'tests' / ALPHA / 'testpoints.json'
         saved_bytes = saved_path.read_bytes()
         saved_json = request.get(f'tests/{ALPHA}/testpoints').json()
+        gamma_path = dataset / 'tests' / GAMMA / 'testpoints.json'
+        gamma_saved_bytes = gamma_path.read_bytes()
+        native_cases = {}
         context = playwright.chromium.launch_persistent_context(
             str(temporary / 'profile'), channel='chromium', headless=True,
             no_viewport=True, accept_downloads=True,
@@ -130,6 +149,35 @@ def run_checks(web, api, dataset, temporary, output):
             page.get_by_role('option', name=re.compile('^' + re.escape(test))).click()
             page.wait_for_load_state('networkidle')
 
+        def assert_native_csv(path, test, point_id, start, end, selected):
+            with (dataset / 'tests' / test / 'raw.csv').open(newline='') as source:
+                original = list(csv.DictReader(source))[start:end]
+            with path.open(newline='') as download:
+                actual = list(csv.DictReader(download))
+            assert len(actual) == end - start >= 2, (test, point_id, actual)
+            assert {row['test_point_id'] for row in actual} == {str(point_id)}
+            for source_row, exported_row in zip(original, actual):
+                assert set(exported_row) == set(source_row) | {'test_point_id'}
+                assert {key: float(exported_row[key]) for key in source_row} == {
+                    key: float(value) for key, value in source_row.items()}, (source_row, exported_row)
+            for column in selected:
+                assert len({float(row[column]) for row in actual}) == 1, (column, actual)
+
+        def empty_preview(isolated_count):
+            with page.expect_response(lambda response: response.url.endswith('/split/preview')) as event:
+                panel().get_by_role('button', name='Preview test points', exact=True).click()
+            response = event.value
+            assert response.ok, response.text()
+            proposal = response.json()
+            assert proposal['test_points'] == [], proposal
+            assert proposal['excluded']['isolated_samples'] == isolated_count, proposal
+            assert proposal['excluded']['short_runs'] == 0, proposal
+            expect(panel()).to_contain_text(re.compile('No test points', re.I))
+            expect(panel().get_by_role('button', name=re.compile('^Use '))).to_be_disabled()
+            expect(panel().get_by_text('Isolated samples (no constant interval)', exact=True)
+                   .locator('..').locator('dd')).to_have_text(str(isolated_count))
+            return proposal
+
         try:
             # The native endpoint must report exact full-resolution tuple runs,
             # irrespective of the display plot's reduced samples.
@@ -141,6 +189,7 @@ def run_checks(web, api, dataset, temporary, output):
             assert proposal['excluded']['missing_samples'] == 4, proposal
             assert proposal['excluded']['zero_samples'] == 10, proposal
             assert proposal['excluded']['short_runs'] == 2, proposal
+            assert proposal['excluded']['isolated_samples'] == 0, proposal
             same_saved()
             page.goto(web); page.wait_for_load_state('networkidle')
             page.get_by_role('button', name='Uploads', exact=True).click()
@@ -150,6 +199,7 @@ def run_checks(web, api, dataset, temporary, output):
             page.get_by_role('textbox', name='Name for TP 99', exact=True).wait_for()
             open_panel(); configure_pair()
             expect(panel()).to_contain_text(re.compile('any selected variable', re.I))
+            expect(panel()).to_contain_text('all selected variables stay constant together')
             apply = preview(5)
             same_saved()
             expect(page.get_by_role('textbox', name='Name for TP 99', exact=True)).to_have_value('Existing saved interval')
@@ -183,6 +233,7 @@ def run_checks(web, api, dataset, temporary, output):
             rows = list(csv.DictReader(io.StringIO((output / 'draft-tp1.csv').read_text())))
             assert [float(row['time']) for row in rows] == [index / 10 for index in range(5, 15)]
             assert {row['test_point_id'] for row in rows} == {'1'}
+            assert_native_csv(output / 'draft-tp1.csv', ALPHA, 1, 5, 15, ['run_id', 'state_id'])
             same_saved()
             page.get_by_role('button', name='save *', exact=True).click()
             expect(page.get_by_role('button', name='save', exact=True)).to_be_disabled()
@@ -193,6 +244,7 @@ def run_checks(web, api, dataset, temporary, output):
                 page.get_by_role('link', name='Download CSV for TP 1', exact=True).click()
             event.value.save_as(output / 'saved-tp1.csv')
             assert (output / 'saved-tp1.csv').read_bytes() == (output / 'draft-tp1.csv').read_bytes()
+            assert_native_csv(output / 'saved-tp1.csv', ALPHA, 1, 5, 15, ['run_id', 'state_id'])
             checks.append('TP draft edit invalidates preview; Apply changes draft only, then Save and native draft/saved CSV retain exact half-open bounds')
             print('PASS:', checks[-1], flush=True)
 
@@ -284,6 +336,78 @@ def run_checks(web, api, dataset, temporary, output):
             checks.append('Failed candidate suggestions keep manual numeric variables usable; Retry and disjoint test context recover without stale columns')
             print('PASS:', checks[-1], flush=True)
 
+            # One changing selected variable excludes the entire period even
+            # when minimum duration is explicitly zero. Existing saved TPs stay.
+            close_panel(); choose_test(ALPHA); open_panel(); configure_pair()
+            choose(2, 'load_N')
+            panel().get_by_role('spinbutton', name='Minimum duration (s)', exact=True).fill('0')
+            native_cases['high_rate_ramp_min_zero'] = empty_preview(67)
+            assert request.get(f'tests/{ALPHA}/testpoints').json() == actual_saved
+            expect(page.get_by_role('button', name='save', exact=True)).to_be_disabled()
+            capture_browser_view(cdp, output / 'ramp-min-zero.png')
+            checks.append('A selected continuously changing signal produces no test points at minimum 0; excluded isolated samples are visible and saved TPs remain unchanged')
+            print('PASS:', checks[-1], flush=True)
+
+            close_panel(); choose_test(GAMMA); open_panel()
+            choose(1, 'control_a')
+            panel().get_by_role('button', name=re.compile(r'^\+? ?Add variable$')).click()
+            choose(2, 'ramp_N')
+            expect(panel().get_by_role('spinbutton', name='Minimum duration (s)', exact=True)).to_have_value('1')
+            native_cases['one_hz_ramp_default'] = empty_preview(26)
+            assert native_cases['one_hz_ramp_default']['fs_hz'] == 1
+            assert gamma_path.read_bytes() == gamma_saved_bytes
+            expect(page.get_by_role('textbox', name='Name for TP 99', exact=True)).to_have_value('Existing saved interval')
+            capture_browser_view(cdp, output / 'ramp-one-hz-default.png')
+            checks.append('At 1 Hz the untouched 1 s default rejects every changing sample instead of accepting one TP per sample')
+            print('PASS:', checks[-1], flush=True)
+
+            # Each selected variable changes alone in different sections. Only
+            # the explicitly enumerated overlapping plateaus may be exported.
+            choose(2, 'control_b')
+            with page.expect_response(lambda response: response.url.endswith('/split/preview')) as event:
+                apply = preview(4)
+            staggered = event.value.json()
+            native_cases['staggered_default'] = staggered
+            assert [(point['start_idx'], point['end_idx']) for point in staggered['test_points']] == STAGGERED_EXPECTED, staggered
+            assert staggered['excluded'] == {'missing_samples': 0, 'zero_samples': 0,
+                                              'isolated_samples': 11, 'short_runs': 0}, staggered
+            assert gamma_path.read_bytes() == gamma_saved_bytes
+            capture_browser_view(cdp, output / 'staggered-constant-preview.png')
+            panel().get_by_role('spinbutton', name='Minimum duration (s)', exact=True).fill('0')
+            with page.expect_response(lambda response: response.url.endswith('/split/preview')) as event:
+                apply = preview(4)
+            native_cases['staggered_min_zero'] = event.value.json()
+            assert native_cases['staggered_min_zero']['test_points'] == staggered['test_points']
+            apply.click()
+            assert gamma_path.read_bytes() == gamma_saved_bytes
+            for point_id, (start, end) in enumerate(STAGGERED_EXPECTED, 1):
+                assert float(page.get_by_role('spinbutton', name=f'Start seconds for TP {point_id}', exact=True).input_value()) == start
+                assert float(page.get_by_role('spinbutton', name=f'End seconds for TP {point_id}', exact=True).input_value()) == end
+                with page.expect_download() as event:
+                    page.get_by_role('link', name=f'Download draft CSV for TP {point_id}', exact=True).click()
+                assert event.value.suggested_filename == f'{GAMMA}_tp{point_id}_draft.csv'
+                path = output / f'staggered-draft-tp{point_id}.csv'
+                event.value.save_as(path)
+                assert_native_csv(path, GAMMA, point_id, start, end, ['control_a', 'control_b'])
+            assert gamma_path.read_bytes() == gamma_saved_bytes
+            page.get_by_role('button', name='save *', exact=True).click()
+            expect(page.get_by_role('button', name='save', exact=True)).to_be_disabled()
+            persisted = request.get(f'tests/{GAMMA}/testpoints').json()
+            assert [(point['start_idx'], point['end_idx']) for point in persisted['test_points']] == STAGGERED_EXPECTED
+            for point_id, (start, end) in enumerate(STAGGERED_EXPECTED, 1):
+                with page.expect_download() as event:
+                    page.get_by_role('link', name=f'Download CSV for TP {point_id}', exact=True).click()
+                assert event.value.suggested_filename == f'{GAMMA}_tp{point_id}.csv'
+                path = output / f'staggered-saved-tp{point_id}.csv'
+                event.value.save_as(path)
+                assert_native_csv(path, GAMMA, point_id, start, end, ['control_a', 'control_b'])
+                assert path.read_bytes() == (output / f'staggered-draft-tp{point_id}.csv').read_bytes()
+            assert gamma_path.read_bytes() != gamma_saved_bytes
+            checks.append('Staggered plateaus retain only four concurrent constant intervals at default and minimum 0; Preview/Apply/Save and all eight native draft/saved CSVs preserve exact rows and constant selected variables')
+            print('PASS:', checks[-1], flush=True)
+
+            if panel().count() == 0:
+                open_panel()
             close_panel(); choose_test(ALPHA); open_panel(); configure_pair(); preview(5)
             window_id = cdp.send('Browser.getWindowForTarget')['windowId']
             initial_dpr = page.evaluate('devicePixelRatio')
@@ -307,7 +431,8 @@ def run_checks(web, api, dataset, temporary, output):
             checks.append('1100px resize, actual125%/150% browser zoom and keyboard controls remain usable; all source samples unchanged')
             print('PASS:', checks[-1], flush=True)
             (output / 'results.json').write_text(json.dumps({
-                'checks': checks, 'native_proposal': proposal, 'preview_requests': requests,
+                'checks': checks, 'native_proposal': proposal, 'constant_interval_cases': native_cases,
+                'preview_requests': requests,
                 'unchanged_source_files': len(before_sources), 'unexpected_browser_errors': unexpected}, indent=2))
         except Exception:
             page.screenshot(path=str(output / 'failure.png'), full_page=True)

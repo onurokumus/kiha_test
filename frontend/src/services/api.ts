@@ -386,8 +386,19 @@ export function fetchTrash(signal?: AbortSignal): Promise<{ entries: TrashEntry[
 }
 
 export async function fetchWaterfall(name: string, col: string, nperseg: number, overlap: number,
-  range: [number, number] | null, tpId: number | undefined, signal: AbortSignal): Promise<import('../types').WaterfallData> {
-  const params = new URLSearchParams({ col, nperseg: String(nperseg), overlap: String(overlap) });
+  range: [number, number] | null, tpId: number | undefined, signal: AbortSignal,
+  detail: { resolutionHz: number | null; frequencyRange: [number, number] | null; timeRange: [number, number] | null }
+): Promise<import('../types').WaterfallData> {
+  const params = new URLSearchParams({ col, nperseg: String(nperseg), overlap: String(overlap), high_detail: 'true' });
+  if (detail.resolutionHz !== null) params.set('resolution_hz', String(detail.resolutionHz));
+  if (detail.frequencyRange) {
+    params.set('frequency_min_hz', String(detail.frequencyRange[0]));
+    params.set('frequency_max_hz', String(detail.frequencyRange[1]));
+  }
+  if (detail.timeRange) {
+    params.set('elapsed_min_s', String(detail.timeRange[0]));
+    params.set('elapsed_max_s', String(detail.timeRange[1]));
+  }
   if (tpId !== undefined) params.set('tp_id', String(tpId));
   else if (range) { params.set('t0', String(range[0])); params.set('t1', String(range[1])); }
   return getJson(`/tests/${encodeURIComponent(name)}/waterfall?${params}`, signal);
