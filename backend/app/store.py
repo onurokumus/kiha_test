@@ -59,6 +59,9 @@ def list_tests() -> list[dict]:
                                       or status.get("uploader_name")),
                     "description": meta.get("description", status.get("description", "")),
                     "components": meta.get("components", status.get("components")),
+                    **({"component_sets": meta.get("component_sets", status.get("component_sets")),
+                        "component_sets_revision": meta.get("component_sets_revision", status.get("component_sets_revision", 0))}
+                       if "component_sets" in meta or "component_sets" in status else {}),
                     "created_at": meta.get("created_at") or _dir_created_at(d),
                     "edited_at": meta.get("edited_at"),
                     "ingest_seconds": meta.get("ingest_seconds"),

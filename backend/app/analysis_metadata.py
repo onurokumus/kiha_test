@@ -53,6 +53,18 @@ def encode(value):
 
 def source_context(name, meta, columns, i0, i1, *, tp_id=None, t0=None, t1=None):
     from .store import TESTS_DIR  # late import: store also emits these snapshots
+    from .components import sets
+    try:
+        component_sets = sets(meta)
+        component_sets_status = 'normalized'
+    except (ValueError, TypeError, AttributeError):
+        # Metadata can outlive a damaged registry/hand-edited association.
+        # Preserve the saved configuration as evidence without preventing
+        # unrelated scientific plotting or export of otherwise valid samples.
+        component_sets = meta.get('component_sets') if 'component_sets' in meta else [{
+            'id': 'legacy', 'name': 'Set 1', 'components': meta.get('components'),
+            'rpm_column': meta.get('component_rpm_column')}]
+        component_sets_status = 'invalid_saved_configuration'
     selected = list(dict.fromkeys(columns))
     records = formula.refresh_missing_dependencies(
         formula.rewrite_provenance(meta.get('derived_variables')), meta['columns'])
@@ -81,6 +93,9 @@ def source_context(name, meta, columns, i0, i1, *, tp_id=None, t0=None, t1=None)
                    'source_file': meta.get('source_file'),
                    'component_ids': meta.get('components'),
                    'component_association_revision': meta.get('components_revision', 0),
+                   'component_sets': component_sets,
+                   'component_sets_status': component_sets_status,
+                   'component_sets_revision': meta.get('component_sets_revision', 0),
                    'edited_at': meta.get('edited_at'),
                    'time_column': meta['time_column'], 'fs_hz': meta.get('fs_hz'),
                    'n_rows': meta.get('n_rows'), 'stored_t_start_s': meta.get('t_start'),

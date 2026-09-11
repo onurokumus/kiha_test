@@ -36,7 +36,7 @@ import {
 import { fetchExportFile } from './exportProgress';
 import type { AppSettings } from '../constants/settings';
 import type { AnnotationDocument, TimeAnnotation } from '../utils/plotAnnotations';
-import type { ComponentCatalog, ComponentIds, ComponentKind, HardwareComponent } from '../utils/components';
+import type { ComponentCatalog, ComponentIds, ComponentKind, ComponentSet, HardwareComponent } from '../utils/components';
 import type { AnalysisSourceCatalog } from './sessionSources';
 
 export const API_BASE = (
@@ -312,7 +312,8 @@ export async function patchUserMeta(
   name: string,
   userMeta?: Record<string, string>,
   fields: { description?: string; notes?: string; components?: ComponentIds; expected_components_revision?: number;
-    component_rpm_column?: string | null; expected_component_rpm_revision?: number } = {}
+    component_rpm_column?: string | null; expected_component_rpm_revision?: number;
+    component_sets?: ComponentSet[]; expected_component_sets_revision?: number } = {}
 ): Promise<TestMeta> {
   return sendJson(`/tests/${encodeURIComponent(name)}/meta`, {
     method: 'PATCH',

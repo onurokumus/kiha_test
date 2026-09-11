@@ -19,9 +19,9 @@ import { DataQualityButton, DataQualityDetails } from './DataQuality';
 import { SplitCsvDownloads } from './SplitCsvDownloads';
 import { MAX_DESCRIPTION_LENGTH, normalizeTestText, testTextError, textLength } from '../../utils/testNotes';
 import styles from './UploadView.module.css';
-import { ComponentPicker } from '../controls/ComponentPicker';
+import { ComponentSetsPicker } from '../controls/ComponentSetsPicker';
 import { useComponentCatalog } from '../../hooks/useComponentCatalog';
-import { componentIds, COMPONENT_KINDS, COMPONENT_LABELS } from '../../utils/components';
+import { componentSetsError, componentSetsSummary, type ComponentSet } from '../../utils/components';
 import { TrashBin } from './TrashBin';
 
 interface Props {
@@ -224,7 +224,7 @@ export default function UploadView({
   const [uploaderName, setUploaderName] = useState(loadRememberedUploaderName);
   const [description, setDescription] = useState('');
   const catalog = useComponentCatalog();
-  const [components, setComponents] = useState(() => componentIds());
+  const [sets, setSets] = useState<ComponentSet[]>([]);
   const [componentDraft, setComponentDraft] = useState(false);
   const [timeMode, setTimeMode] = useState<UploadTimeMode>('auto');
   const [timeColumn, setTimeColumn] = useState('');
@@ -238,7 +238,7 @@ export default function UploadView({
     let alive = true;
     if (pendingFiles.length === 0) {
       setDescription('');
-      setComponents(componentIds());
+      setSets([]);
       setComponentDraft(false);
       setTimeMode('auto');
       setTimeColumn('');
@@ -313,8 +313,8 @@ export default function UploadView({
     pendingFiles.length === 0
       ? ''
       : componentDraft ? 'Finish adding the new component or cancel it before uploading.'
-      : uploaderError || descriptionError
-        ? uploaderError || descriptionError
+      : uploaderError || descriptionError || componentSetsError(sets)
+        ? uploaderError || descriptionError || componentSetsError(sets)
         : headersLoading
           ? 'Inspecting the selected CSV headers…'
           : timeMode === 'column' && !selectedTimeColumn.trim()
@@ -340,7 +340,7 @@ export default function UploadView({
     onStartUpload(pendingFiles, {
       uploaderName: normalizedUploaderName,
       description: normalizeTestText(description),
-      components,
+      component_sets: sets,
       timeMode,
       ...(validFs ? { fsHz: parsedFs } : {}),
       ...(timeMode === 'column'
@@ -380,7 +380,7 @@ export default function UploadView({
       (historyStatus === 'processing' ? isBusyStatus(test.status) : test.status === historyStatus);
     const terms = historyQuery.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
     const searchableText = [test.name, test.source_file, test.uploader_name, test.description,
-      ...COMPONENT_KINDS.map((kind) => catalog.items.find((item) => item.id === test.components?.[kind])?.name ?? '')]
+      componentSetsSummary(test, catalog.items)]
       .join(' ')
       .toLocaleLowerCase();
     return matchesStatus && terms.every((term) => searchableText.includes(term));
@@ -760,8 +760,7 @@ export default function UploadView({
             </label>
 
             <div className={styles.descriptionField}>
-              <ComponentPicker value={components} onChange={setComponents} catalog={catalog} onDraftChange={setComponentDraft} />
-              <p className="upload-uploader-help">Applies to all selected files. Associations can be corrected later in Edit.</p>
+              <ComponentSetsPicker value={sets} onChange={setSets} catalog={catalog} onDraftChange={setComponentDraft} />
             </div>
 
             <div className="upload-setup-grid">
@@ -1064,8 +1063,7 @@ export default function UploadView({
                 <tbody>
                   {visibleRows.map((t) => {
                     const busy = isBusyStatus(t.status);
-                    const componentSummary = COMPONENT_KINDS.filter((kind) => t.components?.[kind])
-                      .map((kind) => `${COMPONENT_LABELS[kind]}: ${catalog.items.find((item) => item.id === t.components?.[kind])?.name ?? 'Unavailable component'}`).join(' · ');
+                    const componentSummary = componentSetsSummary(t, catalog.items);
                     const qualityId = `data-quality-${encodeURIComponent(t.name)}`;
                     const splitDownloadId = `split-downloads-${encodeURIComponent(t.name)}`;
                     return (

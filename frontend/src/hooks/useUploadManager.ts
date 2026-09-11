@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { componentIds, sameComponents } from '../utils/components';
+import { componentAssignmentFields, sameComponentAssignments, validComponentSets } from '../utils/components';
 import { fetchTests, isAbortError } from '../services/api';
 import {
   cancelUploadSession,
@@ -133,7 +133,7 @@ function uploadInit(
     name: item.testName,
     source_file: file.name,
     description: options.description ?? '',
-    components: componentIds(options.components),
+    ...componentAssignmentFields(options),
     ...(options.uploaderName
       ? { uploader_name: options.uploaderName }
       : {}),
@@ -159,7 +159,7 @@ function resolveUploadOptions(
   return {
     ...(uploaderName ? { uploaderName } : {}),
     description: normalizeTestText(selected?.description ?? ''),
-    components: componentIds(selected?.components),
+    ...componentAssignmentFields(selected),
     fsHz: selected?.fsHz ?? fallbackFsHz,
     timeMode,
     ...(timeColumn.trim() ? { timeColumn } : {}),
@@ -189,7 +189,7 @@ function sameUploadOptions(
   return (
     leftUploader === rightUploader &&
     (left?.description ?? '') === (right.description ?? '') &&
-    sameComponents(left?.components, right.components) &&
+    sameComponentAssignments(left, right) &&
     leftMode === rightMode &&
     leftColumn === rightColumn &&
     left?.fsHz === right.fsHz
@@ -197,9 +197,12 @@ function sameUploadOptions(
 }
 
 function uploadOptionsFromSession(session: UploadSession): UploadDataOptions {
+  if (session.component_sets !== undefined && !validComponentSets(session.component_sets)) {
+    throw new Error('server returned invalid component set metadata');
+  }
   return {
     description: session.description ?? '',
-    components: componentIds(session.components),
+    ...componentAssignmentFields(session),
     ...(session.uploader_name ? { uploaderName: session.uploader_name } : {}),
     ...(session.fs_hz !== null && session.fs_hz !== undefined
       ? { fsHz: session.fs_hz }
@@ -218,6 +221,7 @@ function validateDiscoveredSession(
     !session.upload_id ||
     session.name !== item.testName ||
     session.source_file !== file.name ||
+    (session.component_sets !== undefined && !validComponentSets(session.component_sets)) ||
     session.size_bytes !== file.size ||
     session.last_modified_ms !== file.lastModified
   ) {
@@ -248,7 +252,7 @@ export function useUploadManager({
         {
           uploaderName: record.uploaderName,
           description: record.description ?? '',
-          components: componentIds(record.components),
+          ...componentAssignmentFields(record),
           fsHz: record.fsHz,
           timeMode: record.timeMode ?? 'auto',
           timeColumn: record.timeColumn,
@@ -305,8 +309,8 @@ export function useUploadManager({
       const itemOptions = uploadOptions.current.get(id) ?? {};
       const uploaderName = session.uploader_name ?? itemOptions.uploaderName;
       const description = session.description ?? '';
-      const components = componentIds(session.components);
-      uploadOptions.current.set(id, { ...itemOptions, uploaderName, description, components });
+      const assignments = componentAssignmentFields(session);
+      uploadOptions.current.set(id, { ...uploadOptionsFromSession(session), uploaderName, description });
       updateItem(id, {
         sessionId: session.upload_id,
         uploaderName,
@@ -323,7 +327,7 @@ export function useUploadManager({
         testName: session.name,
         fileName: session.source_file,
         description,
-        components,
+        ...assignments,
         ...(uploaderName ? { uploaderName } : {}),
         sizeBytes: session.size_bytes,
         lastModifiedMs: session.last_modified_ms,
@@ -417,6 +421,12 @@ export function useUploadManager({
       void getUploadSession(record.uploadId, record.testName)
         .then((session) => {
           if (!alive) return;
+          if (session.component_sets !== undefined && !validComponentSets(session.component_sets)) {
+            throw new Error('server returned invalid component set metadata');
+          }
+          if (!sameComponentAssignments(record, session)) {
+            throw new Error('saved component sets differ from this upload session; cancel it or resume from its server entry');
+          }
           if (
             session.state === 'ingesting' ||
             session.state === 'ready' ||

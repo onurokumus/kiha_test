@@ -133,6 +133,9 @@ def list_entries(root: Path) -> list[dict]:
                       "source_file": meta.get("source_file", status.get("source_file")),
                       "uploader_name": meta.get("uploader_name", status.get("uploader_name")),
                       "components": meta.get("components", status.get("components")),
+                      **({"component_sets": meta.get("component_sets", status.get("component_sets")),
+                          "component_sets_revision": meta.get("component_sets_revision", status.get("component_sets_revision", 0))}
+                         if "component_sets" in meta or "component_sets" in status else {}),
                       "duration_s": meta.get("duration_s")})
     return sorted(items, key=lambda item: (item.get("deleted_at") or "", item["id"]), reverse=True)
 

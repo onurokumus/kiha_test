@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { deleteTrash, fetchTrash, isAbortError, restoreTrash } from '../../services/api';
 import type { TrashEntry } from '../../types';
-import { COMPONENT_KINDS, COMPONENT_LABELS, type HardwareComponent } from '../../utils/components';
+import { componentSetsSummary, type HardwareComponent } from '../../utils/components';
 import { useConfirm } from '../feedback/confirm';
 import styles from './TrashBin.module.css';
 
@@ -103,8 +103,7 @@ export function TrashBin({ refreshKey, onRestored, components }: {
             <span>Deleted {entry.deleted_at ? new Date(entry.deleted_at).toLocaleString() : 'at an unknown time'}{entry.legacy_time_estimated ? ' (estimated)' : ''}</span>
             <span title={entry.id}>ID {entry.id.slice(0, 8)} · {entry.status}{entry.source_file ? ` · ${entry.source_file}` : ''}{entry.uploader_name ? ` · ${entry.uploader_name}` : ''}</span>
             {entry.description && <p className={styles.description} title={entry.description}>{entry.description}</p>}
-            {COMPONENT_KINDS.some((kind) => entry.components?.[kind]) && <span>{COMPONENT_KINDS.filter((kind) => entry.components?.[kind]).map((kind) =>
-              `${COMPONENT_LABELS[kind]}: ${components.find((item) => item.id === entry.components?.[kind])?.name ?? entry.components?.[kind]}`).join(' · ')}</span>}
+            {componentSetsSummary(entry, components) && <span>{componentSetsSummary(entry, components)}</span>}
             {!entry.restorable && <span className={styles.error}>{entry.state === 'deleting' ? 'Permanent deletion incomplete. Retry deletion to finish.' : entry.error || 'Restore unavailable.'}</span>}
           </div>
           <div className={styles.actions}>

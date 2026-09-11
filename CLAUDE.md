@@ -530,11 +530,23 @@ Target devices and input: follow `AGENTS.md`. This application is desktop/laptop
 ## API gotchas (learned during Phase 0 verification)
 
 - Phase 10 `GET /api/component-statistics` reports current active-test use, not a
-  lifetime ledger. Edit saves explicit `component_rpm_column` with
-  `expected_component_rpm_revision`; column rename/drop follows/clears it.
+  lifetime ledger. Component sets (2026-09-11) extend it to independent per-set
+  RPM, optional motor temperature and power. Canonical metadata is
+  `component_sets` plus `component_sets_revision`; Edit sends the entire list and
+  `expected_component_sets_revision`. Absent list reads legacy fields as Set 1;
+  explicit empty stays empty. Legacy writes remain supported only before migration
+  and also advance the sets revision. First-set legacy fields are read projections,
+  never a substitute for canonical sets. Upload resume preserves the original
+  canonical/legacy wire identity. Column rename/drop follows/clears every binding.
   Runtime = positive finite RPM rows / fs, excluding acquisition gaps. Mean/SD
   weight seconds across sources. `component_stats.py` caches only numerical
   summaries, never assignments/totals; read catalog -> test -> native slot.
+  Optional telemetry uses independent finite running-sample masks and measured
+  second weights; explicit C/F/K and W/kW convert to C/W. Temperature contributes
+  only to motor totals; power is the selected set signal for each hardware kind.
+  Distinct sets share a dataset identity legitimately; duplicate test folders do
+  not. Never count one physical component twice in a test. Set UUID generation
+  uses getRandomValues because randomUUID is unavailable on plain HTTP.
   Imports/edits retain separate `acquisition_gap_ranges` through fills/trims;
   null means lost legacy history, not empty gaps. Do not replace DSP's existing
   `time_gap_ranges` behavior with this provenance. See

@@ -1,16 +1,25 @@
 import { getJson } from './api';
 import type { ComponentIds, HardwareComponent } from '../utils/components';
 
+export interface OperatingMetricSummary {
+  unit: 'C' | 'W'; samples: number; seconds: number; missing_samples: number; missing_seconds: number;
+  mean: number | null; sd: number | null; min: number | null; max: number | null;
+}
 export interface UsageSummary {
   running_seconds: number; stopped_seconds: number; missing_rpm_seconds: number; gap_seconds: number;
   running_samples: number; stopped_samples: number; missing_rpm_samples: number; gap_samples: number;
   mean_rpm: number | null; sd_rpm: number | null; min_rpm: number | null; max_rpm: number | null;
   ranges_seconds: number[]; fs_hz?: number; n_rows?: number; first_time_s?: number; last_time_s?: number;
+  motor_temperature?: OperatingMetricSummary;
+  power?: OperatingMetricSummary;
 }
 export interface UsageSource {
   name: string; status: string; source_id: string | null; component_ids: Partial<ComponentIds>;
   rpm_column: string | null; warnings: string[]; issue: string | null; summary: UsageSummary | null;
   association_revision?: number; rpm_revision?: number; time_source?: string;
+  set_id?: string; set_name?: string; set_revision?: number;
+  motor_temperature_column?: string | null; motor_temperature_unit?: 'C' | 'F' | 'K';
+  power_column?: string | null; power_unit?: 'W' | 'kW';
 }
 export interface ComponentStatistics {
   version: 1; method: string; policy: string; generated_at: string; rpm_range_lower_bounds: number[];

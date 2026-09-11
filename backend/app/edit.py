@@ -21,7 +21,7 @@ from pathlib import Path
 import polars as pl
 import pyarrow.parquet as pq
 
-from . import formula
+from . import components, formula
 from .config import ROW_GROUP_SIZE, TESTS_DIR
 from .ingest import build_pyramid
 from .locks import test_write
@@ -209,10 +209,9 @@ def _rebuild(name: str, ops: dict) -> None:
         if acquisition_gaps is not None:
             acquisition_gaps = _updated_gap_ranges(
                 {**meta, 'time_gap_ranges': acquisition_gaps}, fs, t_start, n_rows, None)
-        rpm_column = meta.get('component_rpm_column')
-        next_rpm = rename.get(rpm_column, rpm_column)
-        if next_rpm not in columns:
-            next_rpm = None
+        # Resolve binding metadata before the data swap, so invalid persisted
+        # structures cannot fail after parquet/pyramid commit.
+        components.remap_columns(meta, rename, columns, new_tcol)
         # Column/formula/fill edits leave row identity unchanged. Only a trim
         # may alter points; resolve its result against the OLD rows before the
         # commit so invalid point metadata cannot fail after files are swapped.
@@ -250,9 +249,6 @@ def _rebuild(name: str, ops: dict) -> None:
             "edited_at": edited_at,
             "edit_seconds": round(time.time() - t_begin, 1),
         })
-        if next_rpm != rpm_column:
-            meta['component_rpm_column'] = next_rpm
-            meta['component_rpm_revision'] = meta.get('component_rpm_revision', 0) + 1
         write_json_atomic(test_dir / "meta.json", meta)
         # the data changed: drop the tp_stats sidecar so nothing serves
         # averages computed against the old columns/rows

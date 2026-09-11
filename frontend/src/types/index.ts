@@ -1,9 +1,10 @@
 // Domain types for the PTT frontend. Everything is schema-flexible: column
 // names come from each test's meta.json — nothing here hardcodes variables.
-import type { ComponentIds } from '../utils/components';
+import type { ComponentIds, ComponentSet } from '../utils/components';
 
 /** One row of GET /api/tests */
 export interface TestInfo {
+  component_sets?: ComponentSet[];
   components?: ComponentIds | null;
   description?: string;
   name: string;
@@ -40,6 +41,7 @@ export interface TestInfo {
 }
 
 export interface TrashEntry {
+  component_sets?: ComponentSet[];
   id: string;
   name: string;
   deleted_at: string | null;
@@ -91,6 +93,8 @@ export interface UploadItem {
 
 /** meta.json — GET /api/tests/{name} */
 export interface TestMeta {
+  component_sets?: ComponentSet[];
+  component_sets_revision?: number;
   component_rpm_column?: string | null;
   component_rpm_revision?: number;
   components?: ComponentIds;

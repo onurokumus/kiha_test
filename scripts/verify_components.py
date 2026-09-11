@@ -43,7 +43,8 @@ def run_checks(web, api, dataset, temporary, output):
         worker = context.service_workers[0] if context.service_workers else context.wait_for_event('serviceworker')
         cdp = context.new_cdp_session(page)
 
-        def picker(): return page.get_by_role('group', name='Component associations', exact=True)
+        def component_set(): return page.get_by_role('group', name='Component set 1', exact=True)
+        def picker(): return component_set().get_by_role('group', name='Component associations', exact=True)
         def select(kind): return picker().get_by_role('combobox', name=labels[kind], exact=True)
         def create(kind, name):
             select(kind).select_option('__new')
@@ -57,6 +58,8 @@ def run_checks(web, api, dataset, temporary, output):
                 page.get_by_role('button', name=re.compile('Import test data')).click()
             chooser.value.set_files(files)
             page.get_by_label('Uploaded by', exact=True).fill('Hardware lab')
+            expect(component_set()).to_have_count(0)
+            page.get_by_role('button', name='Add component set', exact=True).click()
             expect(select('motor')).to_be_enabled()
         def edit(name):
             page.get_by_role('button', name='Uploads', exact=True).click()
@@ -68,8 +71,11 @@ def run_checks(web, api, dataset, temporary, output):
             button = page.get_by_role('button', name='Save notes and metadata', exact=True)
             button.focus(); page.keyboard.press('Enter'); expect(button).to_be_disabled()
         def check_saved(name, ids):
-            actual = request.get(f'tests/{name}').json().get('components')
+            meta = request.get(f'tests/{name}').json()
+            actual = meta.get('components')
             assert actual == ids, (name, actual, ids)
+            assert len(meta['component_sets']) == 1, meta
+            assert meta['component_sets'][0]['components'] == ids, meta
         def pause_and_resume(path, name, server_only=False):
             held = []
             pattern = api + '/uploads/*/complete?*'
@@ -78,7 +84,8 @@ def run_checks(web, api, dataset, temporary, output):
             page.wait_for_function("document.body.textContent.includes('finalizing')")
             assert held
             records = page.evaluate("JSON.parse(localStorage.getItem('ptt.uploadSessions.v1'))")
-            assert records[-1]['components'] == ids
+            assert records[-1]['component_sets'][0]['components'] == ids
+            assert 'components' not in records[-1], records[-1]
             page.get_by_role('button', name='Pause', exact=True).last.click()
             for route in held: route.abort()
             page.unroute(pattern)
@@ -150,11 +157,14 @@ def run_checks(web, api, dataset, temporary, output):
             saved = request.get('tests/legacy').json()
             assert saved['user_meta'] == legacy['user_meta'] and saved['notes'] == 'Existing findings'
             assert saved['components_revision'] == 1
+            assert saved['component_sets_revision'] == 1
             select('motor').select_option(motor)
-            remote = request.patch('tests/legacy/meta', data={'components': {**assigned, 'esc': None}, 'expected_components_revision': 1})
+            remote_sets = [{**saved['component_sets'][0], 'components': {**assigned, 'esc': None}}]
+            remote = request.patch('tests/legacy/meta', data={'component_sets': remote_sets,
+                'expected_component_sets_revision': saved['component_sets_revision']})
             assert remote.ok
             page.get_by_role('button', name='Save notes and metadata', exact=True).click()
-            expect(page.get_by_role('status').filter(has_text='Component associations changed')).to_be_visible()
+            expect(page.get_by_role('status').filter(has_text='Component sets changed')).to_be_visible()
             expect(select('motor')).to_have_value(motor)
             page.get_by_role('button', name='Reload saved metadata', exact=True).click()
             page.get_by_role('alertdialog').get_by_role('button', name='Reload metadata', exact=True).click()

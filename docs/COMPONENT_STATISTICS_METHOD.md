@@ -1,19 +1,22 @@
 # Component use: method and contribution policy
 
-Method `component-usage-v1`, implemented in `backend/app/component_stats.py`.
+Method `component-usage-v2`, implemented in `backend/app/component_stats.py`.
 Policy `active-tests-positive-rpm`, confirmed by the user on 2026-09-10.
 
 ## Scope
 
 The Components page reports measured use in the current active library for each
-typed UUID: individual propeller, electric motor and ESC. Select the test's shaft
-RPM column in Edit and save it explicitly. The selected variable must already be
+typed UUID: individual propeller, electric motor and ESC. A test can have up to
+16 named sets, each with its own hardware and signal columns. Select each set's
+shaft RPM column in Edit and save it explicitly. The selected variable must already be
 in revolutions per minute; neither its name nor unit is inferred or converted.
-The same shaft speed describes all three associated components. An ESC's reported
+Within a set, the same shaft speed describes all three associated components. An ESC's reported
 RPM is the shaft operating condition, not a separate internal speed measurement.
 
-Each active ready test contributes its complete current full-resolution Parquet
-rows once to each assigned component. Test points (including overlaps), plot
+Each active ready test contributes its set's complete current full-resolution Parquet
+rows once to each assigned component. A physical component may belong to only one
+set in a test; ambiguous manually edited assignments are excluded. Different
+sets can run for different amounts of time. Test points (including overlaps), plot
 selection/ranges, display reduction, temporary filters and spectrum RPM selection
 do not change these totals. Existing persisted equations/fills/trims do change the
 current data; this page does not reconstruct historical original values.
@@ -84,16 +87,76 @@ single running row has SD zero. A completely unconfigured source has unknown
 runtime, distinct from a computed stopped test. Display rounding does not change
 the unrounded API results; tiny nonzero values remain visible.
 
+## Motor temperature and power during operation
+
+Each set can independently select a motor temperature and power signal. These
+statistics use only rows already eligible as running for that set. Each channel
+has its own finite-value mask: missing temperature does not discard valid power,
+and missing either channel never reduces valid RPM runtime. Unassigned channels,
+null/NaN/infinite values, and unavailable optional columns have no measured
+coverage. Their missing coverage is shown against the set's running exposure.
+An unreadable or numerically overflowing optional signal is excluded with a
+notice while usable RPM results remain available.
+
+Source units are explicit. Temperature is converted to degrees Celsius before
+accumulation: C is unchanged, `(F - 32) / 1.8`, or `K - 273.15`. Power is converted
+to watts: W is unchanged, kW is multiplied by 1000. No unit or power type is
+inferred from column names. Choose compatible source signals across tests; the
+application does not distinguish electrical input power from shaft output power.
+These are power statistics, not energy integration or efficiency calculations.
+Conversions follow [NIST SP 811](https://physics.nist.gov/cuu/pdf/sp811.pdf)
+and the [SI prefix table](https://www.nist.gov/pml/special-publication-330/sp-330-section-3).
+
+For each channel, measured seconds are `finite_running_samples / fs`; mean,
+population SD, minimum and maximum use only these samples. Across tests and
+batches, means and variances are merged using that channel's measured seconds,
+so missing samples and differing sample rates cannot skew the weighting.
+No observed samples gives null mean/SD/extrema. Coverage retains measured and
+missing sample counts and seconds. Summary units are always C and W, while
+source details retain the selected source units and column names.
+
+Motor temperature contributes only to the motor's aggregate; the selected power
+signal describes the set's operating conditions for each associated propeller,
+motor and ESC, like shaft RPM. Selecting a component shows its contributing sets.
+The full-test plots remain available for inspecting temperature or power while
+stopped; component telemetry summaries specifically describe running exposure.
+
 ## API, persistence and refresh
 
+Canonical assignments use `component_sets`, an ordered list of objects with stable
+UUID `id` (or the compatibility ID `legacy`), unique single-line `name`, typed
+`components`, `rpm_column`, `motor_temperature_column`, `motor_temperature_unit`
+(`C`, `F`, `K`), `power_column`, and `power_unit` (`W`, `kW`). Signal mappings are
+optional and refer to current non-time columns. Uploads choose named hardware
+sets; signal mappings are selected in Edit after ingestion. Sets are immutable
+upload identity and survive local/server-only resume and failed ingestion.
+
+Absent `component_sets` reads the former fields as `legacy` / `Set 1` without
+writing metadata. Explicit `[]` means no sets. PATCH `/api/tests/{name}/meta`
+accepts `component_sets` plus `expected_component_sets_revision`; both bindings
+and accompanying metadata commit atomically. Stale revisions reject the entire
+patch. Names/IDs/hardware references/columns/units are validated before writing.
+Omitted fields are preserved. No-op canonical saves retain revisions.
+
+The old `components` and `component_rpm_column` fields remain a first-set read
+projection. Legacy-only tests continue accepting legacy writes; changes advance
+the sets revision to protect open migration drafts. Once canonical sets are saved,
+old assignment/RPM writes are rejected instead of overwriting newer configuration.
+Mixed old/new assignment payloads are rejected. Column rename follows all three
+bindings in every set; drop clears the affected mappings. Set revisions change
+when their mapping changes. Export provenance includes all sets and the revision;
+invalid saved configuration is identified without disabling unrelated analysis.
+
 GET `/api/component-statistics` returns version, method, policy, calculation time,
-range boundaries, typed component summaries and per-source identities, current
-assignment/RPM revisions, coverage counts, bounds, sample rate, warnings and errors.
+range boundaries, typed component summaries and one source contribution per set,
+including set identity/name, selected columns/units, dataset identity, current
+assignment/set/RPM revisions, coverage counts, bounds, sample rate, warnings and errors.
 No scientific, identity or cache files are written by this endpoint. Missing
-legacy dataset IDs are labelled; duplicate active IDs exclude both copies. Orphan
+legacy dataset IDs are labelled; duplicate IDs across distinct active test folders
+exclude both copies. Multiple sets in one test share one valid dataset identity. Orphan
 component references are retained as notices and never reassigned to a namesake.
 
-PATCH `/api/tests/{name}/meta` accepts optional `component_rpm_column` (a current
+For legacy-only metadata, PATCH `/api/tests/{name}/meta` accepts optional `component_rpm_column` (a current
 non-time variable or null) and required `expected_component_rpm_revision` whenever
 the selection is supplied. Omitted fields are preserved. No-op saves retain the
 revision; changed selections increment it atomically. Stale revisions reject the
@@ -103,14 +166,15 @@ revision. Normal trim/fill/equation edits retain the selected current reference.
 
 Only numerical source summaries are cached, at most 256 entries in memory. The
 key includes method, path/file size/mtime/ctime/inode and exact field-presence/value
-context for sample rate/count, time/RPM columns, fill policy and gap histories.
+context for sample rate/count, schema, time/RPM/telemetry columns, selected units,
+fill policy and gap histories.
 The presence bit distinguishes unknown acquisition history from absent legacy
 history. Current active membership and component assignments are always read
 again; the cache never stores component totals. Rename, source replacement, data
 edits, RPM selection and timing/gap changes cannot reuse an incompatible summary.
 
 Reads use catalog -> per-test read lock -> native read slot. Parquet files close
-before locks are released. Only time and the selected RPM column are read, in
+before locks are released. Only time, selected RPM and optional telemetry columns are read, in
 65,536-row batches. The catalog membership stays stable during one scan; each
 source snapshot is atomic, but the response is not a globally simultaneous or
 historical snapshot across independent metadata writers. The single-process server

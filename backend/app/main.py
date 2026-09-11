@@ -39,7 +39,7 @@ from .test_notes import Description, Notes
 from . import annotations
 from . import components
 from . import component_stats
-from .components import ComponentIds
+from .components import ComponentIds, ComponentSets
 from . import trash
 from . import analysis_sources
 
@@ -475,6 +475,8 @@ class UserMetaPatch(BaseModel):
     expected_components_revision: int | None = Field(default=None, ge=0, strict=True)
     component_rpm_column: str | None = Field(default=None, min_length=1, strict=True)
     expected_component_rpm_revision: int | None = Field(default=None, ge=0, strict=True)
+    component_sets: ComponentSets = Field(default_factory=list)
+    expected_component_sets_revision: int | None = Field(default=None, ge=0, strict=True)
 
 
 class FormulaSpec(BaseModel):
@@ -529,6 +531,14 @@ def api_patch_meta(name: str, payload: UserMetaPatch):
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):
             raise HTTPException(404, f"test '{name}' not found")
+        legacy_fields = {"components", "expected_components_revision", "component_rpm_column", "expected_component_rpm_revision"}
+        canonical_fields = {"component_sets", "expected_component_sets_revision"}
+        if payload.model_fields_set & legacy_fields and payload.model_fields_set & canonical_fields:
+            raise HTTPException(422, "Save component sets separately from legacy component assignments.")
+        if "component_sets" in meta and payload.model_fields_set & legacy_fields:
+            raise HTTPException(409, "This test uses component sets. Reload metadata and save its component sets.")
+        if "component_sets" in payload.model_fields_set:
+            components.apply_sets(meta, payload.component_sets, payload.expected_component_sets_revision)
         if "components" in payload.model_fields_set:
             components.apply_assignments(meta, payload.components, payload.expected_components_revision)
         if "component_rpm_column" in payload.model_fields_set:

@@ -2,6 +2,33 @@
 
 Open items below are listed in recommended implementation order. Complete each phase before moving to the next, except for independent small fixes.
 
+## Requested component sets and telemetry (2026-09-11)
+
+- [x] Support multiple named propeller / motor / ESC sets per test, each with its own RPM column and optional motor temperature and power columns.
+
+User-requested feature completed ahead of independent Phase 11b. Up to 16 named
+sets preserve legacy assignments, Upload/Edit and resumable uploads, independent
+RPM runtime and optional finite running-sample telemetry. Explicit C/F/K and W/kW
+units normalize summaries to C/W; no power type is inferred. Atomic draft saves,
+column edits, test lifecycle and complete export provenance are retained. Full
+backend suite (476 tests), frontend build/lint, new native two-set browser suite
+and existing component/statistics regressions pass. Keyboard/window/125%/150%
+zoom, HTTP-compatible IDs, invalid-settings repair and unchanged source samples
+verified. See [component sets verification](docs/COMPONENT_SETS_VERIFICATION.md).
+
+## Requested despike trace fix (2026-09-11)
+
+- [x] Keep filtered Test points plots as one line per test point instead of separate maximum/minimum curves when adding Despike.
+
+User-requested fix takes priority over the independent Phase 11b side panel.
+Use the existing bounded Line display for TP filtering, retaining exact saved
+rows, relative time, Original overlay and full-resolution exports. Full-test
+Auto/Line/Min-max controls keep their existing behavior. Build/lint, all 453 backend
+tests/370 subtests, extended browser overlay checks with 600/20,000-sample TPs,
+and compact-controls/real export regressions pass. Desktop gestures, resize,
+maximize/restore, 125%/150% zoom and unchanged fixture sources verified.
+See [despike trace verification](docs/DESPIKE_TRACE_VERIFICATION.md).
+
 ## Requested UI fixes (2026-09-11)
 
 - [x] Make Show time notes and Export selected plots icon-only with hover tooltips; make filter-dialog fields readable and styled; widen the right-side test selector; show X before Y in XY variable selection; keep overlapping-point selection above the scatter divider and adjacent plots.

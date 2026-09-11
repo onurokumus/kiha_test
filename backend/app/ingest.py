@@ -371,7 +371,8 @@ def ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
                time_mode: str = "auto",
                time_column: str | None = None,
                uploader_name: str | None = None,
-               description: str = "", component_ids: dict | None = None) -> dict:
+               description: str = "", component_ids: dict | None = None,
+               component_sets: list[dict] | None = None) -> dict:
     """Ingest one test while excluding lifecycle operations for that name.
 
     source_name: original file name for meta.source_file — API uploads
@@ -389,7 +390,7 @@ def ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
     with test_write(name):
         return _ingest_csv(
             csv_path, name, copy_raw, source_name, assume_fs,
-            time_mode, time_column, uploader_name, description, component_ids)
+            time_mode, time_column, uploader_name, description, component_ids, component_sets)
 
 
 def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
@@ -398,8 +399,13 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
                 time_mode: str = "auto",
                 time_column: str | None = None,
                 uploader_name: str | None = None,
-                description: str = "", component_ids: dict | None = None) -> dict:
+                description: str = "", component_ids: dict | None = None,
+                component_sets: list[dict] | None = None) -> dict:
     description = TypeAdapter(Description).validate_python(description)
+    if component_sets is not None:
+        from . import components
+        component_sets = components.validate_sets(component_sets, references=False)
+        component_ids = component_sets[0]["components"] if component_sets else components.ids()
     if component_ids is not None:
         from .components import ids
         component_ids = ids(component_ids)
@@ -414,6 +420,9 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
         provenance["description"] = description
     if component_ids is not None:
         provenance["components"] = component_ids
+    if component_sets is not None:
+        provenance["component_sets"] = component_sets
+        provenance["component_sets_revision"] = 0
     csv_path = Path(csv_path)
     test_dir = TESTS_DIR / name
     test_dir.mkdir(parents=True, exist_ok=True)
@@ -675,6 +684,11 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
         if component_ids is not None:
             meta["components"] = component_ids
             meta["components_revision"] = 0
+        if component_sets is not None:
+            meta["component_sets"] = component_sets
+            meta["component_sets_revision"] = 0
+            meta["component_rpm_column"] = None
+            meta["component_rpm_revision"] = 0
         write_json_atomic(test_dir / "meta.json", meta)
         write_status(test_dir, "ready", **provenance)
         logger.info("ingest '%s': ready — %d rows x %d cols in %.1f s",

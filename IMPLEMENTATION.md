@@ -1,72 +1,80 @@
 # Implementation handoff
 
-Updated: 2026-09-11. Branch `feature/resumable-multipart-upload`; baseline
-`6b7d033` (Linux source-catalog compatibility/initial ready count committed).
-Initial working tree clean, apart from the known ignored `.pytest_cache`
-permission warning. Current changes are the user's requested UI fixes.
+Updated: 2026-09-11. Branch `feature/resumable-multipart-upload`.
 
 ## Current milestone / acceptance
 
-**UI polish implemented and verified.** This
-explicit request takes priority over the independent Phase 11b side panel.
+**Requested multiple component sets and temperature/power columns complete and
+verified.** This request took priority over independent Phase 11b.
 
-- Show time notes and Export selected plots have icon-only toolbar controls,
-  descriptive tooltips and keyboard-accessible names/state.
-- Plot filter dialog uses readable styled fields, with labels above controls.
-- Full-test selector in the right panel uses available width for test names.
-- XY variable choices read X then Y, retaining the actual axis values/handlers.
-- Clicking overlapping scatter points opens the selection menu above the
-  divider and adjacent plots; menu remains usable on resize/zoom and by keyboard.
+- Upload/Edit support up to 16 named propeller/motor/ESC sets with stable IDs.
+  Each set has independent RPM and optional temperature/power mappings in Edit.
+- Legacy single-set metadata remains readable without a migration write;
+  canonical empty lists stay empty. Local/server-only upload resume is preserved.
+- Statistics use each set's positive finite RPM exposure outside acquisition
+  gaps. Optional signals have separate finite masks and observed-second weights;
+  explicit C/F/K and W/kW units normalize summaries to C/W.
+- Atomic revision checks, column rename/drop, test lifecycle and complete export
+  provenance preserve all sets. Invalid saved configuration has explicit read
+  errors and an intentional replacement path.
 
-## Implementation / decisions
+## Implementation / consequential decisions
 
-- `TimeSeriesGrid`, `MultiPlotExportControls`, shared `PlotToolbarButton` CSS:
-  icon-only controls reuse note visibility and export handlers. Notes use a
-  pressed toggle; existing browser tests are updated for the accessible role.
-- `PlotFilterDialog` has its own stylesheet. It no longer inherits export-dialog
-  flex label styling, which conflicted with `FilterRow`. The row now uses two
-  columns, 36px controls, 13px inputs and 12px labels instead of inline-header
-  widths and 8px labels. Existing filter values/methods remain unchanged.
-- `SelectedPointsPanel` test control grows with its row and wraps in narrow
-  desktop panes. `XYPlot`, Settings and unavailable-axis recovery order X/Y
-  without exchanging data or saved state.
-- `PointSelectionMenu` portals to body outside the scatter panel's isolated
-  clipping context. Scoped styling replaces injected global styles; viewport
-  clamping, scrolling, Escape and keyboard selection preserve multi-selection
-  and non-consuming outside dismissal.
+- Canonical `component_sets` and `component_sets_revision`; absent key reads
+  legacy fields as `legacy` / `Set 1`. Same hardware cannot appear twice in one
+  test. First-set legacy fields remain read projections; legacy-only writes
+  advance the canonical revision, and old writers are blocked after migration.
+- Upload binds named hardware; columns are selected after schema ingestion.
+  Temperature belongs to motor totals; the selected power signal describes set
+  operation for all hardware types. No power-type inference or energy integration.
+- New shared ComponentSetsPicker uses current values when asynchronous component
+  creation finishes. UUIDs use getRandomValues for the deployed plain-HTTP origin.
+- component_stats.py `component-usage-v2` retains bounded source caching with
+  exact signal/unit context. Distinct sets legitimately share a dataset ID;
+  duplicate folders do not. Invalid optional telemetry affects only that source's
+  metric, preserving valid RPM and other source measurements.
+- Safe frontend read helpers display malformed metadata without reviving legacy
+  projections; notes-only saves preserve it. Valid guarded replacements repair
+  it. Export provenance records invalid saved settings without blocking plots.
+- Method/API: docs/COMPONENT_STATISTICS_METHOD.md. Detailed verification and
+  browser harness notes: docs/COMPONENT_SETS_VERIFICATION.md.
 
 ## Verification
 
-- Final frontend `npm.cmd run build` and `npm.cmd run lint` pass; existing
-  bundle-size notice only.
-- `backend\.venv\Scripts\python.exe -m pytest backend/tests -q -p no:cacheprovider`:
-  **453 passed, 370 subtests**, 46.02s, two existing dependency deprecations.
-  Cache disabled for the pre-existing ignored cache permission issue.
-- `python scripts/verify_xy_time.py --frontend-port 3196 --backend-port 8196`
-  passes: 8 real exports, keyboard/axis choices/settings/persistence,
-  zoom/pan/maximize/1100px/125%/150%, 21 fixture files unchanged, no page errors.
-- New `verify_ui_polish.py` (3191/8191): icon/hover/keyboard, all filter layouts,
-  test width, actual XY axes, maximize/1100px/125%/150%; seven unchanged files.
-- New `verify_scatter_point_menu.py` with Vite on 3151: five-point stacking
-  hit-tests, long names/search/scroll/multi-selection/keyboard/focus, resize and
-  actual browser zoom. All API calls GET-only; no page/console errors.
-- `verify_compact_plot_controls.py --frontend-port 3154 --backend-port 8154
-  --regressions` passes: eight real exports, notes/filters/all-mode actions,
-  failure/retry, nine slots/gestures, Y-axis and rendering/crosshair checks,
-  keyboard/resize/maximize/browser zoom; 21 source files unchanged.
-- Screenshots inspected and independent review complete. Stable note tooltip
-  avoids stale opposite-action text after toggle. Final whitespace check passes.
-  Owned servers/fixtures/profiles cleaned. Full commands/evidence:
-  `docs/UI_POLISH_VERIFICATION.md`.
+- Final full backend: **476 passed**, 49.48s. Python 3.13 environment; cache
+  provider disabled for known ignored .pytest_cache permissions. Two existing
+  dependency deprecations only.
+- Frontend build and lint pass after final production edits; existing bundle-size
+  notice only. Independent review findings resolved; whitespace check passes.
+- New scripts/verify_component_sets.py (3196/8196): real two-set upload/local and
+  server-only resume; independent native RPM/temperature/power oracles; missing
+  coverage; F/kW conversions; delayed-create concurrent edits; save failure/retry,
+  draft guards, conflict/reload, removal/recalculation, trash/restore and malformed
+  settings read/notes/repair. randomUUID disabled to exercise plain-HTTP support.
+  Keyboard, 1100px, actual 125%/150% browser zoom and screenshots verified.
+  Eighteen source files unchanged; no page errors; owned servers/fixtures cleaned.
+- Existing component browser suite (3200/8200) and statistics suite (3290/8290)
+  updated to canonical controls/revisions and pass all original checks. Thirty-six
+  and 24 source files unchanged, respectively; lifecycle/real data edit checks,
+  failure/retry/unmount and desktop zoom pass. No page errors; cleanup passes.
+- Evidence: ignored data/verification/component-sets, components and
+  component-statistics. Browser script uses global Python for stdlib/Playwright
+  only and project Python 3.13 in the isolated server process.
+
+## Working tree / prior work
+
+Initial tree already contained the completed despike fix in TimePlot.tsx,
+scripts/verify_filter_overlay.py, docs/FILTER_METHOD.md, its verification report,
+TODO.md and this handoff. Despike verification/limits are in
+docs/DESPIKE_TRACE_VERIFICATION.md. The component sets checkpoint covers backend,
+frontend, tests, browser scripts and documentation. The user requested committing
+and pushing both verified changes on 2026-09-11, with separate despike and
+component-set commits. Deployment remains separate.
 
 ## Next steps
 
-Current milestone is complete. The user requested a commit and push to `origin`
-on the current branch. This checkpoint accompanies the verified UI-fix commit;
-the commit/push follow-up reuses the passing checks above, with no subsequent
-implementation changes. Production deployment remains outstanding.
-
-The preceding Linux fix still needs production deployment/confirmation; see
-`docs/LINUX_CATALOG_FIX.md`. Feature backlog remains Phase 11b collapsible
-variable/filter side panel. Preserve completed waterfall/multi-variable
-auto-split/Split multi-plots/XY-time behavior and verification documents.
+This bounded feature is ready. Next backlog milestone remains Phase 11b,
+collapsible variable/filter side panel. Prior Linux/UI production deployment
+confirmation remains separate (docs/LINUX_CATALOG_FIX.md). No automatic
+multi-client synchronization: reload metadata or refresh statistics after other
+clients edit. No component-statistics export or historical lifetime ledger.

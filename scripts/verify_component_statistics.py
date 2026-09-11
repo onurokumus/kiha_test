@@ -42,9 +42,10 @@ def run_checks(web, api, dataset, temporary, output):
             page.get_by_role('button', name='Refresh statistics', exact=True).click(); ready()
         def edit_test(name):
             page.get_by_role('button', name=f'Edit component settings for {name}', exact=True).click()
-            expect(page.get_by_role('combobox', name='Component RPM column', exact=True)).to_be_visible()
-            expect(page.get_by_role('combobox', name='Electric motor', exact=True)).to_be_enabled()
-        def rpm(): return page.get_by_role('combobox', name='Component RPM column', exact=True)
+            expect(rpm()).to_be_visible()
+            expect(component_set().get_by_role('combobox', name='Electric motor', exact=True)).to_be_enabled()
+        def component_set(): return page.get_by_role('group', name='Component set 1', exact=True)
+        def rpm(): return component_set().get_by_role('combobox', name='RPM column', exact=True)
         def save():
             button = page.get_by_role('button', name='Save notes and metadata', exact=True)
             button.focus(); page.keyboard.press('Enter'); expect(button).to_be_disabled()
@@ -104,22 +105,26 @@ def run_checks(web, api, dataset, temporary, output):
             print('PASS: empty library, explicit RPM, draft guard/503 retry and weighted native runtime/mean/SD/ranges/coverage', flush=True)
 
             edit_test('alpha'); rpm().select_option('alternate')
-            remote = request.patch('tests/alpha/meta', data={'component_rpm_column': None, 'expected_component_rpm_revision': 1})
+            current = request.get('tests/alpha').json()
+            assert len(current['component_sets']) == 1
+            remote = request.patch('tests/alpha/meta', data={
+                'component_sets': [{**current['component_sets'][0], 'rpm_column': None}],
+                'expected_component_sets_revision': current['component_sets_revision']})
             assert remote.ok
             page.get_by_role('button', name='Save notes and metadata', exact=True).click()
-            expect(page.get_by_role('status').filter(has_text='Component RPM selection changed')).to_be_visible()
+            expect(page.get_by_role('status').filter(has_text='Component sets changed')).to_be_visible()
             expect(rpm()).to_have_value('alternate')
             page.get_by_role('button', name='Reload saved metadata', exact=True).click()
             page.get_by_role('alertdialog').get_by_role('button', name='Reload metadata', exact=True).click()
             expect(rpm()).to_have_value('')
             rpm().select_option('rpm'); save()
-            page.get_by_role('combobox', name='Electric motor', exact=True).select_option(motor2); save()
+            component_set().get_by_role('combobox', name='Electric motor', exact=True).select_option(motor2); save()
             nav('Components'); ready()
             assert abs(api_summary(ids['motor'])['running_seconds'] - 4) < 1e-9
             assert abs(api_summary(motor2)['running_seconds'] - 6) < 1e-9
             page.reload(); page.wait_for_load_state('networkidle'); nav('Components'); ready()
             edit_test('alpha'); expect(rpm()).to_have_value('rpm')
-            expect(page.get_by_role('combobox', name='Electric motor', exact=True)).to_have_value(motor2)
+            expect(component_set().get_by_role('combobox', name='Electric motor', exact=True)).to_have_value(motor2)
             nav('Components'); ready()
             assert source_hashes(dataset) == before
             print(f'PASS: real RPM conflict/reload, assignment recalculation/reload and {len(before)} source files unchanged', flush=True)

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { isAbortError } from '../../services/api';
-import { fetchComponentStatistics, type ComponentStatistics, type UsageSource } from '../../services/componentStatistics';
+import { fetchComponentStatistics, type ComponentStatistics, type OperatingMetricSummary, type UsageSource } from '../../services/componentStatistics';
 import { COMPONENT_KINDS, COMPONENT_LABELS, type ComponentKind } from '../../utils/components';
 import styles from './ComponentStatisticsView.module.css';
 
@@ -8,6 +8,15 @@ const number = (value: number | null | undefined) => value == null ? '—' : val
   value !== 0 && Math.abs(value) < .001 ? { maximumSignificantDigits: 3 } : { maximumFractionDigits: 3 });
 const minutes = (seconds: number) => number(seconds / 60);
 const range = (min: number | null, max: number | null) => min == null || max == null ? '—' : `${number(min)} – ${number(max)}`;
+
+function OperatingMetric({ value, label }: { value?: OperatingMetricSummary; label: string }) {
+  if (!value) return <span>—</span>;
+  const unit = value.unit === 'C' ? '°C' : 'W';
+  return <span aria-label={`${label} during running`}>
+    {value.samples ? <>{number(value.mean)} {unit} mean<small>{range(value.min, value.max)} {unit}</small></> : 'No measured coverage'}
+    <small>{minutes(value.seconds)} min measured · {minutes(value.missing_seconds)} min missing</small>
+  </span>;
+}
 
 export default function ComponentStatisticsView({ onEditTest }: { onEditTest: (name: string) => void }) {
   const [data, setData] = useState<ComponentStatistics | null>(null);
@@ -33,8 +42,8 @@ export default function ComponentStatisticsView({ onEditTest }: { onEditTest: (n
   const component = data?.components.find(item => item.id === selected);
   const sources = data?.sources.filter(source => !component || source.component_ids[component.kind] === component.id) ?? [];
 
-  const sourceRow = (source: UsageSource) => <tr key={source.name}>
-    <th scope="row"><span>{source.name}</span><small>{source.rpm_column ? `RPM: ${source.rpm_column}` : 'RPM unassigned'}</small>
+  const sourceRow = (source: UsageSource, index: number) => <tr key={`${source.name}:${source.set_id ?? 'none'}:${index}`}>
+    <th scope="row"><span>{source.name}</span><small>{source.set_name ?? 'No sets assigned'}</small><small>{source.rpm_column ? `RPM: ${source.rpm_column}` : 'RPM unassigned'}</small>
       <button className="btn" disabled={source.status !== 'ready'} onClick={() => onEditTest(source.name)}
         aria-label={`Edit component settings for ${source.name}`}>Edit settings</button></th>
     <td>{source.summary ? minutes(source.summary.running_seconds) : '—'}</td>
@@ -48,6 +57,14 @@ export default function ComponentStatisticsView({ onEditTest }: { onEditTest: (n
         <p>Dataset ID: {source.source_id ?? 'Unavailable (legacy)'}<br />Timing: {source.time_source ?? 'Unavailable'}</p>
         {source.summary && <p>Samples {number(source.summary.first_time_s)} – {number(source.summary.last_time_s)} s · {number(source.summary.fs_hz)} Hz<br />
           Mean {number(source.summary.mean_rpm)} RPM · Population SD {number(source.summary.sd_rpm)} RPM</p>}
+        <p>Motor temperature: {source.motor_temperature_column ? `${source.motor_temperature_column} (${source.motor_temperature_unit ?? 'C'})` : 'Unassigned'}<br />
+          Power: {source.power_column ? `${source.power_column} (${source.power_unit ?? 'W'})` : 'Unassigned'}</p>
+        {source.summary && <div>
+          <p>Motor temperature during running<br /><OperatingMetric value={source.summary.motor_temperature} label="Motor temperature" /></p>
+          <p>Power during running<br /><OperatingMetric value={source.summary.power} label="Power" /></p>
+          <p>Population SD: {number(source.summary.motor_temperature?.sd)} °C · {number(source.summary.power?.sd)} W.
+            Missing coverage includes unassigned signals and missing/nonfinite measurements while this set is running.</p>
+        </div>}
       </details>}
     </td>
   </tr>;
@@ -55,7 +72,7 @@ export default function ComponentStatisticsView({ onEditTest }: { onEditTest: (n
   return <main className={styles.page} aria-label="Component statistics">
     <div className={styles.content}>
       <div className={styles.header}><div><h1>Component use</h1>
-        <p>Measured runtime and shaft RPM across active tests, for each individual component.</p></div>
+        <p>Runtime, shaft RPM, motor temperature and power across active tests, for each individual component.</p></div>
         <button className="btn" disabled={loading} onClick={() => setGeneration(value => value + 1)}>Refresh statistics</button>
       </div>
       <details className={styles.policy}><summary>Counting policy · active tests, RPM &gt; 0</summary>
@@ -63,7 +80,10 @@ export default function ComponentStatisticsView({ onEditTest }: { onEditTest: (n
           Zero and negative RPM are stopped; missing or infinite RPM and known acquisition gaps are excluded.
           Timestamp jumps add no runtime. The final observed sample contributes one sample period.</p>
         <p>Mean and population standard deviation are weighted by running seconds across tests with different sample rates.
-          Ranges show measured operation, not component ratings. Every associated propeller, motor and ESC uses the test’s explicitly selected shaft RPM.</p>
+          Ranges show measured operation, not component ratings. Every associated propeller, motor and ESC uses its set’s explicitly selected shaft RPM.</p>
+        <p>Temperature and power use finite measurements during that set’s running samples only. Temperature is converted to °C for the assigned motor;
+          power is converted to W for each assigned component. Means and population SD are weighted by measured seconds; missing coverage remains visible.
+          Power keeps the meaning of the selected recorded signal, which may differ between sources. These statistics do not integrate energy.</p>
         <p>Totals use complete current test rows once, independently of test points, plot selection and temporary filters.
           Saved data edits can change results. Trash and permanent deletion remove contributions; restore adds them back.
           These are current-library totals, not lifetime records. Refresh after changes from another window.</p>
@@ -72,22 +92,24 @@ export default function ComponentStatisticsView({ onEditTest }: { onEditTest: (n
       {error && <div role="alert" className={styles.warning}>Component statistics unavailable: {error}
         <button className="btn" onClick={() => setGeneration(value => value + 1)}>Retry statistics</button></div>}
       {data && <>
-        <p className={styles.snapshot} role="status">Components: {data.components.length} · Active tests: {data.sources.length} · Excluded tests: {data.sources.filter(source => source.issue).length} · Refreshed {new Date(data.generated_at).toLocaleTimeString()}</p>
-        {!data.components.length && <p>No components yet. Create and assign individual hardware in Uploads or Edit, then choose each test’s RPM column in Edit.</p>}
+        <p className={styles.snapshot} role="status">Components: {data.components.length} · Active tests: {new Set(data.sources.map(source => source.name)).size} · Set contributions: {data.sources.length} · Excluded sets: {data.sources.filter(source => source.issue).length} · Refreshed {new Date(data.generated_at).toLocaleTimeString()}</p>
+        {!data.components.length && <p>No components yet. Create hardware sets in Uploads or Edit, then choose each set’s RPM and optional temperature/power columns in Edit.</p>}
         {data.components.length > 0 && <>
           <div className={styles.filters}><label>Find component<input className="input" type="search" value={search} onChange={e => setSearch(e.target.value)} /></label>
             <label>Component type<select className="input" value={kind} onChange={e => setKind(e.target.value as ComponentKind | '')}>
               <option value="">All types</option>{COMPONENT_KINDS.map(value => <option key={value} value={value}>{COMPONENT_LABELS[value]}</option>)}
             </select></label></div>
           <div className={styles.tableScroll} role="region" aria-label="Component totals" tabIndex={0}><table>
-            <caption>Runtime in minutes; RPM statistics include running samples only.</caption>
-            <thead><tr><th scope="col">Component</th><th scope="col">Tests used / assigned</th><th scope="col">Runtime (min)</th><th scope="col">Mean RPM</th><th scope="col">SD RPM</th><th scope="col">RPM range</th></tr></thead>
+            <caption>Runtime in minutes; RPM, temperature and power statistics include running samples only.</caption>
+            <thead><tr><th scope="col">Component</th><th scope="col">Tests used / assigned</th><th scope="col">Runtime (min)</th><th scope="col">Mean RPM</th><th scope="col">SD RPM</th><th scope="col">RPM range</th><th scope="col">Motor temperature (°C)</th><th scope="col">Power (W)</th></tr></thead>
             <tbody>{items.map(item => <tr key={item.id} data-component-id={item.id} aria-selected={selected === item.id}>
               <th scope="row"><button className={styles.nameButton} aria-pressed={selected === item.id}
                 onClick={() => setSelected(selected === item.id ? '' : item.id)}>{item.name}</button><small>{COMPONENT_LABELS[item.kind]}</small></th>
               <td>{item.included_tests} / {item.assigned_tests}{item.included_tests < item.assigned_tests && <small className={styles.warning}>Incomplete coverage</small>}</td>
               <td>{item.included_tests ? minutes(item.summary.running_seconds) : '—'}</td><td>{number(item.summary.mean_rpm)}</td>
               <td>{number(item.summary.sd_rpm)}</td><td>{range(item.summary.min_rpm, item.summary.max_rpm)}</td>
+              <td>{item.kind === 'motor' ? <OperatingMetric value={item.summary.motor_temperature} label="Motor temperature" /> : '—'}</td>
+              <td><OperatingMetric value={item.summary.power} label="Power" /></td>
             </tr>)}</tbody></table></div>
           {!items.length && <p>No components match this search.</p>}
         </>}
@@ -102,9 +124,9 @@ export default function ComponentStatisticsView({ onEditTest }: { onEditTest: (n
             Stopped: {minutes(component.summary.stopped_seconds)} min. Tests without usable data have unknown runtime.</p>
         </section>}
         <section aria-label="Test contributions"><h2>{component ? `Tests assigned to ${component.name}` : 'Test contributions and coverage'}</h2>
-          <p>Select a component above to inspect its ranges and sources. Edit settings to correct associations or select RPM.</p>
+          <p>Select a component above to inspect its ranges and sources. Each row is one test set; Source details shows temperature/power and coverage during running.</p>
           {sources.length ? <div className={styles.tableScroll} role="region" aria-label="Source contributions" tabIndex={0}><table>
-            <thead><tr><th scope="col">Test / RPM source</th><th scope="col">Runtime (min)</th><th scope="col">RPM range</th><th scope="col">Coverage</th></tr></thead>
+            <thead><tr><th scope="col">Test / set / RPM source</th><th scope="col">Runtime (min)</th><th scope="col">RPM range</th><th scope="col">Coverage</th></tr></thead>
             <tbody>{sources.map(sourceRow)}</tbody></table></div> : <p>No active tests{component ? ' assigned to this component' : ''}.</p>}
         </section>
       </>}

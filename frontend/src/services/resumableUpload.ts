@@ -1,7 +1,7 @@
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
 import { API_BASE } from './api';
-import { sameComponents, type ComponentIds } from '../utils/components';
+import { sameComponentAssignments, validComponentSets, type ComponentIds, type ComponentSet } from '../utils/components';
 
 export const UPLOAD_CONCURRENCY = 3;
 // Three chunks can be hashed/in-flight together; cap a bad server setting
@@ -19,6 +19,7 @@ export interface UploadSessionChunk {
 }
 
 export interface UploadSession {
+  component_sets?: ComponentSet[];
   components?: ComponentIds;
   upload_id: string;
   name: string;
@@ -42,6 +43,7 @@ export type UploadTimeMode = 'auto' | 'column' | 'generated';
 
 /** Immutable upload setup selected before any bytes are uploaded. */
 export interface UploadDataOptions {
+  component_sets?: ComponentSet[];
   components?: ComponentIds;
   description?: string;
   /** Self-reported attribution; this is not an authenticated identity. */
@@ -54,6 +56,7 @@ export interface UploadDataOptions {
 }
 
 export interface UploadInit {
+  component_sets?: ComponentSet[];
   components?: ComponentIds;
   description?: string;
   name: string;
@@ -473,7 +476,8 @@ export async function runResumableUpload(
       session.source_file !== init.source_file ||
       (session.uploader_name ?? undefined) !== init.uploader_name ||
       (session.description ?? '') !== (init.description ?? '') ||
-      !sameComponents(session.components, init.components) ||
+      (session.component_sets !== undefined && !validComponentSets(session.component_sets)) ||
+      !sameComponentAssignments(session, init) ||
       session.size_bytes !== init.size_bytes ||
       session.last_modified_ms !== init.last_modified_ms ||
       (session.fs_hz ?? undefined) !== init.fs_hz ||

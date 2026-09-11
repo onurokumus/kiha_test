@@ -30,7 +30,7 @@ from urllib.parse import parse_qs
 from fastapi import (APIRouter, BackgroundTasks, Header, HTTPException, Query,
                      Request)
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
@@ -50,7 +50,7 @@ from .status import write_status
 from .store import get_status, write_json_atomic
 from .test_notes import Description, MAX_DESCRIPTION_LENGTH, normalize_test_text
 from . import components
-from .components import ComponentIds
+from .components import ComponentIds, ComponentSets
 
 
 logger = logging.getLogger("kiha.uploads")
@@ -84,6 +84,17 @@ class UploadInit(BaseModel):
         default=None, max_length=MAX_UPLOADER_NAME_LENGTH)
     description: Description = ""
     components: ComponentIds = Field(default_factory=ComponentIds)
+    component_sets: ComponentSets = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_component_payload(self):
+        if "component_sets" in self.model_fields_set:
+            if "components" in self.model_fields_set:
+                raise ValueError("Send component_sets without legacy components.")
+            # Validate structural uniqueness and unset columns before a name can
+            # be reserved; registry checks remain deferred for resumable uploads.
+            components.validate_sets(self.component_sets, references=False)
+        return self
 
     @field_validator("uploader_name", mode="before")
     @classmethod
@@ -325,7 +336,9 @@ def _validate_manifest(value: dict | None, name: str) -> dict:
         raise UploadStateError("upload manifest has invalid description")
     try:
         components.ids(value.get("components"))
-    except (ValueError, TypeError):
+        if "component_sets" in value:
+            components.validate_sets(value["component_sets"], references=False)
+    except (ValueError, TypeError, HTTPException):
         raise UploadStateError("upload manifest has invalid components")
     return value
 
@@ -392,6 +405,7 @@ def _session_payload(manifest: dict) -> dict:
         "uploader_name": manifest.get("uploader_name"),
         "description": manifest.get("description", ""),
         "components": components.ids(manifest.get("components")),
+        **({"component_sets": components.sets(manifest)} if "component_sets" in manifest else {}),
         "chunk_size": manifest["chunk_size"],
         "total_chunks": manifest["total_chunks"],
         "state": manifest["state"],
@@ -444,6 +458,11 @@ def _fsync_dir(directory: Path) -> None:
 
 
 def _identity_matches(manifest: dict, request: UploadInit) -> bool:
+    canonical = "component_sets" in manifest
+    if canonical != ("component_sets" in request.model_fields_set):
+        return False
+    same_components = (components.sets(manifest) == components.normalize_sets(request.component_sets)
+                       if canonical else components.ids(manifest.get("components")) == request.components.model_dump(mode="json"))
     return (
         manifest["name"] == request.name
         and manifest["source_file"] == request.source_file
@@ -454,7 +473,7 @@ def _identity_matches(manifest: dict, request: UploadInit) -> bool:
         and manifest.get("time_column") == request.time_column
         and manifest.get("uploader_name") == request.uploader_name
         and manifest.get("description", "") == request.description
-        and components.ids(manifest.get("components")) == request.components.model_dump(mode="json")
+        and same_components
     )
 
 
@@ -469,6 +488,9 @@ def _uploader_status_details(manifest: dict) -> dict:
         details["description"] = manifest["description"]
     if manifest.get("components"):
         details["components"] = manifest["components"]
+    if "component_sets" in manifest:
+        details["component_sets"] = components.sets(manifest)
+        details["component_sets_revision"] = 0
     return details
 
 
@@ -602,7 +624,12 @@ def _init_upload(request: UploadInit) -> tuple[dict, bool]:
 
             # Only new identities need registry lookup. Existing valid sessions
             # can finish after a registry backup is temporarily unavailable.
-            component_ids = components.validate_references(request.components)
+            component_sets = (components.validate_sets(request.component_sets)
+                              if "component_sets" in request.model_fields_set else None)
+            if component_sets is None:
+                component_ids = components.validate_references(request.components)
+            else:
+                component_ids = component_sets[0]["components"] if component_sets else components.ids()
             reserved = _remaining_upload_reservations()
             try:
                 free = shutil.disk_usage(TESTS_DIR).free
@@ -641,6 +668,8 @@ def _init_upload(request: UploadInit) -> tuple[dict, bool]:
                 "updated_at": now,
                 "updated_at_epoch": time.time(),
             }
+            if component_sets is not None:
+                manifest["component_sets"] = component_sets
             if request.uploader_name is not None:
                 manifest["uploader_name"] = request.uploader_name
             try:
@@ -982,6 +1011,7 @@ def ingest_completed_upload(name: str, upload_id: str) -> None:
             uploader_name = manifest.get("uploader_name")
             description = manifest.get("description", "")
             component_ids = components.ids(manifest.get("components"))
+            component_sets = components.sets(manifest) if "component_sets" in manifest else None
             raw_path = _test_dir(name) / "raw.csv"
         ingest_csv(
             raw_path,
@@ -992,7 +1022,8 @@ def ingest_completed_upload(name: str, upload_id: str) -> None:
             time_column=time_column,
             uploader_name=uploader_name,
             description=description,
-            component_ids=component_ids,
+            component_ids=component_ids if component_sets is None else None,
+            component_sets=component_sets,
         )
     except Exception as exc:
         logger.exception("upload '%s': ingestion failed", name)
