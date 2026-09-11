@@ -132,7 +132,12 @@ function App() {
   const recoverSessionRef = useRef<(legacy?: boolean) => Promise<void>>(async () => {});
   const recoveryAttemptRef = useRef(0);
   const recoveredOrderRef = useRef<string[]>([]);
-  const [tests, setTests] = useState<TestInfo[]>([]);
+  const [tests, setTestList] = useState<TestInfo[]>([]);
+  const [testListStatus, setTestListStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const setTests = useCallback((next: TestInfo[] | ((previous: TestInfo[]) => TestInfo[])) => {
+    setTestList(next);
+    setTestListStatus('ready');
+  }, []);
   const [currentTest, setCurrentTest] = useState<string>(
     hasRestoredSession ? restoredSession.currentTest : ''
   );
@@ -149,6 +154,7 @@ function App() {
   const [traceErrors, setTraceErrors] = useState<Record<string, string>>({});
   const [traceRetry, setTraceRetry] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [sourceCatalogError, setSourceCatalogError] = useState<string | null>(null);
   const [metaErrors, setMetaErrors] = useState<Record<string, string>>({});
   // Saved preferences (localStorage) — seed the defaults below and feed the
   // Settings tab. Declared first: several states initialize from it.
@@ -520,6 +526,9 @@ function App() {
 
   // Load meta + test points for every ready test; prune tests that are gone.
   useEffect(() => {
+    // The test list can arrive before source identities. Do not load saved
+    // names without their verified IDs, or reuse them during recovery retry.
+    if (loading || !sessionRecoveryReady) return;
     const readyNames = new Set(tests.filter((t) => t.status === 'ready').map((t) => t.name));
     // Prune only tests that are GONE from the list (deleted/renamed). A test
     // that is merely non-ready (rebuilding/error) keeps its cached meta: the
@@ -574,7 +583,7 @@ function App() {
         })
         .finally(() => metaInFlight.current.delete(name));
     });
-  }, [tests, metaByTest, metaRetry, scheduleMetaRetry, sourceCatalog]);
+  }, [tests, metaByTest, metaRetry, scheduleMetaRetry, sourceCatalog, loading, sessionRecoveryReady]);
 
   // Rebuild lightweight saved selections as each referenced test becomes
   // available. Busy tests stay pending without blocking persistence for the
@@ -827,7 +836,7 @@ function App() {
     return () => window.clearInterval(id);
     // `tab` is read in the bail-out above: without it here, opening the Uploads
     // tab would not (re)start polling unless some other dep also changed (1.17).
-  }, [tests, uploadsActive, currentTest, invalidateTest, tab, sessionRecoveryReady, recoveryNeedsReview, recoveryLegacy]);
+  }, [tests, uploadsActive, currentTest, invalidateTest, tab, sessionRecoveryReady, recoveryNeedsReview, recoveryLegacy, setTests]);
 
   // Auto-clear transient notices
   useEffect(() => {
@@ -1097,6 +1106,7 @@ function App() {
         setCurrentTest(list.find((test) => test.status === 'ready')?.name ?? '');
       }
     } catch (err) {
+      setTestListStatus('error');
       setError(err instanceof Error ? err.message : 'Failed to reload');
       console.error('Error reloading:', err);
     } finally {
@@ -1610,19 +1620,44 @@ function App() {
     setSourceCatalog(retainPendingSourceReferences(catalog, input.sources));
     setSessionRecoveryReady(true);
     setError(null);
+    setSourceCatalogError(null);
   };
 
   recoverSessionRef.current = async (reconnectLegacy = false) => {
     const attempt = ++recoveryAttemptRef.current;
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setSourceCatalogError(null);
+    setSessionRecoveryReady(false);
     try {
-      const [list, catalog] = await Promise.all([fetchTests(), fetchAnalysisSources()]);
+      // Publish the list as soon as it arrives. A failed/slow identity catalog
+      // must not hide valid upload history or make the ready count look empty.
+      // Recovery itself still requires both responses and never falls back to
+      // matching a saved dataset by its name.
+      const [listResult, catalogResult] = await Promise.allSettled([
+        fetchTests().then(list => {
+          if (attempt === recoveryAttemptRef.current) setTests(list);
+          return list;
+        }, err => {
+          if (attempt === recoveryAttemptRef.current) {
+            setTestListStatus('error');
+            setError(err instanceof Error ? err.message : 'The test list could not be loaded.');
+          }
+          throw err;
+        }),
+        fetchAnalysisSources().catch(err => {
+          if (attempt === recoveryAttemptRef.current) {
+            setSourceCatalogError(err instanceof Error ? err.message : 'Source identities could not be checked.');
+          }
+          throw err;
+        }),
+      ]);
       if (attempt !== recoveryAttemptRef.current) return;
+      if (listResult.status !== 'fulfilled' || catalogResult.status !== 'fulfilled') return;
+      const list = listResult.value;
+      const catalog = catalogResult.value;
       const input = recoveryInputRef.current;
       if (input) {
         applyRecoveredSession(input, resolveSessionSources(input, catalog.sources, reconnectLegacy), catalog.sources, list);
       } else {
-        setTests(list);
         setCurrentTest(list.find(test => test.status === 'ready')?.name ?? '');
         setSourceCatalog(catalog.sources);
         setSessionRecoveryReady(true);
@@ -1944,7 +1979,7 @@ function App() {
   const needsTestData = tab !== 'uploads' && tab !== 'settings' && tab !== 'components';
   const activeMetaError = currentTest && !meta ? metaErrors[currentTest] : null;
   const waitingForData = loading || Boolean(currentTest && !meta);
-  const workspaceError = error || activeMetaError;
+  const workspaceError = error || sourceCatalogError || activeMetaError;
 
   return (
     <div {...dragHandlers} className="app-shell">
@@ -1958,6 +1993,7 @@ function App() {
             setLoading(false);
           }} />}
         tests={tests}
+        testListStatus={testListStatus}
         tab={tab}
         onTabChange={handleTabChange}
         onImportFiles={stageUploadFiles}
@@ -1992,11 +2028,12 @@ function App() {
           </div>
         </aside>
       )}
-      {error && !needsTestData && (
+      {(error || sourceCatalogError) && !needsTestData && (
         <div className="app-connection-banner" role="alert">
-          <span>Test data is unavailable. Check the connection and try again.</span>
+          <span>{error ? 'The test list is unavailable. Check the connection and try again.'
+            : 'Analysis source verification is unavailable. Your saved workspace is retained; retry to enable analysis.'}</span>
           <button className="btn" onClick={reloadData} disabled={loading}>
-            Retry connection
+            {error ? 'Retry connection' : 'Retry source check'}
           </button>
         </div>
       )}
@@ -2011,10 +2048,13 @@ function App() {
             </div>
             {workspaceError ? (
               <div role="alert">
-                <h1>{error ? 'Unable to load test data' : 'This test could not be loaded'}</h1>
+                <h1>{error ? 'Unable to load test data' : sourceCatalogError
+                  ? 'Unable to verify analysis sources' : 'This test could not be loaded'}</h1>
                 <p>
                   {error
                     ? 'Check that the test data service is running, then try again.'
+                    : sourceCatalogError
+                    ? 'Analysis is paused until source identities can be checked. Your saved workspace is retained, and upload history is still available.'
                     : 'You can retry, or open Uploads to choose another test.'}
                 </p>
                 <details className="workspace-error-details">

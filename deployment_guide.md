@@ -281,6 +281,8 @@ test -f /progs2/ptt-releases/$PTT_RELEASE/index.html
 sudo systemctl restart ptt-backend
 sudo systemctl status ptt-backend --no-pager
 curl --fail http://127.0.0.1:8000/api/health
+curl --fail --silent --show-error http://127.0.0.1:8000/api/analysis-sources >/dev/null
+curl --fail --silent --show-error http://127.0.0.1:8000/api/trash >/dev/null
 curl --fail --silent http://127.0.0.1:8000/openapi.json | grep -q '"/api/uploads"'
 sudo ln -sfn /progs2/ptt-releases/$PTT_RELEASE /var/www/heliweb1/ptt.next
 sudo mv -Tf /var/www/heliweb1/ptt.next /var/www/heliweb1/ptt
@@ -359,6 +361,8 @@ PTT_RELEASE=$(sudo cat /run/ptt-candidate-release)
 test -f /progs2/ptt-releases/$PTT_RELEASE/index.html
 sudo systemctl restart ptt-backend
 curl --fail http://127.0.0.1:8000/api/health
+curl --fail --silent --show-error http://127.0.0.1:8000/api/analysis-sources >/dev/null
+curl --fail --silent --show-error http://127.0.0.1:8000/api/trash >/dev/null
 curl --fail --silent http://127.0.0.1:8000/openapi.json | grep -q '"/api/uploads"'
 sudo ln -sfn /progs2/ptt-releases/$PTT_RELEASE /var/www/heliweb1/ptt.next
 sudo mv -Tf /var/www/heliweb1/ptt.next /var/www/heliweb1/ptt
@@ -428,7 +432,39 @@ curl --fail http://heliweb1/ptt/api/health
 
 Hard-refresh or close every PTT tab after the rollback build as well.
 
-## 5. Notes
+## 5. Diagnosing analysis-source 500s and an incorrect ready count
+
+If Analyze reports a source-loading error, the header initially shows zero
+ready tests, and opening Uploads reveals the existing tests (possibly alongside
+a Trash error), inspect the backend runtime and traceback:
+
+```bash
+sudo -u ptt /progs2/ptt/backend/.venv/bin/python --version
+sudo journalctl -u ptt-backend -n 150 --no-pager
+curl --include http://127.0.0.1:8000/api/analysis-sources
+curl --include http://heliweb1/ptt/api/analysis-sources
+```
+
+The September 2026 source-identity/trash code initially used
+`Path.is_junction()`, a Python 3.12 API, despite this deployment's Python 3.11
+baseline. A traceback ending with `AttributeError: 'PosixPath' object has no
+attribute 'is_junction'` identifies that compatibility bug. The fix uses the
+portable `app.paths.is_link_or_junction` check for analysis sources, component
+statistics and trash, preserving link protections. The frontend also loads the
+ready count independently and distinguishes a source-verification failure from
+an unavailable test list. Failed source checks retain saved sessions and pause
+analysis until retry succeeds.
+
+Deploy the corrected backend and rebuilt frontend using section 4, restart
+`ptt-backend`, then hard-refresh the browser. Verify `/api/analysis-sources` and
+`/api/trash` as well as `/api/health`; a health-only probe does not exercise
+dataset paths. Existing tests do not need re-uploading or conversion, and this
+fix does not require a Python upgrade. If the traceback is different, preserve
+it and its request ID for diagnosis rather than deleting test data.
+
+See [verification and runtime limits](docs/LINUX_CATALOG_FIX.md).
+
+## 6. Notes
 
 - **Python 3.11 is fully supported** on Linux: `run.py` targets 3.11 as the baseline
   (`asyncio.Runner`), and all the Windows-only workarounds (SelectorEventLoop, the

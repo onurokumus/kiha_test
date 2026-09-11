@@ -34,6 +34,7 @@ from .config import (CORS_ORIGINS, DATA_DIR, POINT_BUDGET_CAP, TESTS_DIR,
 from .locks import (catalog_read, catalog_write, data_read, drop_test_lock,
                     test_read, test_write, tests_write, with_test_read)
 from .status import BUSY_STATUSES, INGEST_LIKE, write_status
+from .paths import is_link_or_junction
 from .test_notes import Description, Notes
 from . import annotations
 from . import components
@@ -332,7 +333,7 @@ def api_delete_test(name: str):
         with test_write(name):
             tests_root = TESTS_DIR.resolve()
             test_dir = TESTS_DIR / name
-            if test_dir.is_symlink() or test_dir.is_junction() or test_dir.resolve().parent != tests_root or not test_dir.is_dir():
+            if is_link_or_junction(test_dir) or test_dir.resolve().parent != tests_root or not test_dir.is_dir():
                 raise HTTPException(404, f"test '{name}' not found")
             status = store.get_status(name).get("status")
             if status in BUSY_STATUSES:

@@ -5,6 +5,7 @@ export type AppTab = 'analyze' | 'split' | 'edit' | 'uploads' | 'components' | '
 
 interface HeaderProps {
   tests: TestInfo[];
+  testListStatus: 'loading' | 'ready' | 'error';
   tab: AppTab;
   onTabChange: (tab: AppTab) => void;
   onImportFiles: (files: File[]) => void;
@@ -122,6 +123,7 @@ const UploadChip: React.FC<{
 /** Top bar: branding, tabs, upload, and compact transfer controls. */
 export const Header: React.FC<HeaderProps> = ({
   tests,
+  testListStatus,
   tab,
   onTabChange,
   onImportFiles,
@@ -229,9 +231,11 @@ export const Header: React.FC<HeaderProps> = ({
           </span>
         )}
       </div>
-      <span className="app-header-summary">
-        <span className="app-ready-dot" aria-hidden="true" />
-        {tests.filter((test) => test.status === 'ready').length} ready tests
+      <span className="app-header-summary" role="status">
+        {testListStatus === 'ready' ? <>
+          <span className="app-ready-dot" aria-hidden="true" />
+          {tests.filter((test) => test.status === 'ready').length} ready tests
+        </> : testListStatus === 'loading' ? 'Loading tests…' : 'Test count unavailable'}
       </span>
     </header>
   );

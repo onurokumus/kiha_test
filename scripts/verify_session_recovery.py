@@ -55,7 +55,49 @@ def run_checks(web, api, dataset, temporary, output):
         def recovery(): return page.get_by_role('complementary', name='Session recovery')
         def trace_ready(): expect(page.locator('.u-over').first).to_be_visible(timeout=20000)
         try:
-            page.goto(web); page.wait_for_load_state('networkidle')
+            # The upload count is independent of the identity catalog. Slow or
+            # failed source checks may pause analysis but must not invent zero
+            # ready tests, load unverified saved names, or discard autosave.
+            held_catalog, metadata_requests = [], []
+            page.on('request', lambda req: metadata_requests.append(req.url)
+                    if '/api/tests/' in req.url else None)
+            page.route(api + '/analysis-sources', lambda route: held_catalog.append(route))
+            page.goto(web)
+            expect(page.locator('.app-header-summary')).to_have_text('2 ready tests')
+            assert held_catalog and not metadata_requests
+            for route in held_catalog:
+                route.fulfill(status=500, json={'detail': 'Injected identity outage'})
+            page.wait_for_load_state('networkidle')
+            expect(page.get_by_role('heading', name='Unable to verify analysis sources')).to_be_visible()
+            expect(page.locator('.app-header-summary')).to_have_text('2 ready tests')
+            assert stored() is None and not metadata_requests
+            page.screenshot(path=str(output/'catalog-unavailable.png'), full_page=True)
+            page.get_by_role('button', name='Uploads', exact=True).click()
+            expect(page.get_by_role('heading', name='Test uploads', exact=True)).to_be_visible()
+            expect(page.locator('.app-header-summary')).to_have_text('2 ready tests')
+            expect(page.get_by_role('button', name='Retry source check')).to_be_visible()
+            assert stored() is None and not metadata_requests
+            page.unroute(api + '/analysis-sources')
+            page.get_by_role('button', name='Retry source check').click()
+            expect(page.locator('.app-connection-banner')).to_have_count(0)
+            page.get_by_role('button', name='Analyze', exact=True).click()
+            expect(page.get_by_role('region', name='Analysis controls', exact=True)).to_be_visible()
+            page.wait_for_function('key => JSON.parse(localStorage.getItem(key))?.sources?.some(s => s.id)', arg=KEY)
+
+            # Distinguish a missing list from a successful empty list, even
+            # when source verification also fails; retry restores both.
+            page.route(api + '/tests', lambda route: route.fulfill(status=503, json={'detail': 'Injected list outage'}))
+            page.route(api + '/analysis-sources', lambda route: route.fulfill(status=500, json={'detail': 'Injected identity outage'}))
+            snapshot = stored()
+            page.reload(); page.wait_for_load_state('networkidle')
+            expect(page.locator('.app-header-summary')).to_have_text('Test count unavailable')
+            expect(page.get_by_role('heading', name='Unable to load test data')).to_be_visible()
+            assert stored() == snapshot
+            page.unroute(api + '/tests'); page.unroute(api + '/analysis-sources')
+            page.get_by_role('button', name='Try again', exact=True).click()
+            expect(page.get_by_role('region', name='Analysis controls', exact=True)).to_be_visible()
+            expect(page.locator('.app-header-summary')).to_have_text('2 ready tests')
+            print('PASS: slow/500 source catalog retains initial ready count, Uploads and retry; list outage shows unavailable count', flush=True)
             # Pure resolver cases run against the same served TS module as App.
             pure = page.evaluate('''async () => {
               const {defaultAnalysisSession, normalizeAnalysisSession} = await import('/src/services/analysisSession.ts');
@@ -205,8 +247,11 @@ def run_checks(web, api, dataset, temporary, output):
             assert stored()['selections'] == []
             # Network failure must leave storage and the retry path intact.
             page.route(api + '/analysis-sources', lambda route: route.fulfill(status=503,json={'detail':'Injected identity outage'}))
+            metadata_requests.clear()
             seed(session)
-            expect(page.get_by_role('heading',name='Unable to load test data')).to_be_visible()
+            expect(page.get_by_role('heading',name='Unable to verify analysis sources')).to_be_visible()
+            expect(page.locator('.app-header-summary')).to_have_text('3 ready tests')
+            assert not metadata_requests, 'Saved names must not load before source identities are verified'
             assert stored() == session
             page.unroute(api + '/analysis-sources')
             page.get_by_role('button',name='Try again',exact=True).click()
@@ -218,7 +263,7 @@ def run_checks(web, api, dataset, temporary, output):
             assert stored() == session
             print('PASS: legacy reconnection/discard, 503 retry without state loss and duplicate-ID rejection', flush=True)
             assert not errors, errors
-            assert all('503' in message for message in console), console
+            assert all('503' in message or '500' in message for message in console), console
             beta = {k:v for k,v in original.items() if k.startswith('beta/')}
             assert {k:v for k,v in hashes(dataset/'tests').items() if k.startswith('beta/')} == beta
             (output/'results.json').write_text(json.dumps({'pure_cases':pure,'unchanged_beta_files':len(beta),'page_errors':errors,'console_errors':console},indent=2))

@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 from fastapi import HTTPException
 
 from . import store
+from .paths import is_link_or_junction
 
 ENTRY_FILE = "entry.json"
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -31,7 +32,7 @@ def validate_name(name: str) -> None:
 
 def _child(root: Path, name: str) -> Path:
     path = root / name
-    if path.is_symlink() or path.is_junction() or path.resolve().parent != root.resolve():
+    if is_link_or_junction(path) or path.resolve().parent != root.resolve():
         raise HTTPException(409, "Unsafe trash path; no files were changed.")
     return path
 
@@ -151,7 +152,7 @@ def restore(root: Path, tests_root: Path, entry_id: str, name: str) -> dict:
     for relative, key in (("meta.json", "name"), ("testpoints.json", "test"),
                           (".upload/manifest.json", "name")):
         path = source / relative
-        if path.is_symlink() or path.parent.is_symlink() or path.parent.is_junction() or not path.resolve().is_relative_to(source.resolve()):
+        if is_link_or_junction(path) or is_link_or_junction(path.parent) or not path.resolve().is_relative_to(source.resolve()):
             raise HTTPException(409, "Cannot restore linked metadata. The trash copy is retained.")
         try:
             original = json.loads(path.read_text(encoding="utf-8"))

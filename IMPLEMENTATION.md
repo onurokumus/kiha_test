@@ -1,72 +1,67 @@
 # Implementation handoff
 
 Updated: 2026-09-11. Branch `feature/resumable-multipart-upload`; baseline
-`db95fcd`. Initial working tree was clean. This checkpoint contains the completed
-waterfall FFT milestone for the user-requested commit/push to `origin`
-(github.com/onurokumus/kiha_test). Generated evidence stays in ignored
-`data/verification/waterfall/`.
+`23a866a` (Waterfall FFT is committed). Initial working tree clean, apart from
+an inaccessible ignored `.pytest_cache` warning. This checkpoint contains the
+verified fix for the user's requested commit/push to `origin`
+(github.com/onurokumus/kiha_test). Production deployment remains outstanding.
 
 ## Current milestone / status
 
-**Waterfall FFT: complete and verified.**
-Explicit user request takes priority over independent Phase 11b. Match the
-attached 2D heatmap: X frequency, Y elapsed time, magnitude in color. User
-clarified the PowerPoint is a style reference only. Entering Waterfall defaults
-to one active-test/variable map; selected-source comparison is opt-in. The two
-synthetic source maps shown during QA were isolated fixtures, never user data.
-Ordinary FFT/Welch stays available. See docs/WATERFALL_FFT.md and
-docs/WATERFALL_VERIFICATION.md.
+**Linux source-catalog failure and initial ready count: implemented and verified
+locally.** Explicit user bug report takes priority over Phase 11b. Screenshot:
+`/ptt/api/analysis-sources` 500, zero ready tests until opening Uploads (then 19),
+and Trash unavailable. See `docs/LINUX_CATALOG_FIX.md` for diagnosis, acceptance,
+commands and evidence. Actual Linux confirmation is still required.
 
 ## Implemented / decisions
 
-- `backend/app/waterfall.py`: full-resolution stored data, exact saved TP or
-  existing Full interval resolver. Mean-centered complete periodic-Hann FFT
-  windows, peak-amplitude normalization, no padding/order tracking/time filters.
-  Default L=1024/50% overlap; L=64..16384 and 0/25/50/75% overlap. Known gaps
-  reject; isolated missing values interpolate by index with counts disclosed.
-- Every window calculated in batches <=64. Grid <=256 time x 512 frequency
-  cells retains maxima over explicit edges, with nominal elapsed centers and
-  actual source center timestamps. No silent window changes or native-bin CSV
-  claims. Same 8M-source-sample limit as Spectrum.
-- `WaterfallPlot.tsx`/CSS: per-source facets, shared per-variable linear/log10
-  scale, hover, linked two-axis zoom, wheel/Shift/Alt gestures, keyboard Home,
-  maximize/restore, context menu, analysis details. Container-relative chart
-  heights support desktop zoom. Failed sources remain explicit; stale/partial
-  exports are blocked. Abort suppresses late client responses.
-- Estimator selector adds Waterfall FFT. Window/overlap/mode/viewport session
-  persistence and file validation are additive and compatible with old sessions.
-  Existing Per rev state is preserved when switching, but waterfall uses Hz.
-- `waterfall_export.py` reuses locked staging/progress/cancellation and metadata
-  sidecars for single/multi grid CSV and PNG. CSV uses current stored values,
-  linear magnitudes and intersecting cell bounds; PNG uses loaded values.
-  All sources in a slot are captured; selected layouts support 2x2/3x3.
+- Deployment guide uses Linux Python 3.11, but ten backend checks required
+  `Path.is_junction` from 3.12. Uncaught AttributeError reproduces the reported
+  populated-catalog/Trash failure while `/tests` succeeds.
+- New `backend/app/paths.py` checks lstat symlinks and Windows junction reparse
+  tags across supported runtimes. Analysis sources, component statistics,
+  deletion and Trash use it; containment and permission/I/O failures retained.
+- App's initial Promise.all discarded successful `/tests` on catalog failure.
+  It now publishes the list independently and awaits both outcomes for safe
+  session recovery. Header distinguishes loading/unavailable/ready counts.
+  Explicit source-verification error/Retry retains the workspace; metadata
+  hydration/autosave wait for identity verification. No name-only fallback.
+- `deployment_guide.md` now probes source/Trash catalogs as well as health and
+  documents this exact 3.11 traceback/remediation. CLAUDE.md clarifies Windows
+  3.13 versus Linux 3.11 and the shared portable check.
 
 ## Verification
 
-- Final full backend: **447 passed, 360 subtests**; includes 11 new waterfall
-  tests. Frontend build/lint and all 13 helper tests pass. Existing dependency
-  deprecations and bundle-size notice only.
-- Native waterfall suite passes: two sources, numerical exports/metadata,
-  linked X/Y zoom, pan, reset, maximize/reload, options persistence, failure/
-  Retry/held late responses, nine-slot CSV, selected2x2 PNG, Full interval,
-  1100px and actual125%/150% zoom, no page errors; 14 source files unchanged.
-  Final container-relative sizing and the corrected single-active-test default
-  also pass. Final screenshots visually checked.
-- Old Spectrum export script uses obsolete pre-compact-header Export button.
-  Current compact-controls/menu regression suite passes completely: eight real
-  Time/Full/Spectrum/XY CSV/PNG downloads, exact API replay, keyboard, nine slots,
-  resize/maximize/125%/150%, no page errors, 21 source files unchanged. Its old
-  scroll-into-view element handle raced canvas replacement; the verification
-  script now uses locator hover (automatic re-resolution) before right-click.
-- Dedicated prolonged waterfall Cancel browser case not exercised; shared
-  cancellation is retained with batched calculation checkpoints.
+- Four new populated API regressions reproduced 500s before the fix. Final full
+  backend: **453 passed, 370 subtests** (Windows Python 3.13.14, 45.46s).
+  Six new tests cover missing 3.12 API, guarded reads, ready/busy sources,
+  component use, legacy Trash/lifecycle/sample preservation and link/I/O guards.
+  Command: `backend\.venv\Scripts\python.exe -m pytest backend/tests -q -p no:cacheprovider`.
+  Cache disabled only because existing ignored `.pytest_cache` is inaccessible.
+  Two existing dependency deprecations.
+- Frontend `npm.cmd run build` and `npm.cmd run lint` pass (bundle notice only).
+- `python scripts/verify_session_recovery.py --frontend-port 3144 --backend-port 8144`
+  passes using global Python/Playwright and owned backend Python 3.13. Held/500
+  catalog publishes count before Uploads, avoids unverified metadata reads,
+  preserves sessions, and Retry works; failed list shows unavailable. Existing
+  lifecycle/identity/legacy/busy/order/filter/keyboard/maximize/1100px/125%/150%
+  checks pass. Zero page errors; only injected 500/503 console errors.
+  Eleven beta fixture files unchanged, screenshot inspected. Owned servers and
+  fixtures cleaned; ignored evidence in `data/verification/session-recovery/`.
+- Independent backend review and final whitespace review pass. No production
+  dataset modifications. Python 3.11 method absence is simulated on 3.13;
+  production Python version/traceback was requested but not supplied.
 
 ## Next steps
 
-No work remains for this feature milestone. TODO and verification notes are
-complete; diff/whitespace review passes. No production sample data was edited.
-The commit-only follow-up reuses the passing checks above; implementation has
-not changed since verification. All owned browser/server processes and fixtures
-are cleaned up. Next backlog milestone remains Phase 11b collapsible
-variable/filter side panel. Preserve prior completed multi-variable auto-split,
-Split multi-plots, XY time axes and their verification documents.
+The commit/push follow-up reuses the passing verification above; implementation
+has not changed since those checks. Deploy the fix through the normal workflow:
+update backend + frontend, restart `ptt-backend`, hard-refresh, verify direct and
+proxied analysis-source/Trash endpoints and initial ready count on `heliweb1`.
+The code-level cause is reproduced but is not yet confirmed against server logs.
+No test re-upload or Python upgrade is needed for this compatibility fix.
+
+Next feature backlog stays Phase 11b collapsible variable/filter side panel.
+Prior waterfall/multi-variable auto-split/Split multi-plots/XY time behavior is
+complete; preserve their existing verification documents.

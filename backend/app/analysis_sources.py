@@ -13,6 +13,7 @@ from fastapi import HTTPException
 
 from . import store
 from .locks import catalog_write, test_write
+from .paths import is_link_or_junction
 
 IDENTITY_FILE = 'source_identity.json'
 
@@ -24,7 +25,7 @@ def _hash(value) -> str:
 
 def read_identity(directory: Path) -> str | None:
     path = directory / IDENTITY_FILE
-    if path.is_symlink() or path.is_junction():
+    if is_link_or_junction(path):
         raise ValueError('Dataset identity is a link; automatic recovery is unavailable.')
     try:
         doc = json.loads(path.read_text(encoding='utf-8'))
@@ -41,7 +42,7 @@ def _snapshot(directory: Path, status: str) -> dict:
         return {'id': identity}
     for relative in ('meta.json', 'testpoints.json'):
         path = directory / relative
-        if path.is_symlink() or path.is_junction():
+        if is_link_or_junction(path):
             raise ValueError('Source metadata is a link; automatic recovery is unavailable.')
     meta = store.get_meta(directory.name)
     if not isinstance(meta, dict):
@@ -50,7 +51,7 @@ def _snapshot(directory: Path, status: str) -> dict:
         identity = str(uuid4())
         store.write_json_atomic(directory / IDENTITY_FILE, {'version': 1, 'id': identity})
     data = directory / 'data.parquet'
-    if data.is_symlink() or data.is_junction():
+    if is_link_or_junction(data):
         raise ValueError('Sample data is a link; automatic recovery is unavailable.')
     stat = data.stat()
     # Names, notes, components and derived caches do not change sample identity.
@@ -88,7 +89,7 @@ def catalog() -> dict:
             entry = {'name': name, 'status': info['status']}
             directory = store.TESTS_DIR / name
             try:
-                if directory.is_symlink() or directory.is_junction() or directory.resolve().parent != root:
+                if is_link_or_junction(directory) or directory.resolve().parent != root:
                     raise ValueError('Test directory is a link; automatic recovery is unavailable.')
                 # Busy ingestion may hold its writer for minutes. Do not queue
                 # a migration behind it. Existing identity alone is enough to

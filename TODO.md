@@ -2,6 +2,12 @@
 
 Open items below are listed in recommended implementation order. Complete each phase before moving to the next, except for independent small fixes.
 
+## Linux deployment regression (2026-09-11)
+
+- [x] Fix the analysis-source/Trash API failures on the Linux Python 3.11 baseline and the ready-test count that only appears after opening Uploads.
+
+User-reported regression handled ahead of independent Phase 11b. Portable link checks preserve symlink/junction safeguards across analysis sources, Trash and component statistics. The initial test list/count now loads independently of source verification; unavailable/loading states and retry preserve saved identities. All 453 backend tests/370 subtests, frontend build/lint and the extended isolated session-recovery browser suite pass. Actual Linux production confirmation/deployment remains outstanding; tests simulate the absent Python 3.12 API on the required Windows 3.13 runtime. See [diagnosis and verification](docs/LINUX_CATALOG_FIX.md).
+
 ## 1. Fix current UI and plot issues
 
 Fix existing rendering problems before adding plot interactions and exports.

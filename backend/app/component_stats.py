@@ -18,6 +18,7 @@ from fastapi import HTTPException
 
 from . import analysis_sources, components, store
 from .locks import catalog_read, data_read
+from .paths import is_link_or_junction
 
 METHOD = 'component-usage-v1'
 BATCH_SIZE = 65536
@@ -152,7 +153,7 @@ def _calculate(path, meta):
 
 def _summary(directory, meta):
     path = directory / 'data.parquet'
-    if path.is_symlink() or path.is_junction():
+    if is_link_or_junction(path):
         raise ValueError('Sample data is a link; component use is unavailable.')
     stat = path.stat()
     key = json.dumps([str(path.resolve()), stat.st_size, stat.st_mtime_ns,
@@ -194,13 +195,13 @@ def statistics():
                 continue
             try:
                 directory = store.TESTS_DIR / name
-                if directory.is_symlink() or directory.is_junction() or directory.resolve().parent != store.TESTS_DIR.resolve():
+                if is_link_or_junction(directory) or directory.resolve().parent != store.TESTS_DIR.resolve():
                     raise ValueError('Test directory is a link; component use is unavailable.')
                 with data_read(name):
                     if store.get_status(name).get('status') != 'ready':
                         raise ValueError('Test became busy; refresh after processing completes.')
                     metadata_path = directory / 'meta.json'
-                    if metadata_path.is_symlink() or metadata_path.is_junction():
+                    if is_link_or_junction(metadata_path):
                         raise ValueError('Test metadata is a link; component use is unavailable.')
                     meta = store.get_meta(name)
                     if not isinstance(meta, dict):

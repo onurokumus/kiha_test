@@ -34,7 +34,10 @@ Target devices and input: follow `AGENTS.md`. This application is desktop/laptop
 
 ## Critical constraints
 
-- **Python 3.13 only** (backend/.venv). Polars on Windows + Python 3.14 produced
+- **Python 3.13 only on Windows** (backend/.venv); Linux production supports
+  Python 3.11 (see `deployment_guide.md`). Use `paths.is_link_or_junction` for
+  portable link checks; `Path.is_junction` requires 3.12 and broke populated
+  source/trash catalogs on the deployment baseline. Polars on Windows + Python 3.14 produced
   reproducible native access violations (whole-process crash). locks.py gates
   concurrent native reads to 1 on win32+py>=3.14; on 3.13 it allows 4. The gate
   is version-derived — run_backend.bat deliberately does NOT set
