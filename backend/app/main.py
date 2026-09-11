@@ -28,7 +28,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from . import dsp, edit, export_progress, formula, image_export, plot_export, recipes, spectrum_export, split, store, uploads, xy_export
+from . import dsp, edit, export_progress, formula, image_export, plot_export, recipes, spectrum_export, split, store, uploads, waterfall_export, xy_export
 from .config import (CORS_ORIGINS, DATA_DIR, POINT_BUDGET_CAP, TESTS_DIR,
                      TRASH_DIR, TRASH_MAX_AGE_S)
 from .locks import (catalog_read, catalog_write, data_read, drop_test_lock,
@@ -119,6 +119,7 @@ app.add_middleware(
 app.include_router(uploads.router)
 app.include_router(plot_export.router)
 app.include_router(spectrum_export.router)
+app.include_router(waterfall_export.router)
 app.include_router(xy_export.router)
 app.include_router(image_export.router)
 app.include_router(export_progress.router)
@@ -193,7 +194,7 @@ class AppSettingsDefaults(BaseModel):
     xyXCols: list[str] = Field(
         default_factory=lambda: [""] * 9, min_length=9, max_length=9)
     defaultViewMode: Literal["tp", "full", "spectrum", "xy"] = "tp"
-    specMode: Literal["fft", "welch"] = "fft"
+    specMode: Literal["fft", "welch", "waterfall"] = "fft"
     specLogY: bool = False
     clustering: bool = True
     uploadFsHz: str = Field(default="", max_length=64)
@@ -942,6 +943,22 @@ def api_spectrum(name: str, col: str = Query(...),
         raise HTTPException(404, f"test point {tp_id} not found")
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@app.get("/api/tests/{name}/waterfall")
+@with_test_read
+def api_waterfall(name: str, col: str = Query(...),
+                  t0: float | None = None, t1: float | None = None,
+                  tp_id: int | None = None, nperseg: int = 1024, overlap: int = 50):
+    from .waterfall import calculate
+    try:
+        return calculate(name, col, t0, t1, tp_id=tp_id, nperseg=nperseg, overlap=overlap)
+    except FileNotFoundError:
+        raise HTTPException(404, f"test '{name}' not found")
+    except KeyError:
+        raise HTTPException(404, f"test point {tp_id} not found")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 
 # ---------- split ----------

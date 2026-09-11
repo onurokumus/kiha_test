@@ -287,7 +287,7 @@ export function capturePlotPng(plot: uPlot, options: PlotPngContent): PlotPngCap
   };
 }
 
-async function encodeAndDownload(canvas: HTMLCanvasElement, filename: string, signal?: AbortSignal, metadata?: Record<string, unknown>) {
+export async function encodeAndDownload(canvas: HTMLCanvasElement, filename: string, signal?: AbortSignal, metadata?: Record<string, unknown>) {
   reportExport(signal, { stage: 'Encoding PNG' });
   await yieldExport(signal);
   const blob = await new Promise<Blob>((resolve, reject) => {

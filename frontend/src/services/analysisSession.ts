@@ -37,7 +37,9 @@ export interface AnalysisSession {
   fullRange: [number, number] | null;
   viewMode: AnalysisViewMode;
   fullPlotMode: WindowDisplayMode;
-  specMode: 'fft' | 'welch';
+  waterfallWindow: number;
+  waterfallOverlap: number;
+  specMode: 'fft' | 'welch' | 'waterfall';
   specXAxis: SpectrumXAxis;
   specRpmCol: string;
   specLogY: boolean;
@@ -76,6 +78,8 @@ export const defaultAnalysisSession = (): AnalysisSession => ({
   fullRange: null,
   viewMode: 'tp',
   fullPlotMode: 'auto',
+  waterfallWindow: 1024,
+  waterfallOverlap: 50,
   specMode: 'fft',
   specXAxis: 'hz',
   specRpmCol: '',
@@ -250,11 +254,13 @@ export function normalizeAnalysisSession(value: unknown): AnalysisSession {
     fullRange: pair(value.fullRange),
     viewMode: viewMode(value.viewMode),
     fullPlotMode: windowDisplayMode(value.fullPlotMode),
-    specMode: value.specMode === 'welch' ? 'welch' : 'fft',
+    waterfallWindow: [64,128,256,512,1024,2048,4096,8192,16384].includes(Number(value.waterfallWindow)) ? Number(value.waterfallWindow) : 1024,
+    waterfallOverlap: [0,25,50,75].includes(Number(value.waterfallOverlap)) && value.waterfallOverlap != null ? Number(value.waterfallOverlap) : 50,
+    specMode: value.specMode === 'waterfall' ? 'waterfall' : value.specMode === 'welch' ? 'welch' : 'fft',
     specXAxis: value.specXAxis === 'per_rev' ? 'per_rev' : 'hz',
     specRpmCol: stringValue(value.specRpmCol),
     specLogY: !!value.specLogY,
-    specSource: source(value.specSource),
+    specSource: value.specMode === 'waterfall' && value.specSource !== 'tp' ? 'full' : source(value.specSource),
     xySource: source(value.xySource),
     plotConfigs: stringArray(value.plotConfigs, 9),
     plotsUserEdited: !!value.plotsUserEdited,

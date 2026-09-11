@@ -396,7 +396,26 @@ export interface XYExportRequest {
   x_range: [number, number] | null;
   y_range: [number, number] | null;
 }
-export type AnyPlotExportRequest = PlotExportRequest | SpectrumExportRequest | XYExportRequest;
+export interface WaterfallData {
+  col: string; tp_id: number | null; i0: number; i1: number; fs_hz: number;
+  n_samples: number; nan_count: number; time_start_s: number; time_end_s: number;
+  frequency_edges_hz: number[]; time_edges_s: number[]; magnitude: number[][];
+  source_frame_start_s: number[]; source_frame_end_s: number[];
+  method: { version: 'kiha-waterfall-v1'; nperseg: number; noverlap: number; hop_samples: number;
+    window_seconds: number; step_seconds: number; bin_spacing_hz: number; frame_count: number;
+    trailing_samples: number; [key: string]: unknown };
+  reduction: { method: 'max' | 'none'; time_factor: number; frequency_factor: number; native_frames: number; native_bins: number };
+  quality: Record<string, unknown>;
+  analysis: Record<string, unknown>;
+}
+export interface WaterfallExportRequest {
+  kind: 'waterfall'; column: string; method_version: 'kiha-waterfall-v1';
+  nperseg: number; overlap: number; include_metadata?: boolean;
+  x_range: [number, number] | null; y_range: [number, number] | null;
+  sources: { test: string; tp_id?: number; t0?: number | null; t1?: number | null;
+    expected_i0: number; expected_i1: number; expected_fs_hz: number }[];
+}
+export type AnyPlotExportRequest = PlotExportRequest | SpectrumExportRequest | XYExportRequest | WaterfallExportRequest;
 
 /** GET /api/tests/{name}/testpoints/{tp_id}/data */
 export interface TpTraceResponse {

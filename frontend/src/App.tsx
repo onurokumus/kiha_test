@@ -195,7 +195,9 @@ function App() {
   const [fullPlotMode, setFullPlotMode] = useState<WindowDisplayMode>(
     hasRestoredSession ? restoredSession.fullPlotMode : 'auto'
   );
-  const [specMode, setSpecMode] = useState<'fft' | 'welch'>(
+  const [waterfallWindow, setWaterfallWindow] = useState(restoredSession.waterfallWindow);
+  const [waterfallOverlap, setWaterfallOverlap] = useState(restoredSession.waterfallOverlap);
+  const [specMode, setSpecMode] = useState<'fft' | 'welch' | 'waterfall'>(
     hasRestoredSession ? restoredSession.specMode : settings.specMode
   );
   const [specXAxis, setSpecXAxis] = useState<SpectrumXAxis>(
@@ -209,7 +211,7 @@ function App() {
   );
   // Spectrum/XY data source: selected test points, or the active test
   const [specSource, setSpecSource] = useState<'tp' | 'full'>(
-    hasRestoredSession ? restoredSession.specSource : 'tp'
+    hasRestoredSession ? restoredSession.specSource : settings.specMode === 'waterfall' ? 'full' : 'tp'
   );
   // Per-plot DSP filters (TP + Full test modes), optionally overlaid on originals
   // while active. Each grid
@@ -858,7 +860,10 @@ function App() {
         setXYXCols([]);
       }
       if (next.defaultViewMode !== prev.defaultViewMode) setViewMode(next.defaultViewMode);
-      if (next.specMode !== prev.specMode) setSpecMode(next.specMode);
+      if (next.specMode !== prev.specMode) {
+        setSpecMode(next.specMode);
+        if (next.specMode === 'waterfall') setSpecSource('full');
+      }
       if (next.specLogY !== prev.specLogY) setSpecLogY(next.specLogY);
       if (next.clustering !== prev.clustering) setClusteringEnabled(next.clustering);
       if (next.datasheetZone !== prev.datasheetZone) {
@@ -1582,6 +1587,8 @@ function App() {
     setAnnotationsVisible(session.annotationsVisible);
     setViewMode(session.viewMode);
     setFullPlotMode(session.fullPlotMode);
+    setWaterfallWindow(session.waterfallWindow);
+    setWaterfallOverlap(session.waterfallOverlap);
     setSpecMode(session.specMode);
     setSpecXAxis(session.specXAxis);
     setSpecRpmCol(session.specRpmCol);
@@ -1683,6 +1690,7 @@ function App() {
       fullRange,
       viewMode,
       fullPlotMode,
+      waterfallWindow, waterfallOverlap,
       specMode,
       specXAxis,
       specRpmCol,
@@ -2259,8 +2267,15 @@ function App() {
               onToggleEditMode={() => setIsEditMode(!isEditMode)}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
+              waterfallWindow={waterfallWindow}
+              waterfallOverlap={waterfallOverlap}
               specMode={specMode}
-              onSpecModeChange={setSpecMode}
+              onWaterfallWindowChange={setWaterfallWindow}
+              onWaterfallOverlapChange={setWaterfallOverlap}
+              onSpecModeChange={(mode) => {
+                setSpecMode(mode);
+                if (mode === 'waterfall') setSpecSource('full');
+              }}
               specXAxis={specXAxis}
               onSpecXAxisChange={setSpecXAxis}
               specRpmCol={specRpmCol}
@@ -2301,6 +2316,8 @@ function App() {
               timeZoomResetVersion={timeZoomResetVersion}
               onTimeYRangeChange={handleTimeYRangeChange}
               fullPlotMode={fullPlotMode}
+              waterfallWindow={waterfallWindow}
+              waterfallOverlap={waterfallOverlap}
               specMode={specMode}
               specXAxis={specXAxis}
               specRpmCol={specRpmCol}

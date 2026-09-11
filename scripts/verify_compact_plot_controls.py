@@ -75,7 +75,10 @@ def run_checks(web, api, dataset, temporary, output):
             target.locator('.uplot').wait_for()
             before_axes = axes(target)
             if method == 'right':
-                over = target.locator('.u-over'); over.scroll_into_view_if_needed()
+                # Locator hover retries if ResizeObserver replaces a canvas.
+                # scroll_into_view_if_needed holds one element handle and can
+                # fail during the existing plot rebuild after browser zoom.
+                over = target.locator('.u-over'); over.hover()
                 rect = over.bounding_box()
                 page.mouse.click(rect['x'] + rect['width'] * fraction, rect['y'] + rect['height'] * .5, button='right')
             elif method == 'key':

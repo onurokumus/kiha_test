@@ -15,7 +15,7 @@ interface Props {
   defaultColumns: 2 | 3;
   disabledReason: string | null;
   title: string;
-  kind?: 'time' | 'spectrum' | 'xy';
+  kind?: 'time' | 'spectrum' | 'xy' | 'waterfall';
 }
 const csvReason = (handle: PlotExportHandle, data: PlotExportData) => data === 'original'
   ? handle.originalReason : data === 'filtered' ? handle.filteredReason
@@ -23,7 +23,7 @@ const csvReason = (handle: PlotExportHandle, data: PlotExportData) => data === '
 const choices = [['original', 'Original'], ['filtered', 'Filtered'], ['both', 'Original and filtered']] as const;
 
 export function MultiPlotExportControls({ registry, contextKey, defaultColumns, disabledReason, title, kind = 'time' }: Props) {
-  const fixedChoice = kind === 'spectrum' ? 'Native spectral bins' : kind === 'xy' ? 'Original finite pairs' : null;
+  const fixedChoice = kind === 'waterfall' ? 'Waterfall grid magnitudes' : kind === 'spectrum' ? 'Native spectral bins' : kind === 'xy' ? 'Original finite pairs' : null;
   const plots = useSyncExternalStore(registry.subscribe, registry.getSnapshot);
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
@@ -152,7 +152,8 @@ export function MultiPlotExportControls({ registry, contextKey, defaultColumns, 
           </>}
         </div>)}
       </fieldset>
-      <p>{kind === 'xy' ? 'CSV ZIP contains one full-resolution paired-data CSV per plot. Only finite X/Y pairs are included, in original sample order, without interpolation or temporary filters. Default views include every pair; zoom and pan crop both axes. Each source keeps its own sample/time identifiers.'
+      <p>{kind === 'waterfall' ? 'CSV ZIP contains one waterfall grid per selected plot. Each row records linear magnitude and the explicit time/frequency bounds of a cell intersecting the viewport. Aggregated cells contain maxima across windows and bins. Source and FFT settings are included; log color does not transform CSV values.'
+        : kind === 'xy' ? 'CSV ZIP contains one full-resolution paired-data CSV per plot. Only finite X/Y pairs are included, in original sample order, without interpolation or temporary filters. Default views include every pair; zoom and pan crop both axes. Each source keeps its own sample/time identifiers.'
         : kind === 'spectrum' ? 'CSV ZIP contains one native-bin CSV per selected plot. Independent source grids retain Hz, linear values and method details. Frequency zoom crops bin centers after estimation; order maps X using each source’s mean RPM. Log Y never transforms CSV values.'
         : 'CSV ZIP contains one full-resolution CSV per selected plot. Unzoomed plots use complete source rows; X zoom crops sample centers after filtering. Y zoom does not remove rows. Original means stored data, including prior edits.'}</p>
       <button type="button" className={base.action} disabled={!!busy || !!csvBlocked}

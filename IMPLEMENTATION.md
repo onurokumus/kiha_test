@@ -1,91 +1,72 @@
 # Implementation handoff
 
-Updated: 2026-09-11. Branch `feature/resumable-multipart-upload`; inherited
-baseline `873c80c`. This checkpoint collects the completed analysis, export,
-metadata, session, component, plot and auto-split work for the user-requested
-commit/push to `origin` (github.com/onurokumus/kiha_test). Generated `dummy_data/`
-datasets remain local and are now ignored, consistent with `data/`.
+Updated: 2026-09-11. Branch `feature/resumable-multipart-upload`; baseline
+`db95fcd`. Initial working tree was clean. This checkpoint contains the completed
+waterfall FFT milestone for the user-requested commit/push to `origin`
+(github.com/onurokumus/kiha_test). Generated evidence stays in ignored
+`data/verification/waterfall/`.
 
 ## Current milestone / status
 
-**User-requested multi-variable auto-split: complete and verified.**
-This explicit request took priority over the independent Phase 11b redesign.
-
-The implemented mode extends the original constant-value method: changing any
-selected variable starts a new run. The optional question about numeric
-conditions was unanswered; the existing-method assumption was stated before
-implementation. No threshold, tolerance or steady-state detection is implied.
-
-Acceptance passed: 1-9 distinct variables, clear zero/missing/minimum semantics,
-read-only preview before Apply, explicit replacement of the unsaved draft,
-normal Save/export, stale-request/draft guards, keyboard and desktop zoom,
-and exact native row preservation through unchanged boundaries.
+**Waterfall FFT: complete and verified.**
+Explicit user request takes priority over independent Phase 11b. Match the
+attached 2D heatmap: X frequency, Y elapsed time, magnitude in color. User
+clarified the PowerPoint is a style reference only. Entering Waterfall defaults
+to one active-test/variable map; selected-source comparison is opt-in. The two
+synthetic source maps shown during QA were isolated fixtures, never user data.
+Ordinary FFT/Welch stays available. See docs/WATERFALL_FFT.md and
+docs/WATERFALL_VERIFICATION.md.
 
 ## Implemented / decisions
 
-- New POST /api/tests/{name}/split/preview accepts structured JSON
-  {columns,ignore_zero,min_len_s}; legacy single-variable /split/auto remains.
-  Reads projected full-resolution source columns under existing native read
-  locks, with busy checks. Any exact value change starts a contiguous tuple run;
-  missing/nonfinite in any selected column breaks/excludes the row. Optional
-  zero exclusion applies to any selected variable, after missing exclusion.
-- Duration is native row count / fs_hz, independent of timestamp quantization.
-  Source start/end timestamps and half-open native indices remain precise.
-  Returns test_points, executed options, fs_hz, sample_count and disjoint
-  missing/zero sample counts plus short-run count. Rejects >1000 points rather
-  than silently truncating. Validates columns, minimum, sample rate and clocks.
-- Inline AutoSplitPanel opens on demand from the compact toolbar. Searchable
-  unique variable rows allow all numeric signals with sampled ID recommendations;
-  minimum duration and exclusions are explicit. Per-test browser preferences
-  retain rules. Preview table paginates at 50 rows and shows criterion-consistent
-  durations. Use N test points stages the reviewed result; Save persists it.
-- Rule/draft/source/loading changes and Close abort/invalidate preview results.
-  Empty/error proposals cannot apply. Candidate discovery failure leaves manual
-  variable selection usable, with Retry. No pre-preview replacement dialog.
-- indexTestPoints preserves valid native boundary indices. patchTestPoint clears
-  only the index of a time-edited edge; other edits leave native rows intact.
-  Draft comparison includes native indices, and saved/draft CSV use the same rows.
-
-## Entry points
-
-- backend/app/split.py, split endpoints in main.py, backend/tests/test_split.py.
-- frontend/src/components/split/AutoSplitPanel.{tsx,module.css}, SplitView.tsx.
-- frontend/src/services/api.ts, types/index.ts, utils/testPointExport.ts,
-  frontend/tests/testPointExport.test.mjs.
-- scripts/verify_multi_variable_autosplit.py;
-  docs/MULTI_VARIABLE_AUTOSPLIT_VERIFICATION.md.
+- `backend/app/waterfall.py`: full-resolution stored data, exact saved TP or
+  existing Full interval resolver. Mean-centered complete periodic-Hann FFT
+  windows, peak-amplitude normalization, no padding/order tracking/time filters.
+  Default L=1024/50% overlap; L=64..16384 and 0/25/50/75% overlap. Known gaps
+  reject; isolated missing values interpolate by index with counts disclosed.
+- Every window calculated in batches <=64. Grid <=256 time x 512 frequency
+  cells retains maxima over explicit edges, with nominal elapsed centers and
+  actual source center timestamps. No silent window changes or native-bin CSV
+  claims. Same 8M-source-sample limit as Spectrum.
+- `WaterfallPlot.tsx`/CSS: per-source facets, shared per-variable linear/log10
+  scale, hover, linked two-axis zoom, wheel/Shift/Alt gestures, keyboard Home,
+  maximize/restore, context menu, analysis details. Container-relative chart
+  heights support desktop zoom. Failed sources remain explicit; stale/partial
+  exports are blocked. Abort suppresses late client responses.
+- Estimator selector adds Waterfall FFT. Window/overlap/mode/viewport session
+  persistence and file validation are additive and compatible with old sessions.
+  Existing Per rev state is preserved when switching, but waterfall uses Hz.
+- `waterfall_export.py` reuses locked staging/progress/cancellation and metadata
+  sidecars for single/multi grid CSV and PNG. CSV uses current stored values,
+  linear magnitudes and intersecting cell bounds; PNG uses loaded values.
+  All sources in a slot are captured; selected layouts support 2x2/3x3.
 
 ## Verification
 
-- Commit checkpoint rerun (2026-09-11): 436 backend tests and 13 frontend
-  helper tests pass; frontend build/lint and staged whitespace checks pass.
-  Browser evidence below is from milestone verification, not rerun for this
-  commit-only request. Existing dependency/bundle-size warnings remain.
-- Final backend Python 3.13 pytest: **436 passed, 354 subtests**. Two existing
-  dependency deprecations. Frontend build/lint pass; existing bundle-size notice.
-- 13 Node/TypeScript helper tests pass, including three native-index regressions.
-- New native Chromium suite on 3340/8340: six groups, 16 preview requests, zero unexpected
-  errors. Exact tuple/exclusion counts, read-only Preview/Apply, draft invalidation,
-  Save/CSV parity, held late responses after rule change/Close, candidate failure/
-  Retry, different schemas, keyboard, 1100px and actual 125%/150% zoom pass.
-- Ten source files remain byte-identical. Screenshots visually reviewed; fixture,
-  profile and owned-server cleanup completed. Existing Split exports on 3110/8110 and
-  multi-plots on 3320/8320 pass against final changes. Independent review and scoped
-  diff checks pass. No production regression found in final browser checks.
+- Final full backend: **447 passed, 360 subtests**; includes 11 new waterfall
+  tests. Frontend build/lint and all 13 helper tests pass. Existing dependency
+  deprecations and bundle-size notice only.
+- Native waterfall suite passes: two sources, numerical exports/metadata,
+  linked X/Y zoom, pan, reset, maximize/reload, options persistence, failure/
+  Retry/held late responses, nine-slot CSV, selected2x2 PNG, Full interval,
+  1100px and actual125%/150% zoom, no page errors; 14 source files unchanged.
+  Final container-relative sizing and the corrected single-active-test default
+  also pass. Final screenshots visually checked.
+- Old Spectrum export script uses obsolete pre-compact-header Export button.
+  Current compact-controls/menu regression suite passes completely: eight real
+  Time/Full/Spectrum/XY CSV/PNG downloads, exact API replay, keyboard, nine slots,
+  resize/maximize/125%/150%, no page errors, 21 source files unchanged. Its old
+  scroll-into-view element handle raced canvas replacement; the verification
+  script now uses locator hover (automatic re-resolution) before right-click.
+- Dedicated prolonged waterfall Cancel browser case not exercised; shared
+  cancellation is retained with batched calculation checkpoints.
 
-## Continuity / next steps
+## Next steps
 
-No work remains for this milestone. Next backlog item: Phase 11b collapsible
-variable/filter side panel. Numeric condition-based auto-split is a separate
-potential follow-up if requested.
-
-Earlier Split multi-plots and XY time-axis work are both complete. The old
-handoff's pending-Split statement was stale and is corrected. Preserve their
-implementation and evidence in docs/SPLIT_MULTI_PLOTS_VERIFICATION.md and
-XY_TIME_VERIFICATION.md, along with the other completed work in this checkpoint.
-
-Preserve desktop-only scope, Python 3.13, atomic writes/read locks, original
-samples and retention. Preview cancellation suppresses stale client results;
-an in-flight native backend read may finish. Existing unrelated limits: cold
-Windows TP-statistics cache race; comma-containing Time/Split display columns;
-six-decimal Time preview values. Structured auto-split JSON avoids comma parsing.
+No work remains for this feature milestone. TODO and verification notes are
+complete; diff/whitespace review passes. No production sample data was edited.
+The commit-only follow-up reuses the passing checks above; implementation has
+not changed since verification. All owned browser/server processes and fixtures
+are cleaned up. Next backlog milestone remains Phase 11b collapsible
+variable/filter side panel. Preserve prior completed multi-variable auto-split,
+Split multi-plots, XY time axes and their verification documents.

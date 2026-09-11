@@ -65,7 +65,9 @@ export function parseSessionFile(text: string): SessionFile {
   const enums: Record<string, unknown[]> = {
     viewMode: ['tp', 'full', 'spectrum', 'xy'],
     fullPlotMode: ['auto', 'line', 'envelope'],
-    specMode: ['fft', 'welch'],
+    specMode: ['fft', 'welch', 'waterfall'],
+    waterfallWindow: [64,128,256,512,1024,2048,4096,8192,16384],
+    waterfallOverlap: [0,25,50,75],
     specXAxis: ['hz', 'per_rev'],
     specSource: ['tp', 'full'],
     xySource: ['tp', 'full'],

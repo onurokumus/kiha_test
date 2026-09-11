@@ -30,7 +30,7 @@ export interface AppSettings {
   xyXCols: string[];
   /** Right-panel view mode on load. */
   defaultViewMode: 'tp' | 'full' | 'spectrum' | 'xy';
-  specMode: 'fft' | 'welch';
+  specMode: 'fft' | 'welch' | 'waterfall';
   specLogY: boolean;
   /** Scatter overlap-clustering on load. */
   clustering: boolean;
@@ -92,7 +92,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
     )
       ? (p.defaultViewMode as AppSettings['defaultViewMode'])
       : DEFAULT_SETTINGS.defaultViewMode,
-    specMode: p.specMode === 'welch' ? 'welch' : 'fft',
+    specMode: p.specMode === 'waterfall' ? 'waterfall' : p.specMode === 'welch' ? 'welch' : 'fft',
     specLogY: !!p.specLogY,
     clustering: p.clustering === undefined ? DEFAULT_SETTINGS.clustering : !!p.clustering,
     uploadFsHz: str(p.uploadFsHz),

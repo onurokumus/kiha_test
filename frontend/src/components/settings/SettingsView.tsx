@@ -478,10 +478,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 className="input"
                 style={{ width: 180 }}
                 value={view.specMode}
-                onChange={(e) => edit({ specMode: e.target.value as 'fft' | 'welch' })}
+                onChange={(e) => edit({ specMode: e.target.value as 'fft' | 'welch' | 'waterfall' })}
               >
                 <option value="fft">FFT magnitude</option>
                 <option value="welch">Welch PSD</option>
+                  <option value="waterfall">Waterfall FFT</option>
               </select>
             </Row>
             <Row label="Spectrum log Y">

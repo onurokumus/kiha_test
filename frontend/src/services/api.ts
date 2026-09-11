@@ -384,6 +384,14 @@ export function fetchTrash(signal?: AbortSignal): Promise<{ entries: TrashEntry[
   return getJson('/trash', signal);
 }
 
+export async function fetchWaterfall(name: string, col: string, nperseg: number, overlap: number,
+  range: [number, number] | null, tpId: number | undefined, signal: AbortSignal): Promise<import('../types').WaterfallData> {
+  const params = new URLSearchParams({ col, nperseg: String(nperseg), overlap: String(overlap) });
+  if (tpId !== undefined) params.set('tp_id', String(tpId));
+  else if (range) { params.set('t0', String(range[0])); params.set('t1', String(range[1])); }
+  return getJson(`/tests/${encodeURIComponent(name)}/waterfall?${params}`, signal);
+}
+
 export function restoreTrash(id: string, name: string): Promise<{ ok: boolean; restored: string }> {
   return sendJson(`/trash/${encodeURIComponent(id)}/restore`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
@@ -434,7 +442,7 @@ export async function fetchXY(
 /** Full-resolution single-plot export. The backend stages all sources before
  * responding; buffer the complete response before offering a browser file. */
 export async function fetchPlotCsv(request: AnyPlotExportRequest, signal: AbortSignal): Promise<{ blob: Blob; filename: string }> {
-  const description = 'kind' in request ? request.kind === 'spectrum' ? `${request.mode}_${request.axis}` : `vs_${request.x_column}_xy` : request.data;
+  const description = 'kind' in request ? request.kind === 'waterfall' ? 'waterfall-grid' : request.kind === 'spectrum' ? `${request.mode}_${request.axis}` : `vs_${request.x_column}_xy` : request.data;
   return fetchPlotExportFile(exportPath(request), serializePlotRequest(request), request.include_metadata ? 'application/zip' : 'text/csv',
     `${request.sources.length === 1 ? request.sources[0].test : 'multiple-sources'}_${request.column}_${description}.${request.include_metadata ? 'zip' : 'csv'}`, signal);
 }
@@ -448,7 +456,7 @@ export async function fetchPlotCsvBundle(request: PlotExportBundleRequest, signa
 }
 
 function exportPath(request: AnyPlotExportRequest) {
-  return 'kind' in request ? request.kind === 'xy' ? '/xy-export' : '/spectrum-export' : '/plot-export';
+  return 'kind' in request ? request.kind === 'waterfall' ? '/waterfall-export' : request.kind === 'xy' ? '/xy-export' : '/spectrum-export' : '/plot-export';
 }
 
 function serializePlotRequest(request: AnyPlotExportRequest) {

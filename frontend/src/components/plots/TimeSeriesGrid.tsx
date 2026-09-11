@@ -12,6 +12,7 @@ import {
 import { DEFAULT_FILTER_UI, FilterUi } from '../../constants/filters';
 import { TimePlot } from './TimePlot';
 import { FullTestPlot } from './FullTestPlot';
+import { WaterfallPlot } from './WaterfallPlot';
 import { SpectrumPlot } from './SpectrumPlot';
 import { XYPlot } from './XYPlot';
 import { AxisRange } from '../../utils/timePlotRanges';
@@ -50,7 +51,9 @@ interface TimeSeriesGridProps {
   timeZoomResetVersion: number;
   onTimeYRangeChange: (index: number, range: AxisRange | null) => void;
   fullPlotMode: WindowDisplayMode;
-  specMode: 'fft' | 'welch';
+  waterfallWindow: number;
+  waterfallOverlap: number;
+  specMode: 'fft' | 'welch' | 'waterfall';
   specXAxis: SpectrumXAxis;
   specRpmCol: string;
   specLogY: boolean;
@@ -101,6 +104,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   timeZoomResetVersion,
   onTimeYRangeChange,
   fullPlotMode,
+  waterfallWindow, waterfallOverlap,
   specMode,
   specXAxis,
   specRpmCol,
@@ -224,8 +228,8 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
             onChange={(event) => onAnnotationsVisibleChange(event.target.checked)} /> Show time notes
         </label>}
         <MultiPlotExportControls registry={exportRegistry}
-          contextKey={JSON.stringify([viewMode, test, density, expandedPlot, visibleSelectionFingerprint, plotConfigs, plotFilterSpecs, plotShowOriginal, fullPlotMode, timeZoom, specSource, specMode, specXAxis, specRpmCol, specLogY, xySource, xyXCols, xyYCols])}
-          kind={viewMode === 'spectrum' || viewMode === 'xy' ? viewMode : 'time'}
+          contextKey={JSON.stringify([viewMode, test, density, expandedPlot, visibleSelectionFingerprint, plotConfigs, plotFilterSpecs, plotShowOriginal, fullPlotMode, timeZoom, waterfallWindow, waterfallOverlap, specSource, specMode, specXAxis, specRpmCol, specLogY, xySource, xyXCols, xyYCols])}
+          kind={viewMode === 'spectrum' && specMode === 'waterfall' ? 'waterfall' : viewMode === 'spectrum' || viewMode === 'xy' ? viewMode : 'time'}
           defaultColumns={density === 'nine' ? 3 : 2}
           disabledReason={expandedPlot !== null ? 'Restore the grid to export multiple plots.' : null}
           title={viewMode === 'xy' ? 'XY plots' : viewMode === 'spectrum' ? `Spectrum · ${specMode.toUpperCase()}` : viewMode === 'tp' ? 'Test points' : `Full test · ${test}`} />
@@ -260,10 +264,11 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
           const viewportProps = (kind: 'spectrum' | 'xy') => {
             const source = kind === 'spectrum' ? specSource : xySource;
             const context = JSON.stringify([kind, displayedY,
-              kind === 'spectrum' ? [specMode, specXAxis, specRpmCol] : xyXCols[idx], source,
+              kind === 'spectrum' ? specMode === 'waterfall' ? [specMode, waterfallWindow, waterfallOverlap] : [specMode, specXAxis, specRpmCol] : xyXCols[idx], source,
               source === 'full' ? [sourceToken(test), timeZoom] : selectedTPs
                 .filter(point => !hiddenTPs.has(point.id))
-                .map(point => [sourceToken(point.test), point.tpId, point.tp.start_s, point.endS])
+                .map(point => [sourceToken(point.test), point.tpId, point.tp.start_s, point.endS,
+                  ...(kind === 'spectrum' && specMode === 'waterfall' ? [point.tp.start_idx, point.tp.end_idx] : [])])
                 .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))]);
             return { viewport: viewports?.[kind][idx], viewportContext: context,
               onViewportChange: (value: PlotViewport | null) => onViewportChange?.(kind, idx, value) };
@@ -326,7 +331,13 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
                   onZoomReset={onTimeZoomReset}
                 />
               )}
-              {viewMode === 'spectrum' && (
+              {viewMode === 'spectrum' && specMode === 'waterfall' && (
+                <WaterfallPlot {...shared} {...viewportProps('spectrum')} test={test} source={specSource}
+                  selectedTPs={selectedTPs} hiddenTPs={hiddenTPs} columnsByTest={columnsByTest}
+                  range={timeZoom} nperseg={waterfallWindow} overlap={waterfallOverlap} logColor={specLogY}
+                  registerExport={exportRegistry.registrations[idx]} />
+              )}
+              {viewMode === 'spectrum' && specMode !== 'waterfall' && (
                 <SpectrumPlot
                   {...viewportProps('spectrum')}
                   key={`spectrum:${cfg.key}:${specMode}:${specXAxis}:${specRpmCol}:${specSource}:${

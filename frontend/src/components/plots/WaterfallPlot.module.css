@@ -1,0 +1,13 @@
+.body { flex: 1; min-height: 0; overflow: auto; container-type: size; }
+.facets { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr)); gap: 8px; }
+.facet { min-width: 0; background: #202124; border: 1px solid #414247; border-radius: 4px; overflow: hidden; }
+.source { padding: 6px 10px 0; font-size: 11px; color: #e0e0e0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart { height: clamp(150px, calc(100cqh - 85px), 245px); min-width: 0; }
+.expanded .chart { height: clamp(180px, calc(100cqh - 85px), 550px); }
+.readout { min-height: 28px; padding: 2px 10px 5px; font-size: 10px; color: #bdc7d2; overflow-wrap: anywhere; }
+.hint { font-size: 10px; color: #aeb5bc; padding: 4px 2px; }
+.failure { padding: 12px; font-size: 12px; color: #e8bf83; }
+.dialog { color: #e0e0e0; background: #252526; border: 1px solid #555; border-radius: 8px; width: min(760px, 90vw); max-height: 85vh; overflow: auto; }
+.dialog::backdrop { background: #0009; }
+.dialog p, .dialog li { font-size: 13px; line-height: 1.5; }
+.dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }

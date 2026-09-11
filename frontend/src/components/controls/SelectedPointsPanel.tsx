@@ -30,8 +30,12 @@ interface SelectedPointsPanelProps {
   onToggleEditMode?: () => void;
   viewMode: PanelViewMode;
   onViewModeChange: (mode: PanelViewMode) => void;
-  specMode: 'fft' | 'welch';
-  onSpecModeChange: (mode: 'fft' | 'welch') => void;
+  onWaterfallWindowChange: (value: number) => void;
+  onWaterfallOverlapChange: (value: number) => void;
+  waterfallWindow: number;
+  waterfallOverlap: number;
+  specMode: 'fft' | 'welch' | 'waterfall';
+  onSpecModeChange: (mode: 'fft' | 'welch' | 'waterfall') => void;
   specXAxis: SpectrumXAxis;
   onSpecXAxisChange: (axis: SpectrumXAxis) => void;
   specRpmCol: string;
@@ -103,6 +107,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
   onToggleEditMode,
   viewMode,
   onViewModeChange,
+  waterfallWindow, waterfallOverlap, onWaterfallWindowChange, onWaterfallOverlapChange,
   specMode,
   onSpecModeChange,
   specXAxis,
@@ -292,13 +297,14 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
                 <select
                   className={styles.select}
                   value={specMode}
-                  onChange={(event) => onSpecModeChange(event.target.value as 'fft' | 'welch')}
+                  onChange={(event) => onSpecModeChange(event.target.value as 'fft' | 'welch' | 'waterfall')}
                 >
                   <option value="fft">FFT magnitude</option>
                   <option value="welch">Welch PSD</option>
+                  <option value="waterfall">Waterfall FFT</option>
                 </select>
               </label>
-              <div className={styles.contextControl}>
+              {specMode !== 'waterfall' && <div className={styles.contextControl}>
                 <span className={styles.utilityLabel}>X axis</span>
                 <div className={styles.sourceButtons} role="group" aria-label="Spectrum x-axis">
                   {([
@@ -321,8 +327,20 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
                     </button>
                   ))}
                 </div>
-              </div>
-              {specXAxis === 'per_rev' && (
+              </div>}
+              {specMode === 'waterfall' && <>
+                <label className={styles.contextControl}>Window (samples)
+                  <select className={styles.select} value={waterfallWindow} onChange={e => onWaterfallWindowChange(Number(e.target.value))}>
+                    {[64,128,256,512,1024,2048,4096,8192,16384].map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>
+                <label className={styles.contextControl}>Overlap
+                  <select className={styles.select} value={waterfallOverlap} onChange={e => onWaterfallOverlapChange(Number(e.target.value))}>
+                    {[0,25,50,75].map(n => <option key={n} value={n}>{n}%</option>)}
+                  </select>
+                </label>
+              </>}
+              {specMode !== 'waterfall' && specXAxis === 'per_rev' && (
                 <div className={styles.contextControl}>
                   <span className={styles.utilityLabel}>RPM</span>
                   <SearchableSelect
@@ -345,9 +363,9 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
                 className={styles.contextButton}
                 aria-pressed={specLogY}
                 onClick={() => onSpecLogYChange(!specLogY)}
-                title="Use a log10 magnitude axis"
+                title={specMode === 'waterfall' ? "Color shows log10(magnitude in U); zero uses the color floor" : "Use a log10 magnitude axis"}
               >
-                Log scale
+                {specMode === 'waterfall' ? 'Log color' : 'Log scale'}
               </button>
             </>
           )}
