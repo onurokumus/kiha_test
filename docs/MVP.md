@@ -66,6 +66,10 @@ Target: 1-hour CSV ingested in ≲ 2 minutes, server RAM stays < ~2 GB throughou
 - Save test points → `testpoints.json`.
 - Upload ("read test points file") an existing `testpoints.json` from local machine.
 - Export: full test data as CSV; individual test points as CSV; `testpoints.json` download.
+  Individual TP CSVs include `test_point_id` and use exact half-open row bounds.
+  Uploads offers saved TP downloads; Split also exports unsaved drafts without
+  saving, with `_tp{id}_draft.csv` filenames. Source column-name collisions are
+  preserved under unique `source_` aliases. See [split export behavior and checks](SPLIT_EXPORT_VERIFICATION.md).
 
 ## 4. Post-Process Features
 
@@ -82,8 +86,11 @@ Target: 1-hour CSV ingested in ≲ 2 minutes, server RAM stays < ~2 GB throughou
   - Butterworth low-pass / high-pass / band-pass / band-stop (order + cutoff(s) user-set)
   - Moving average (window user-set)
   - Detrend
-  - FFT magnitude spectrum and Welch PSD — plotted against frequency (0 – 1024 Hz Nyquist).
-    Runs on a single variable over a test point (~123k points for 60 s) — cheap, no full-file FFT.
+  - FFT magnitude spectrum and Welch PSD — computed from one full-resolution stored
+    variable over the requested interval (a test point or the active full-test range).
+    Nyquist is `fs/2`, i.e. 1024 Hz only for 2048 Hz data. Actual preprocessing,
+    normalization, interval boundaries and display reduction are documented in
+    [FFT_COMPARISON.md](FFT_COMPARISON.md); time-plot filters do not feed Spectrum.
   - Filtered series can be overlaid on the raw series.
 - Multiple series in a single plot (multi-line, shared time axis, per-series y-axis
   scaling if units differ). *Not implemented in MVP*: each grid cell plots one column
@@ -204,12 +211,14 @@ python generate_dummy_data.py --duration 3600 --name perf_1h
 
 ## 12. Open Problems / Known Risks
 
-- **Non-uniform time / jitter**: the windowed readers convert idx↔time via the assumed
-  uniform `fs` (NOT per-sample from the time column). Mitigation: ingest derives `fs` from
-  the full time-column span and scans the WHOLE file (quantization-aware) for jitter/gaps,
-  recording `jitter_warning` in `meta.json`; when the time column is unusable it generates
-  a perfect uniform axis and marks `time_source = "generated"`. A per-sample time-accurate
-  reader (using the time column directly for idx↔time) is future work.
+- **Non-uniform time / jitter**: windowed readers convert idx↔time using nominal
+  uniform `fs`, rather than searching individual timestamps. Ingest examines the whole
+  time column and derives `fs` from normal local differences, excluding acquisition
+  dropouts while retaining zero differences from coarse clocks. It inserts missing
+  signal rows, records gap ranges and `jitter_warning`, and generates uniform time at
+  the chosen fallback rate when measured time is unusable. Spectra reject recorded
+  gaps; other jitter is not resampled. See [FFT_COMPARISON.md](FFT_COMPARISON.md) for
+  the exact rules. A reader using measured timestamps for idx↔time remains future work.
 - **NaN policy change after ingest**: switching policy (e.g. gaps → interpolate) requires
   rebuilding `data.parquet` + pyramid. Acceptable (re-run pipeline), but UI must warn it takes time.
 - **XY plot downsampling**: naive stride decimation can alias/mislead (e.g. hide hysteresis

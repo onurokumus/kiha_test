@@ -1237,7 +1237,9 @@ class UploadTests(DataDirTestCase):
             uploads.ingest_completed_upload("alpha", session["upload_id"])
 
         self.assertFalse((self.tests / "alpha").exists())
-        self.assertTrue((main.TRASH_DIR / "alpha").is_dir())
+        entries = main.api_list_trash()["entries"]
+        self.assertEqual([entry["name"] for entry in entries], ["alpha"])
+        self.assertTrue((main.TRASH_DIR / entries[0]["id"] / "data").is_dir())
 
     def test_complete_transition_is_idempotent_before_ingest_runs(self):
         body = small_csv()

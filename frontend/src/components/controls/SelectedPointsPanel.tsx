@@ -22,6 +22,7 @@ interface SelectedPointsPanelProps {
   onRemoveTP: (id: string) => void;
   onClearAll: () => void;
   timeZoom: [number, number] | null;
+  hasYZoom?: boolean;
   onResetTimeZoom: () => void;
   maxPoints?: number;
   loadingTestPointIds?: Set<string>;
@@ -94,6 +95,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
   onRemoveTP,
   onClearAll,
   timeZoom,
+  hasYZoom = false,
   onResetTimeZoom,
   maxPoints = MAX_SELECTED_TEST_POINTS,
   loadingTestPointIds = new Set(),
@@ -190,12 +192,12 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
             </div>
           </div>
 
-          {timeZoom && (
+          {(timeZoom || hasYZoom) && (
             <button
               type="button"
               className={styles.toolButton}
               onClick={onResetTimeZoom}
-              title="Reset the time range shown in all plots"
+              title={viewMode === 'tp' ? 'Reset time and all test-point Y ranges' : 'Reset the time range shown in all plots'}
             >
               Reset zoom
             </button>

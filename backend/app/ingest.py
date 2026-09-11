@@ -24,6 +24,9 @@ from .config import (DEFAULT_FS_HZ, INGEST_BATCH, PYRAMID_LEVELS,
                      ROW_GROUP_SIZE, TESTS_DIR)
 from .locks import test_write
 from .provenance import normalize_uploader_name
+from .test_notes import Description
+from pydantic import TypeAdapter
+from .quality import EXAMPLE_LIMIT, inspect_source_time
 from .status import write_status
 from .store import bucket_minmax, write_json_atomic
 
@@ -296,7 +299,8 @@ class _PyramidWriter:
         self.writer.close()
 
 
-def build_pyramid(parquet_path: Path, pyr_dir: Path, time_col: str):
+def build_pyramid(parquet_path: Path, pyr_dir: Path, time_col: str,
+                  *, inf_counts: dict | None = None):
     """One streaming pass over data.parquet -> all pyramid levels + NaN counts.
 
     The reader handle is closed before returning (via ``with``) so a caller
@@ -325,6 +329,8 @@ def build_pyramid(parquet_path: Path, pyr_dir: Path, time_col: str):
             for c in data_cols:
                 arr = batch_tbl.column(c).to_numpy(zero_copy_only=False).astype(np.float64)
                 nan_counts[c] += int(np.isnan(arr).sum())
+                if inf_counts is not None:
+                    inf_counts[c] = inf_counts.get(c, 0) + int(np.isinf(arr).sum())
                 mn, mx = bucket_minmax(arr, base)
                 level_minmax[base][c] = (mn, mx)
                 prev_mn, prev_mx = mn, mx
@@ -364,7 +370,8 @@ def ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
                assume_fs: float | None = None,
                time_mode: str = "auto",
                time_column: str | None = None,
-               uploader_name: str | None = None) -> dict:
+               uploader_name: str | None = None,
+               description: str = "", component_ids: dict | None = None) -> dict:
     """Ingest one test while excluding lifecycle operations for that name.
 
     source_name: original file name for meta.source_file — API uploads
@@ -376,11 +383,13 @@ def ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
     number and ``assume_fs``.
     uploader_name: optional self-reported attribution stored as immutable
     provenance in the resulting metadata and lifecycle status.
+    description: optional plain text captured by the upload session. Later
+    edits change meta.json only; the initial upload manifest stays immutable.
     """
     with test_write(name):
         return _ingest_csv(
             csv_path, name, copy_raw, source_name, assume_fs,
-            time_mode, time_column, uploader_name)
+            time_mode, time_column, uploader_name, description, component_ids)
 
 
 def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
@@ -388,7 +397,12 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
                 assume_fs: float | None = None,
                 time_mode: str = "auto",
                 time_column: str | None = None,
-                uploader_name: str | None = None) -> dict:
+                uploader_name: str | None = None,
+                description: str = "", component_ids: dict | None = None) -> dict:
+    description = TypeAdapter(Description).validate_python(description)
+    if component_ids is not None:
+        from .components import ids
+        component_ids = ids(component_ids)
     if uploader_name is not None:
         uploader_name = normalize_uploader_name(uploader_name)
     provenance = (
@@ -396,6 +410,10 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
         if uploader_name is not None
         else {}
     )
+    if description:
+        provenance["description"] = description
+    if component_ids is not None:
+        provenance["components"] = component_ids
     csv_path = Path(csv_path)
     test_dir = TESTS_DIR / name
     test_dir.mkdir(parents=True, exist_ok=True)
@@ -453,6 +471,8 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
                         if c != time_col and src_schema[c].is_numeric()]
         skipped = {c: str(src_schema[c]) for c in src_columns
                    if c != time_col and c not in numeric_cols}
+        if not numeric_cols:
+            raise ValueError("CSV has no numeric signal columns to analyze")
         for data_col in numeric_cols:
             if time_col in {f"{data_col}__min", f"{data_col}__max"}:
                 raise ValueError(
@@ -502,6 +522,13 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
             raise ValueError("need at least 2 samples to form a series")
         source_n_rows = n_rows
 
+        source_quality = (
+            {"version": 1, "checked": False, "column": None, "n_rows": n_rows,
+             "axis_reason": ("generated_requested" if time_mode == "generated"
+                             else "no_time_column")}
+            if generate_axis else inspect_source_time(tvals, time_col)
+        )
+
         # Explicit generated time is always uniform. Measured time uses normal
         # local intervals so one long dropout cannot bias the reported Hz.
         measured_timing = (
@@ -510,6 +537,18 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
         dt = 1.0 / generated_fs if generated_fs is not None else None
         if measured_timing is not None:
             dt = measured_timing["dt"]
+            source_quality.update({
+                "axis_reason": "measured",
+                "gap_count": measured_timing["gap_count"],
+                "gap_examples": [
+                    {"row": int(i + 1),
+                     "previous_s": float(tvals[i - 1]),
+                     "time_s": float(tvals[i]),
+                     "missing_rows": int(measured_timing["missing_before"][i])}
+                    for i in np.flatnonzero(
+                        measured_timing["missing_before"])[:EXAMPLE_LIMIT]
+                ],
+            })
 
         source_time_origin_s: float | None = None
         gap_ranges: list[list[int]] = []
@@ -522,6 +561,7 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
             quantized = False
             jitter_warn = False
         elif dt is None:
+            source_quality["axis_reason"] = "invalid_source_time"
             # Time column is unusable — non-finite/unparseable, non-increasing,
             # or a single repeated coarse timestamp (the low-resolution clock
             # case, e.g. every row logged as ``19:39,2``). The bulk samples are
@@ -590,8 +630,9 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
                 )
 
         # 4) pyramid + NaN scan
+        inf_counts: dict[str, int] = {}
         nan_counts, level_rows = build_pyramid(parquet_path, test_dir / "pyramid",
-                                               time_col)
+                                               time_col, inf_counts=inf_counts)
 
         meta = {
             "name": name,
@@ -608,16 +649,20 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
             "time_source": time_source,
             "source_time_origin_s": source_time_origin_s,
             "source_n_rows": source_n_rows,
+            "source_time_quality": source_quality,
             "time_gap_count": gap_count,
             "missing_rows_inserted": missing_rows,
             "time_gap_seconds": float(missing_rows * dt),
             "time_gap_ranges": gap_ranges,
+            # Observation provenance survives later interpolation/zero-fill.
+            "acquisition_gap_ranges": gap_ranges,
             "csv_separator": separator,
             "decimal_comma": decimal_comma,
             "time_quantized": quantized,
             "skipped_columns": skipped,
             "jitter_warning": jitter_warn,
             "nan_counts": {c: n for c, n in nan_counts.items() if n > 0},
+            "inf_counts": {c: n for c, n in inf_counts.items() if n > 0},
             "nan_policy": "keep_gaps",
             "pyramid_levels": PYRAMID_LEVELS,
             "pyramid_rows": level_rows,
@@ -625,6 +670,11 @@ def _ingest_csv(csv_path: Path, name: str, copy_raw: bool = False,
         }
         if uploader_name is not None:
             meta["uploader_name"] = uploader_name
+        if description:
+            meta["description"] = description
+        if component_ids is not None:
+            meta["components"] = component_ids
+            meta["components_revision"] = 0
         write_json_atomic(test_dir / "meta.json", meta)
         write_status(test_dir, "ready", **provenance)
         logger.info("ingest '%s': ready — %d rows x %d cols in %.1f s",

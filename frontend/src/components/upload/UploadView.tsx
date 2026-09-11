@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { deleteTest, rawCsvUrl, rebuildTpStats, restoreTest } from '../../services/api';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { deleteTest, rawCsvUrl, rebuildTpStats } from '../../services/api';
 import {
   cancelUploadSession,
   UploadDataOptions,
@@ -15,7 +15,14 @@ import {
 import { TestInfo, UploadItem } from '../../types';
 import { isBusyStatus } from '../../constants/status';
 import { useConfirm } from '../feedback/confirm';
+import { DataQualityButton, DataQualityDetails } from './DataQuality';
+import { SplitCsvDownloads } from './SplitCsvDownloads';
+import { MAX_DESCRIPTION_LENGTH, normalizeTestText, testTextError, textLength } from '../../utils/testNotes';
 import styles from './UploadView.module.css';
+import { ComponentPicker } from '../controls/ComponentPicker';
+import { useComponentCatalog } from '../../hooks/useComponentCatalog';
+import { componentIds, COMPONENT_KINDS, COMPONENT_LABELS } from '../../utils/components';
+import { TrashBin } from './TrashBin';
 
 interface Props {
   tests: TestInfo[];
@@ -32,10 +39,11 @@ interface Props {
   onCancelUpload: (id: number) => void;
   /** Open a ready test in the Analyze tab. */
   onOpenTest: (name: string) => void;
+  onEditNotes: (name: string) => void;
   /** A test was deleted server-side — parent drops caches + refreshes. */
   onTestDeleted: (name: string) => void;
   /** Server-side list changed (restore) — parent refreshes the list. */
-  onTestsChanged: () => void;
+  onTestsChanged: (restoredName?: string) => void;
   /** A test's TP averages were recomputed — parent drops its stats cache. */
   onStatsRebuilt: (name: string) => void;
 }
@@ -194,6 +202,7 @@ export default function UploadView({
   onAdoptServerUpload,
   onCancelUpload,
   onOpenTest,
+  onEditNotes,
   onTestDeleted,
   onTestsChanged,
   onStatsRebuilt,
@@ -204,14 +213,19 @@ export default function UploadView({
   const resumeTargetRef = useRef<UploadItem | TestInfo | null>(null);
   const uploaderRef = useRef<HTMLInputElement>(null);
   const setupRef = useRef<HTMLElement>(null);
-  // Names deleted from this page and still restorable (session-local undo).
-  const [restorable, setRestorable] = useState<string[]>([]);
+  const [trashRevision, setTrashRevision] = useState(0);
   const [busyRow, setBusyRow] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
   const [actionNote, setActionNote] = useState('');
   const [historyQuery, setHistoryQuery] = useState('');
   const [historyStatus, setHistoryStatus] = useState('all');
+  const [qualityTest, setQualityTest] = useState<string | null>(null);
+  const [splitDownloadTest, setSplitDownloadTest] = useState<string | null>(null);
   const [uploaderName, setUploaderName] = useState(loadRememberedUploaderName);
+  const [description, setDescription] = useState('');
+  const catalog = useComponentCatalog();
+  const [components, setComponents] = useState(() => componentIds());
+  const [componentDraft, setComponentDraft] = useState(false);
   const [timeMode, setTimeMode] = useState<UploadTimeMode>('auto');
   const [timeColumn, setTimeColumn] = useState('');
   const [generatedColumn, setGeneratedColumn] = useState('time_s');
@@ -223,6 +237,9 @@ export default function UploadView({
   useEffect(() => {
     let alive = true;
     if (pendingFiles.length === 0) {
+      setDescription('');
+      setComponents(componentIds());
+      setComponentDraft(false);
       setTimeMode('auto');
       setTimeColumn('');
       setGeneratedColumn('time_s');
@@ -291,11 +308,13 @@ export default function UploadView({
       (workingTimeColumn === `${column}__min` || workingTimeColumn === `${column}__max`)
   );
   const uploaderError = uploaderNameError(uploaderName);
+  const descriptionError = testTextError(description, MAX_DESCRIPTION_LENGTH, 'Description');
   const setupError =
     pendingFiles.length === 0
       ? ''
-      : uploaderError
-        ? uploaderError
+      : componentDraft ? 'Finish adding the new component or cancel it before uploading.'
+      : uploaderError || descriptionError
+        ? uploaderError || descriptionError
         : headersLoading
           ? 'Inspecting the selected CSV headers…'
           : timeMode === 'column' && !selectedTimeColumn.trim()
@@ -320,6 +339,8 @@ export default function UploadView({
     rememberUploaderName(normalizedUploaderName);
     onStartUpload(pendingFiles, {
       uploaderName: normalizedUploaderName,
+      description: normalizeTestText(description),
+      components,
       timeMode,
       ...(validFs ? { fsHz: parsedFs } : {}),
       ...(timeMode === 'column'
@@ -358,7 +379,8 @@ export default function UploadView({
       historyStatus === 'all' ||
       (historyStatus === 'processing' ? isBusyStatus(test.status) : test.status === historyStatus);
     const terms = historyQuery.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
-    const searchableText = [test.name, test.source_file, test.uploader_name]
+    const searchableText = [test.name, test.source_file, test.uploader_name, test.description,
+      ...COMPONENT_KINDS.map((kind) => catalog.items.find((item) => item.id === test.components?.[kind])?.name ?? '')]
       .join(' ')
       .toLocaleLowerCase();
     return matchesStatus && terms.every((term) => searchableText.includes(term));
@@ -374,7 +396,7 @@ export default function UploadView({
       !(await confirmAction({
         title: `Delete test '${name}'?`,
         description: 'The test will be removed from the active data library.',
-        detail: 'You can restore it from this page for about an hour.',
+        detail: 'Restore it from the Trash section on this page.',
         confirmLabel: 'Move to trash',
         tone: 'danger',
       }))
@@ -386,7 +408,7 @@ export default function UploadView({
     setActionNote('');
     try {
       await deleteTest(name);
-      setRestorable((prev) => [name, ...prev.filter((n) => n !== name)]);
+      setTrashRevision((value) => value + 1);
       onTestDeleted(name);
     } catch (e) {
       setActionError(`delete '${name}' failed: ${e instanceof Error ? e.message : e}`);
@@ -453,25 +475,6 @@ export default function UploadView({
       );
     } catch (e) {
       setActionError(`rebuild stats for '${name}' failed: ${e instanceof Error ? e.message : e}`);
-    } finally {
-      setBusyRow(null);
-    }
-  };
-
-  const handleRestore = async (name: string) => {
-    setBusyRow(name);
-    setActionError('');
-    setActionNote('');
-    try {
-      await restoreTest(name);
-      setRestorable((prev) => prev.filter((n) => n !== name));
-      onTestsChanged();
-    } catch (e) {
-      setActionError(`restore '${name}' failed: ${e instanceof Error ? e.message : e}`);
-      // A 404 means the trash copy is gone for good — drop the dead chip.
-      if (e instanceof Error && /no restorable copy/.test(e.message)) {
-        setRestorable((prev) => prev.filter((n) => n !== name));
-      }
     } finally {
       setBusyRow(null);
     }
@@ -744,6 +747,23 @@ export default function UploadView({
               </span>
             </div>
 
+            <label className={`upload-setup-field ${styles.descriptionField}`}>
+              <span>Description (optional)</span>
+              <textarea className="input" rows={2} value={description}
+                placeholder="e.g. Temperature test at sustained load"
+                aria-invalid={!!descriptionError} aria-describedby="upload-description-help upload-setup-feedback"
+                onChange={(event) => setDescription(event.target.value)} />
+              <span id="upload-description-help" className="upload-uploader-help">
+                Applies to all selected files. Edit it and add findings later in Edit.
+                {' '}{textLength(description).toLocaleString()} / {MAX_DESCRIPTION_LENGTH.toLocaleString()}
+              </span>
+            </label>
+
+            <div className={styles.descriptionField}>
+              <ComponentPicker value={components} onChange={setComponents} catalog={catalog} onDraftChange={setComponentDraft} />
+              <p className="upload-uploader-help">Applies to all selected files. Associations can be corrected later in Edit.</p>
+            </div>
+
             <div className="upload-setup-grid">
               <label className="upload-setup-field">
                 <span>Time basis</span>
@@ -946,49 +966,7 @@ export default function UploadView({
           </section>
         )}
 
-        {/* Recently deleted (undo) */}
-        {restorable.length > 0 && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: 8,
-              background: '#252526',
-              border: '1px solid #3c3c3c',
-              borderRadius: 4,
-              padding: '6px 10px',
-              fontSize: 11,
-              color: '#909090',
-            }}
-          >
-            <span>Recently deleted (restorable for ~1 h):</span>
-            {restorable.map((name) => (
-              <span
-                key={name}
-                className="badge"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-              >
-                {name}
-                <button
-                  onClick={() => handleRestore(name)}
-                  disabled={busyRow !== null}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#4ec9b0',
-                    cursor: 'pointer',
-                    fontSize: 10,
-                    padding: 0,
-                    textDecoration: 'underline',
-                  }}
-                >
-                  undo
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
+        <TrashBin refreshKey={trashRevision} onRestored={onTestsChanged} components={catalog.items} />
 
         {actionError && (
           <div className={styles.actionError} role="alert">
@@ -1018,7 +996,7 @@ export default function UploadView({
                 className="input"
                 type="search"
                 aria-label="Search upload history"
-                placeholder="Search test, file, or uploader…"
+                placeholder="Search test, description, file, or uploader…"
                 value={historyQuery}
                 onChange={(event) => setHistoryQuery(event.target.value)}
               />
@@ -1045,7 +1023,7 @@ export default function UploadView({
               <span>
                 {rows.length === 0
                   ? 'Choose a CSV above. Completed uploads will appear here, ready to analyze.'
-                  : 'Try a different test name, source file, or uploader.'}
+                  : 'Try a different test name, description, source file, or uploader.'}
               </span>
               {rows.length > 0 && (
                 <button
@@ -1086,131 +1064,184 @@ export default function UploadView({
                 <tbody>
                   {visibleRows.map((t) => {
                     const busy = isBusyStatus(t.status);
+                    const componentSummary = COMPONENT_KINDS.filter((kind) => t.components?.[kind])
+                      .map((kind) => `${COMPONENT_LABELS[kind]}: ${catalog.items.find((item) => item.id === t.components?.[kind])?.name ?? 'Unavailable component'}`).join(' · ');
+                    const qualityId = `data-quality-${encodeURIComponent(t.name)}`;
+                    const splitDownloadId = `split-downloads-${encodeURIComponent(t.name)}`;
                     return (
-                      <tr key={t.name}>
-                        <td style={{ ...tdStyle, fontWeight: 600, overflow: 'hidden' }}>
-                          <span className={styles.testName} title={t.name}>
-                            {t.name}
-                          </span>
-                          <span className={styles.sourceFile} title={t.source_file ?? undefined}>
-                            {t.source_file ?? 'Source file unavailable'}
-                          </span>
-                          <span
-                            className="upload-history-test-uploader"
-                            title={t.uploader_name ?? 'Uploader not recorded'}
-                          >
-                            {t.uploader_name ? `by ${t.uploader_name}` : 'Uploader not recorded'}
-                          </span>
-                        </td>
-                        <td style={{ ...tdStyle, overflow: 'hidden' }}>
-                          <div className="upload-history-status">
-                            <StatusChip status={t.status} />
-                            {t.status === 'error' && t.error && (
-                              <span className="upload-history-error" title={t.error}>
-                                {t.error}
+                      <Fragment key={t.name}>
+                        <tr>
+                          <td style={{ ...tdStyle, fontWeight: 600, overflow: 'hidden' }}>
+                            <span className={styles.testName} title={t.name}>
+                              {t.name}
+                            </span>
+                            {t.status === 'ready' ? (
+                              <button className={styles.notesLink} onClick={() => onEditNotes(t.name)}
+                                aria-label={`Edit notes for ${t.name}`} title={t.description || 'Add a description and findings'}>
+                                {t.description || 'Add notes'}
+                              </button>
+                            ) : t.description && (
+                              <span className={styles.descriptionPreview} title={t.description}>
+                                {t.description}
                               </span>
                             )}
-                          </div>
-                        </td>
-                        <td
-                          className="upload-history-uploaded"
-                          style={{ ...tdStyle, overflow: 'hidden' }}
-                          title={t.edited_at ? `edited ${fmtDate(t.edited_at)}` : undefined}
-                        >
-                          <div>
-                            {fmtDate(t.created_at)}
-                            {t.edited_at ? ' *' : ''}
-                          </div>
-                          <div
-                            className="upload-history-uploaded-secondary"
-                            title={t.uploader_name ?? 'Uploader not recorded'}
-                          >
-                            {t.uploader_name ? `by ${t.uploader_name}` : 'Uploader not recorded'}
-                          </div>
-                        </td>
-                        <td style={tdRight}>{fmtBytes(t.size_bytes)}</td>
-                        <td
-                          className="upload-history-metrics"
-                          style={{ ...tdRight, overflow: 'hidden' }}
-                        >
-                          <div
-                            title={`${fmtCount(t.n_rows)} rows × ${fmtCount(t.n_columns)} columns`}
-                          >
-                            {fmtCount(t.n_rows)} × {fmtCount(t.n_columns)}
-                          </div>
-                          <div className="upload-history-metrics-secondary">
-                            {fmtDuration(t.duration_s)} · {t.fs_hz ?? '—'} Hz ·{' '}
-                            {t.ingest_seconds != null ? `${t.ingest_seconds} s ingest` : '— ingest'}
-                          </div>
-                          {t.time_column && (
-                            <div className="upload-history-metrics-secondary">
-                              {t.time_column} · {t.time_source ?? 'time'} · seconds from 0
-                            </div>
-                          )}
-                          {(t.missing_rows_inserted ?? 0) > 0 && (
-                            <div
-                              className="upload-history-metrics-secondary"
-                              style={{ color: '#dcdcaa' }}
-                              title="Missing timestamps were represented by NaN signal rows"
+                            {t.status === 'ready' && <button className={styles.notesLink} onClick={() => onEditNotes(t.name)}
+                              aria-label={`Edit components for ${t.name}`} title={componentSummary || 'Assign components'}>
+                              {componentSummary || 'Assign components'}
+                            </button>}
+                            <span className={styles.sourceFile} title={t.source_file ?? undefined}>
+                              {t.source_file ?? 'Source file unavailable'}
+                            </span>
+                            <span
+                              className="upload-history-test-uploader"
+                              title={t.uploader_name ?? 'Uploader not recorded'}
                             >
-                              {fmtCount(t.missing_rows_inserted)} missing row
-                              {t.missing_rows_inserted === 1 ? '' : 's'} ·{' '}
-                              {fmtCount(t.time_gap_count)} time gap
-                              {t.time_gap_count === 1 ? '' : 's'}
+                              {t.uploader_name ? `by ${t.uploader_name}` : 'Uploader not recorded'}
+                            </span>
+                            <DataQualityButton
+                              test={t}
+                              expanded={qualityTest === t.name}
+                              detailsId={qualityId}
+                              onClick={() => {
+                                setSplitDownloadTest(null);
+                                setQualityTest(qualityTest === t.name ? null : t.name);
+                              }}
+                            />
+                          </td>
+                          <td style={{ ...tdStyle, overflow: 'hidden' }}>
+                            <div className="upload-history-status">
+                              <StatusChip status={t.status} />
+                              {t.status === 'error' && t.error && (
+                                <span className="upload-history-error" title={t.error}>
+                                  {t.error}
+                                </span>
+                              )}
                             </div>
-                          )}
-                        </td>
-                        <td
-                          className="upload-history-actions-cell"
-                          style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'normal' }}
-                        >
-                          <span className="upload-history-actions">
-                            {t.status === 'ready' && (
-                              <button
-                                className={`btn ${styles.analyzeButton}`}
-                                aria-label={`Analyze ${t.name}`}
-                                onClick={() => onOpenTest(t.name)}
-                              >
-                                Analyze
-                              </button>
+                          </td>
+                          <td
+                            className="upload-history-uploaded"
+                            style={{ ...tdStyle, overflow: 'hidden' }}
+                            title={t.edited_at ? `edited ${fmtDate(t.edited_at)}` : undefined}
+                          >
+                            <div>
+                              {fmtDate(t.created_at)}
+                              {t.edited_at ? ' *' : ''}
+                            </div>
+                            <div
+                              className="upload-history-uploaded-secondary"
+                              title={t.uploader_name ?? 'Uploader not recorded'}
+                            >
+                              {t.uploader_name ? `by ${t.uploader_name}` : 'Uploader not recorded'}
+                            </div>
+                          </td>
+                          <td style={tdRight}>{fmtBytes(t.size_bytes)}</td>
+                          <td
+                            className="upload-history-metrics"
+                            style={{ ...tdRight, overflow: 'hidden' }}
+                          >
+                            <div
+                              title={`${fmtCount(t.n_rows)} rows × ${fmtCount(t.n_columns)} columns`}
+                            >
+                              {fmtCount(t.n_rows)} × {fmtCount(t.n_columns)}
+                            </div>
+                            <div className="upload-history-metrics-secondary">
+                              {fmtDuration(t.duration_s)} · {t.fs_hz ?? '—'} Hz ·{' '}
+                              {t.ingest_seconds != null
+                                ? `${t.ingest_seconds} s ingest`
+                                : '— ingest'}
+                            </div>
+                            {t.time_column && (
+                              <div className="upload-history-metrics-secondary">
+                                {t.time_column} · {t.time_source ?? 'time'} · seconds from 0
+                              </div>
                             )}
-                            {(t.status === 'ready' || t.status === 'error') && (
-                              <a
-                                className="btn"
-                                href={rawCsvUrl(t.name)}
-                                download
-                                aria-label={`Download original CSV for ${t.name}`}
-                                title="download the original uploaded CSV"
-                                style={{ textDecoration: 'none' }}
-                              >
-                                CSV
-                              </a>
-                            )}
-                            {t.status === 'ready' && (
-                              <button
-                                className="btn"
-                                disabled={busyRow !== null}
-                                aria-label={`Recompute test-point averages for ${t.name}`}
-                                onClick={() => handleRebuildStats(t.name)}
-                                title="recompute this test's test-point averages (rarely changes anything; old values keep serving until it finishes)"
-                              >
-                                {busyRow === t.name ? 'Working…' : 'Recompute'}
-                              </button>
-                            )}
-                            {!busy && (
-                              <button
-                                className="btn"
-                                disabled={busyRow !== null}
-                                aria-label={`Delete ${t.name}`}
-                                onClick={() => handleDelete(t.name)}
-                                style={{ color: '#f48771' }}
-                              >
-                                Delete
-                              </button>
-                            )}
-                          </span>
-                        </td>
-                      </tr>
+                          </td>
+                          <td
+                            className="upload-history-actions-cell"
+                            style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'normal' }}
+                          >
+                            <span className="upload-history-actions">
+                              {t.status === 'ready' && (
+                                <button
+                                  className={`btn ${styles.analyzeButton}`}
+                                  aria-label={`Analyze ${t.name}`}
+                                  onClick={() => onOpenTest(t.name)}
+                                >
+                                  Analyze
+                                </button>
+                              )}
+                              {(t.status === 'ready' || t.status === 'error') && (
+                                <a
+                                  className="btn"
+                                  href={rawCsvUrl(t.name)}
+                                  download
+                                  aria-label={`Download original CSV for ${t.name}`}
+                                  title="download the original uploaded CSV"
+                                  style={{ textDecoration: 'none' }}
+                                >
+                                  CSV
+                                </a>
+                              )}
+                              {t.status === 'ready' && (
+                                <button
+                                  id={`${splitDownloadId}-toggle`}
+                                  className="btn"
+                                  aria-label={`Split CSV downloads for ${t.name}`}
+                                  aria-expanded={splitDownloadTest === t.name}
+                                  aria-controls={splitDownloadTest === t.name ? splitDownloadId : undefined}
+                                  onClick={() => {
+                                    setQualityTest(null);
+                                    setSplitDownloadTest(splitDownloadTest === t.name ? null : t.name);
+                                  }}
+                                >
+                                  Split CSV
+                                </button>
+                              )}
+                              {t.status === 'ready' && (
+                                <button
+                                  className="btn"
+                                  disabled={busyRow !== null}
+                                  aria-label={`Recompute test-point averages for ${t.name}`}
+                                  onClick={() => handleRebuildStats(t.name)}
+                                  title="recompute this test's test-point averages (rarely changes anything; old values keep serving until it finishes)"
+                                >
+                                  {busyRow === t.name ? 'Working…' : 'Recompute'}
+                                </button>
+                              )}
+                              {!busy && (
+                                <button
+                                  className="btn"
+                                  disabled={busyRow !== null}
+                                  aria-label={`Delete ${t.name}`}
+                                  onClick={() => handleDelete(t.name)}
+                                  style={{ color: '#f48771' }}
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </span>
+                          </td>
+                        </tr>
+                        {splitDownloadTest === t.name && t.status === 'ready' && (
+                          <tr>
+                            <td colSpan={6} style={{ padding: 0 }}>
+                              <SplitCsvDownloads test={t.name} id={splitDownloadId}
+                                onClose={() => setSplitDownloadTest(null)} />
+                            </td>
+                          </tr>
+                        )}
+                        {qualityTest === t.name && (
+                          <tr>
+                            <td colSpan={6} style={{ padding: 0 }}>
+                              <DataQualityDetails
+                                test={t}
+                                id={qualityId}
+                                onClose={() => setQualityTest(null)}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </tbody>

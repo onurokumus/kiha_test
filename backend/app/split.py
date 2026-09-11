@@ -1,10 +1,14 @@
-"""Auto-split helpers: ID-column candidates + split-by-column-transitions."""
+"""Auto-split helpers: ID candidates and native-sample value-change proposals."""
 
 import numpy as np
 import polars as pl
 
 from .config import TESTS_DIR
 from .store import get_meta
+
+
+MAX_SPLIT_COLUMNS = 9
+MAX_SPLIT_POINTS = 1000
 
 
 def id_candidates(name: str, max_unique: int = 500) -> list[dict]:
@@ -98,3 +102,106 @@ def autosplit(name: str, col: str, ignore_zero: bool = True,
             "notes": "",
         })
     return tps
+
+
+def preview_autosplit(name: str, columns: list[str], ignore_zero: bool = True,
+                      min_len_s: float = 1.0) -> dict:
+    """Preview constant tuples; changing ANY selected value starts a new run.
+
+    Read only selected native columns. Missing values break runs; valid tuples
+    on either side never join. Exclusion sample counts are disjoint: missing
+    first, then zero. A short run counts only after those exclusions. No writes,
+    downsampling, tolerance, value rounding, or silent proposal truncation.
+    The caller holds data_read so metadata and samples belong to one read.
+    """
+    if not 1 <= len(columns) <= MAX_SPLIT_COLUMNS:
+        raise ValueError(f"select between 1 and {MAX_SPLIT_COLUMNS} variables")
+    if any(not isinstance(col, str) or not col.strip() for col in columns):
+        raise ValueError("variable names must be nonempty strings")
+    if len(set(columns)) != len(columns):
+        raise ValueError("select each variable only once")
+    if not np.isfinite(min_len_s) or min_len_s < 0:
+        raise ValueError("min_len_s must be a finite value >= 0")
+    meta = get_meta(name)
+    if meta is None:
+        raise FileNotFoundError(name)
+    tcol = meta["time_column"]
+    unknown = [col for col in columns if col not in meta["columns"]]
+    if unknown:
+        raise ValueError(f"unknown variables: {unknown}")
+    if tcol in columns:
+        raise ValueError("choose signal or ID variables; the time column cannot drive auto-split")
+    try:
+        fs = float(meta["fs_hz"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("test sample rate is unavailable; reload or re-import this test") from None
+    if not np.isfinite(fs) or fs <= 0:
+        raise ValueError("test sample rate must be finite and greater than zero")
+
+    df = (pl.scan_parquet(TESTS_DIR / name / "data.parquet")
+          .select([tcol, *columns]).collect())
+    try:
+        t = df[tcol].to_numpy().astype(np.float64, copy=False)
+        values = [df[col].to_numpy().astype(np.float64, copy=False)
+                  for col in columns]
+    except (TypeError, ValueError):
+        raise ValueError("auto-split requires numeric variables and numeric timestamps") from None
+    n_rows = len(t)
+    if not np.isfinite(t).all() or np.any(t[1:] < t[:-1]):
+        raise ValueError("test timestamps must be finite and ordered; re-import this test")
+    proposal = {
+        "method": "value_changes", "columns": list(columns),
+        "ignore_zero": ignore_zero, "min_len_s": min_len_s,
+        "sample_count": n_rows, "fs_hz": fs, "test_points": [],
+        "excluded": {"missing_samples": 0, "zero_samples": 0, "short_runs": 0},
+    }
+    if n_rows == 0:
+        return proposal
+
+    changed = np.zeros(n_rows - 1, dtype=bool)
+    finite = np.ones(n_rows, dtype=bool)
+    zero = np.zeros(n_rows, dtype=bool)
+    for value in values:
+        finite &= np.isfinite(value)
+        if ignore_zero:
+            zero |= value == 0
+        prev, curr = value[:-1], value[1:]
+        changed |= (curr != prev) & ~(np.isnan(curr) & np.isnan(prev))
+    starts = np.concatenate([[0], np.flatnonzero(changed) + 1])
+    ends = np.concatenate([starts[1:], [n_rows]])
+    eligible = finite[starts] & ~zero[starts]
+    # Duration belongs to the half-open sample interval, independent of
+    # timestamp subtraction errors and coarse source-clock quantization.
+    long_enough = (ends - starts) / fs >= min_len_s
+    kept = np.flatnonzero(eligible & long_enough)
+    if len(kept) > MAX_SPLIT_POINTS:
+        raise ValueError(
+            f"auto-split found more than {MAX_SPLIT_POINTS:,} test points; "
+            "increase the minimum duration or choose stable ID/state variables")
+    proposal["excluded"] = {
+        "missing_samples": int(np.count_nonzero(~finite)),
+        "zero_samples": int(np.count_nonzero(finite & zero)),
+        "short_runs": int(np.count_nonzero(eligible & ~long_enough)),
+    }
+    for run_index in kept:
+        st, en = int(starts[run_index]), int(ends[run_index])
+        start_s = float(t[st])
+        end_s = float(t[en]) if en < n_rows else float(t[-1]) + 1.0 / fs
+        if not np.isfinite(end_s) or end_s <= start_s:
+            raise ValueError(
+                "source-clock resolution cannot represent these test-point boundaries; "
+                "increase the minimum duration or re-import with a generated time axis")
+        labels = []
+        for col, value in zip(columns, values):
+            val = float(value[st])
+            # repr keeps distinct finite Float64 states distinguishable, while
+            # integer IDs remain readable (1 instead of 1.0).
+            display = str(int(val)) if val.is_integer() else repr(val)
+            labels.append(f"{col}={display}")
+        point_id = len(proposal["test_points"]) + 1
+        proposal["test_points"].append({
+            "id": point_id, "name": f"TP-{point_id:02d}",
+            "label": ", ".join(labels), "start_s": start_s, "end_s": end_s,
+            "start_idx": st, "end_idx": en, "notes": "",
+        })
+    return proposal

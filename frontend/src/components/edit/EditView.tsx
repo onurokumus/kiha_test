@@ -4,6 +4,7 @@ import {
   deleteTest,
   editTest,
   fetchFormulaRecipes,
+  fetchMeta,
   patchUserMeta,
   previewFormulas,
   renameTest,
@@ -22,6 +23,10 @@ import {
 import { SearchableSelect } from '../controls/SearchableSelect';
 import { TestSelect } from '../controls/TestSelect';
 import { useConfirm } from '../feedback/confirm';
+import { MAX_DESCRIPTION_LENGTH, MAX_NOTES_LENGTH, normalizeTestText, testTextError, textLength } from '../../utils/testNotes';
+import { ComponentPicker } from '../controls/ComponentPicker';
+import { useComponentCatalog } from '../../hooks/useComponentCatalog';
+import { componentIds, sameComponents } from '../../utils/components';
 
 interface Props {
   test: string;
@@ -32,8 +37,8 @@ interface Props {
   onRebuildStarted: () => void;
   /** Test was renamed (navigate to the new name) or deleted (empty string). */
   onTestGone: (newName: string) => void;
-  /** user_meta saved — parent should refresh meta. */
-  onMetaSaved: () => void;
+  /** Test description, findings or user_meta saved — parent should refresh meta. */
+  onMetaSaved: (meta: TestMeta) => void;
   /** Reports whether any edit draft has not been saved or applied. */
   onDirtyChange?: (isDirty: boolean) => void;
   /** Reports an accepted mutation request that must finish before navigation. */
@@ -384,6 +389,33 @@ export default function EditView({
   // -- free-form metadata --
   const [rows, setRows] = useState<MetaRow[]>([]);
   const [savedRows, setSavedRows] = useState<MetaRow[]>([]);
+  const [description, setDescription] = useState(meta.description ?? '');
+  const [notes, setNotes] = useState(meta.notes ?? '');
+  const [savedDescription, setSavedDescription] = useState(meta.description ?? '');
+  const [savedNotes, setSavedNotes] = useState(meta.notes ?? '');
+  const catalog = useComponentCatalog();
+  const [components, setComponents] = useState(() => componentIds(meta.components));
+  const [savedComponents, setSavedComponents] = useState(() => componentIds(meta.components));
+  const [componentDraft, setComponentDraft] = useState(false);
+  const [componentPickerVersion, setComponentPickerVersion] = useState(0);
+  const [rpmColumn, setRpmColumn] = useState(meta.component_rpm_column ?? '');
+  const [savedRpmColumn, setSavedRpmColumn] = useState(meta.component_rpm_column ?? '');
+  useEffect(() => {
+    setRpmColumn(meta.component_rpm_column ?? '');
+    setSavedRpmColumn(meta.component_rpm_column ?? '');
+  }, [test, meta.component_rpm_column, meta.component_rpm_revision]);
+  useEffect(() => {
+    setComponents(componentIds(meta.components));
+    setSavedComponents(componentIds(meta.components));
+  }, [test, meta.components, meta.components_revision]);
+  useEffect(() => {
+    setDescription(meta.description ?? '');
+    setSavedDescription(meta.description ?? '');
+    setNotes(meta.notes ?? '');
+    setSavedNotes(meta.notes ?? '');
+  }, [test, meta.description, meta.notes]);
+  const descriptionError = testTextError(description, MAX_DESCRIPTION_LENGTH, 'Description');
+  const notesError = testTextError(notes, MAX_NOTES_LENGTH, 'Findings / notes');
   useEffect(() => {
     const nextRows = metaRows(meta.user_meta);
     setRows(nextRows);
@@ -391,22 +423,32 @@ export default function EditView({
   }, [test, meta.user_meta]);
 
   const saveMeta = async () => {
-    if (pendingAction) return;
-    const userMeta: Record<string, string> = {};
-    rows.forEach((r) => {
-      if (r.key.trim()) userMeta[r.key.trim()] = r.value;
-    });
+    if (pendingAction || descriptionError || notesError || componentDraft) return;
+    const userMeta = Object.fromEntries(rows.filter((r) => r.key.trim())
+      .map((r) => [r.key.trim(), r.value]));
     try {
       setPendingAction('Saving metadata');
-      await patchUserMeta(test, userMeta);
-      const nextRows = Object.entries(userMeta).map(([key, value]) => ({
-        key,
-        value,
-      }));
+      const result = await patchUserMeta(test,
+        sameMetaRows(rows, savedRows) ? undefined : userMeta, {
+          ...(description !== savedDescription ? { description: normalizeTestText(description) } : {}),
+          ...(notes !== savedNotes ? { notes: normalizeTestText(notes) } : {}),
+          ...(!sameComponents(components, savedComponents) ? { components,
+            expected_components_revision: meta.components_revision ?? 0 } : {}),
+          ...(rpmColumn !== savedRpmColumn ? { component_rpm_column: rpmColumn || null,
+            expected_component_rpm_revision: meta.component_rpm_revision ?? 0 } : {}),
+        });
+      const nextRows = metaRows(result.user_meta);
       setRows(nextRows);
       setSavedRows(nextRows);
-      setStatus('metadata saved');
-      onMetaSaved();
+      setDescription(result.description ?? '');
+      setSavedDescription(result.description ?? '');
+      setNotes(result.notes ?? '');
+      setSavedNotes(result.notes ?? '');
+      setComponents(componentIds(result.components));
+      setSavedComponents(componentIds(result.components));
+      setRpmColumn(result.component_rpm_column ?? ''); setSavedRpmColumn(result.component_rpm_column ?? '');
+      setStatus('Notes and metadata saved');
+      onMetaSaved(result);
     } catch (e) {
       setStatus(String(e instanceof Error ? e.message : e));
     } finally {
@@ -965,7 +1007,8 @@ export default function EditView({
   const [newName, setNewName] = useState(test);
   useEffect(() => setNewName(test), [test]);
 
-  const metadataDirty = !sameMetaRows(rows, savedRows);
+  const metadataDirty = !sameMetaRows(rows, savedRows) ||
+    description !== savedDescription || notes !== savedNotes || componentDraft || !sameComponents(components, savedComponents) || rpmColumn !== savedRpmColumn;
   const normalizedNewName = newName.trim();
   const renameDirty = normalizedNewName.length > 0 && normalizedNewName !== test;
   const nanPolicyDirty = nanPolicy !== savedNanPolicy;
@@ -996,6 +1039,12 @@ export default function EditView({
 
   const resetDrafts = () => {
     setRows(savedRows.map((row) => ({ ...row })));
+    setDescription(savedDescription);
+    setNotes(savedNotes);
+    setComponents(componentIds(savedComponents));
+    setRpmColumn(savedRpmColumn);
+    setComponentDraft(false);
+    setComponentPickerVersion((version) => version + 1);
     setRenames({});
     setDrops(new Set());
     setNanPolicy(savedNanPolicy);
@@ -1019,6 +1068,24 @@ export default function EditView({
   const discardDrafts = () => {
     resetDrafts();
     setStatus('discarded unsaved edit drafts');
+  };
+
+  const reloadMetadata = async () => {
+    if (pendingAction) return;
+    if (dirty && !(await confirmAction({ title: 'Reload saved test metadata?',
+      description: 'Unsaved edit drafts will be discarded.', confirmLabel: 'Reload metadata' }))) return;
+    setPendingAction('Reloading metadata');
+    try {
+      const result = await fetchMeta(test);
+      resetDrafts();
+      setRows(metaRows(result.user_meta)); setSavedRows(metaRows(result.user_meta));
+      setDescription(result.description ?? ''); setSavedDescription(result.description ?? '');
+      setNotes(result.notes ?? ''); setSavedNotes(result.notes ?? '');
+      setComponents(componentIds(result.components)); setSavedComponents(componentIds(result.components));
+      setRpmColumn(result.component_rpm_column ?? ''); setSavedRpmColumn(result.component_rpm_column ?? '');
+      onMetaSaved(result); setStatus('Saved metadata reloaded');
+    } catch (e) { setStatus(e instanceof Error ? e.message : String(e)); }
+    finally { setPendingAction(''); }
   };
 
   const doRename = async () => {
@@ -1063,7 +1130,7 @@ export default function EditView({
     if (
       !(await confirmAction({
         title: `Delete test '${test}'?`,
-        description: 'The test will move to the trash folder and can be restored server-side for a limited time.',
+        description: 'The test will move to Trash in Uploads, where you can restore it or delete it permanently.',
         detail: dirty
           ? 'All unsaved edit drafts will also be discarded.'
           : 'Analysis data for this test will no longer appear in the workspace.',
@@ -1112,7 +1179,7 @@ export default function EditView({
           {pendingAction}…
         </div>
       )}
-      {status && <div style={{ fontSize: 11, color: '#569cd6', padding: '0 4px' }}>{status}</div>}
+      {status && <div role="status" aria-live="polite" style={{ fontSize: 11, color: '#9fc7df', padding: '0 4px' }}>{status}</div>}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
         {/* test info + metadata */}
@@ -1161,9 +1228,52 @@ export default function EditView({
             </button>
           </div>
 
-          <div className="section-title" style={{ marginTop: 8 }}>Metadata</div>
+          <div className="section-title" style={{ marginTop: 8 }}>Test notes</div>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span>Description</span>
+            <textarea className="input" rows={2} value={description}
+              style={{ width: '100%', minWidth: 0, resize: 'vertical' }}
+              placeholder="e.g. Temperature test at sustained load"
+              aria-invalid={!!descriptionError} aria-describedby="edit-description-help"
+              onChange={(event) => { setDescription(event.target.value); setStatus(''); }} />
+          </label>
+          <span id="edit-description-help" style={{ fontSize: 10, color: '#aaa' }}>
+            Shown in Uploads. {textLength(description).toLocaleString()} / {MAX_DESCRIPTION_LENGTH.toLocaleString()}
+          </span>
+          {descriptionError && <span role="alert" style={{ color: '#f48771' }}>{descriptionError}</span>}
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span>Findings / notes</span>
+            <textarea className="input" rows={5} value={notes}
+              style={{ width: '100%', minWidth: 0, resize: 'vertical' }}
+              placeholder="e.g. Temperature rose near the end of the test."
+              aria-invalid={!!notesError} aria-describedby="edit-notes-help"
+              onChange={(event) => { setNotes(event.target.value); setStatus(''); }} />
+          </label>
+          <span id="edit-notes-help" style={{ fontSize: 10, color: '#aaa' }}>
+            Test-level observations. {textLength(notes).toLocaleString()} / {MAX_NOTES_LENGTH.toLocaleString()}
+          </span>
+          {notesError && <span role="alert" style={{ color: '#f48771' }}>{notesError}</span>}
+
+          <div className="section-title" style={{ marginTop: 8 }}>Components</div>
+          <ComponentPicker key={`${test}:${componentPickerVersion}`} value={components} onChange={setComponents}
+            catalog={catalog} onDraftChange={setComponentDraft} />
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>Component RPM column
+            <select className="input" value={rpmColumn} aria-describedby="component-rpm-help"
+              onChange={event => { setRpmColumn(event.target.value); setStatus(''); }}>
+              <option value="">Unassigned — exclude from component statistics</option>
+              {rpmColumn && !dataColumns.includes(rpmColumn) && <option value={rpmColumn}>{rpmColumn} (unavailable)</option>}
+              {dataColumns.map(column => <option key={column} value={column}>{column}</option>)}
+            </select>
+          </label>
+          <p id="component-rpm-help" style={{ fontSize: 11, color: '#aaa', margin: '2px 0 8px' }}>
+            Choose a signal already expressed in revolutions per minute. This shaft RPM applies to each assigned component.
+            Finite RPM &gt; 0 counts as running; no unit conversion or temporary plot filtering is applied.
+            Trashed tests do not contribute. Save here, then open Components to see current totals.
+          </p>
+
+          <div className="section-title" style={{ marginTop: 8 }}>Additional metadata</div>
           <div style={{ fontSize: 10, color: '#909090' }}>
-            free-form descriptors (prop, motor, ESC, ambient…) stored in meta.json
+            Other descriptors, such as ambient conditions. Legacy fields remain separate from component associations.
           </div>
           {rows.map((r, i) => (
             <div key={i} style={{ display: 'flex', gap: 6 }}>
@@ -1176,7 +1286,9 @@ export default function EditView({
           ))}
           <div style={{ display: 'flex', gap: 6 }}>
             <button className="btn" onClick={() => setRows([...rows, { key: '', value: '' }])}>+ field</button>
-            <button className="btn" onClick={saveMeta} disabled={!metadataDirty}>save metadata</button>
+            <button className="btn" onClick={saveMeta}
+              disabled={!metadataDirty || !!descriptionError || !!notesError || componentDraft}>Save notes and metadata</button>
+            <button className="btn" onClick={() => void reloadMetadata()}>Reload saved metadata</button>
           </div>
         </div>
 

@@ -18,6 +18,8 @@ interface SettingsViewProps {
   /** Union of every loaded test's columns — the pick lists. A saved preference
    *  naming a column no test currently has still shows, tagged "(not loaded)". */
   columns: string[];
+  /** XY preferences also allow each test's stored time column. */
+  xyColumns: string[];
   /** Ready uploaded data zones that can supply datasheet rows. */
   zones: string[];
 }
@@ -146,6 +148,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onSave,
   onMakeDefault,
   columns,
+  xyColumns,
   zones,
 }) => {
   const confirmAction = useConfirm();
@@ -391,7 +394,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         <Section
           title="3×3 grid — XY mode"
-          hint="XY mode has its own per-cell pairing, independent of the section above: each cell plots Y vs X (what Edit Plots shows as '[Y] vs [X]'). Y auto = follow that cell's plotted column above; X auto = the first grid column. Per-cell session picks in Edit Plots still override."
+          hint="XY mode has its own per-cell pairing: each cell plots Y vs X, including stored time columns in seconds on either axis. Y auto = follow that cell's plotted column above; X auto = the first grid column. Per-cell session picks in Edit Plots still override."
         >
           <div
             className="settings-grid settings-grid-xy"
@@ -422,7 +425,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       next[i] = v;
                       edit({ xyYCols: next });
                     }}
-                    columns={columns}
+                    columns={xyColumns}
                     autoLabel={`(same as cell ${i + 1})`}
                     width={150}
                     ariaLabel={`Preferred Y signal for XY cell ${i + 1}`}
@@ -437,7 +440,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       next[i] = v;
                       edit({ xyXCols: next });
                     }}
-                    columns={columns}
+                    columns={xyColumns}
                     autoLabel="(auto)"
                     width={150}
                     ariaLabel={`Preferred X signal for XY cell ${i + 1}`}

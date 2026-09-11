@@ -1,0 +1,10 @@
+.picker { min-width: 0; font-size: 12px; }
+.picker p { color: #aaa; font-size: 11px; line-height: 1.5; margin: 6px 0; overflow-wrap: anywhere; }
+.fields { display: flex; flex-wrap: wrap; gap: 10px; }
+.fields label, .creation label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.fields label { flex: 1 1 180px; }
+.picker select, .creation input { width: 100%; min-width: 0; box-sizing: border-box; color: #ddd; background: #333; border: 1px solid #555; border-radius: 3px; padding: 7px; font: inherit; }
+.creation { border-left: 2px solid #569cd6; padding: 8px 12px; margin-top: 10px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.picker [role=alert] { color: #f48771; overflow-wrap: anywhere; }
+.picker :focus-visible { outline: 2px solid #85bddd; outline-offset: 2px; }

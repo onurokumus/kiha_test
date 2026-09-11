@@ -1,19 +1,18 @@
 import { CSSProperties, useEffect, useRef, useState } from 'react';
 import {
-  autoSplit,
-  exportCsvUrl,
-  fetchSplitCandidates,
+  testPointCsvUrl,
   fetchTestPoints,
   putTestPoints,
   uploadTestPoints,
 } from '../../services/api';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
-import { IdCandidate, TestInfo, TestMeta, TestPoint, TestPointsFile } from '../../types';
+import { AutoSplitProposal, TestInfo, TestMeta, TestPoint, TestPointsFile } from '../../types';
 import { round3 } from '../../utils/formatters';
-import { SearchableSelect } from '../controls/SearchableSelect';
+import { draftTestPointRange, indexTestPoints, patchTestPoint } from '../../utils/testPointExport';
 import { TestSelect } from '../controls/TestSelect';
-import { useConfirm } from '../feedback/confirm';
-import SplitPlot, { effectiveEnd, TimeRange } from './SplitPlot';
+import { effectiveEnd, TimeRange } from './SplitPlot';
+import SplitPlotStack from './SplitPlotStack';
+import AutoSplitPanel from './AutoSplitPanel';
 
 interface Props {
   test: string;
@@ -33,12 +32,14 @@ function sameTestPoints(left: TestPoint[], right: TestPoint[]): boolean {
   const comparable = (points: TestPoint[]) =>
     [...points]
       .sort((a, b) => a.id - b.id)
-      .map(({ id, name, label, start_s, end_s, notes }) => ({
+      .map(({ id, name, label, start_s, end_s, start_idx, end_idx, notes }) => ({
         id,
         name,
         label,
         start_s,
         end_s,
+        start_idx,
+        end_idx,
         notes: notes ?? '',
       }));
 
@@ -46,7 +47,7 @@ function sameTestPoints(left: TestPoint[], right: TestPoint[]): boolean {
 }
 
 /** Split editor: define/adjust test points over the full test.
- *  Auto-split proposes TPs from an ID-like column; nothing persists until
+ *  Auto-split previews TPs from changes across selected variables; nothing persists until
  *  Save (PUT /testpoints with the full TestPointsFile wrapper). */
 export default function SplitView({
   test,
@@ -58,7 +59,6 @@ export default function SplitView({
   onSaved,
   onBusyChange,
 }: Props) {
-  const confirmAction = useConfirm();
   const [tps, setTps] = useState<TestPoint[]>([]);
   const [savedTps, setSavedTps] = useState<TestPoint[] | null>(null);
   const [tpLoadState, setTpLoadState] = useState<'loading' | 'ready' | 'error'>(
@@ -69,19 +69,17 @@ export default function SplitView({
   const [saving, setSaving] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [range, setRange] = useState<TimeRange>(null);
-  const [candidates, setCandidates] = useState<IdCandidate[]>([]);
-  const [candCol, setCandCol] = useState('');
-  const [ignoreZero, setIgnoreZero] = useState(true);
-  const [minLen, setMinLen] = useState(1.0);
+  const [autoSplitOpen, setAutoSplitOpen] = useState(false);
+  const autoSplitTrigger = useRef<HTMLButtonElement>(null);
   const [status, setStatus] = useState('');
-  const [displayCol, setDisplayCol] = useState(columns[0] || '');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const dataStart = meta.t_start ?? 0;
   const dataEnd = dataStart + meta.duration_s;
   const dirty = savedTps !== null && !sameTestPoints(tps, savedTps);
+  const indexedTps = indexTestPoints(tps, meta);
 
-  // load saved test points + ID-column candidates
+  // Load saved test points. Auto-split candidates are loaded on demand.
   useEffect(() => {
     let dead = false;
     setTps([]);
@@ -101,13 +99,6 @@ export default function SplitView({
         setTpLoadError(e instanceof Error ? e.message : String(e));
         setTpLoadState('error');
       });
-    fetchSplitCandidates(test)
-      .then((c) => {
-        if (dead) return;
-        setCandidates(c);
-        setCandCol(c[0]?.col ?? '');
-      })
-      .catch((e) => !dead && console.error(e));
     setSelectedId(null);
     setRange(null);
     return () => {
@@ -120,12 +111,8 @@ export default function SplitView({
     return () => onBusyChange?.(false);
   }, [onBusyChange, saving]);
 
-  useEffect(() => {
-    setDisplayCol((prev) => (columns.includes(prev) ? prev : columns[0] || ''));
-  }, [columns]);
-
   const patchTp = (id: number, patch: Partial<TestPoint>) => {
-    setTps((list) => list.map((tp) => (tp.id === id ? { ...tp, ...patch } : tp)));
+    setTps((list) => list.map((tp) => (tp.id === id ? patchTestPoint(tp, patch) : tp)));
   };
 
   const addTp = () => {
@@ -151,29 +138,18 @@ export default function SplitView({
     if (selectedId === id) setSelectedId(null);
   };
 
-  const runAutoSplit = async () => {
-    if (!candCol || tpLoadState !== 'ready' || saving) return;
-    if (
-      tps.length &&
-      !(await confirmAction({
-        title: `Replace ${tps.length} existing test points?`,
-        description: `Auto-split will replace the ${tps.length} unsaved test-point definitions currently shown.`,
-        detail: 'Nothing is written to the test until you select Save.',
-        confirmLabel: 'Replace points',
-        tone: 'warning',
-      }))
-    ) {
-      return;
-    }
-    setStatus('splitting…');
-    try {
-      const result = await autoSplit(test, candCol, ignoreZero, minLen);
-      setTps(result);
-      setSelectedId(null);
-      setStatus(`auto-split: ${result.length} test points from ${candCol} — unsaved`);
-    } catch (e) {
-      setStatus(String(e instanceof Error ? e.message : e));
-    }
+  const closeAutoSplit = () => {
+    setAutoSplitOpen(false);
+    requestAnimationFrame(() => autoSplitTrigger.current?.focus({ preventScroll: true }));
+  };
+
+  const applyAutoSplit = (proposal: AutoSplitProposal) => {
+    if (tpLoadState !== 'ready' || saving || proposal.test_points.length === 0) return;
+    setTps(proposal.test_points);
+    setSelectedId(null);
+    setRange(null);
+    setStatus(`Auto-split applied: ${proposal.test_points.length} test points from ${proposal.columns.join(', ')}. Review the plots, then Save to keep these changes.`);
+    closeAutoSplit();
   };
 
   const save = async () => {
@@ -184,12 +160,7 @@ export default function SplitView({
       setStatus(`cannot save: ${bad.name} has end ≤ start`);
       return;
     }
-    const sorted = [...tps].sort((a, b) => a.start_s - b.start_s);
-    const withIdx = sorted.map((tp) => ({
-      ...tp,
-      start_idx: Math.round((tp.start_s - dataStart) * fs),
-      end_idx: tp.end_s !== null ? Math.round((tp.end_s - dataStart) * fs) : null,
-    }));
+    const withIdx = indexTestPoints(tps, meta);
     const payload: TestPointsFile = {
       version: 1,
       test,
@@ -343,51 +314,11 @@ export default function SplitView({
           style={{ width: 180 }}
         />
         <span style={{ color: '#555' }}>|</span>
-        <span className="section-title" style={{ margin: 0 }}>Auto-split</span>
-        <SearchableSelect
-          value={candCol}
-          onChange={setCandCol}
-          ariaLabel="Auto-split column"
-          options={candidates.map((candidate) => ({
-            value: candidate.col,
-            label: candidate.col,
-            description: `${candidate.n_unique.toLocaleString()} unique values`,
-          }))}
-          placeholder="No ID-like columns"
-          searchPlaceholder="Search split columns..."
-          optionNoun="column"
-          disabled={candidates.length === 0}
-          style={{ width: 190 }}
-        />
-        <label style={{ fontSize: 11, display: 'flex', gap: 4, alignItems: 'center' }}>
-          <input type="checkbox" checked={ignoreZero}
-                 onChange={(e) => setIgnoreZero(e.target.checked)} />
-          ignore 0
-        </label>
-        <label style={{ fontSize: 11, display: 'flex', gap: 4, alignItems: 'center' }}>
-          min len (s)
-          <input className="input" type="number" step="0.5" min="0"
-                 style={{ width: 60 }}
-                 value={minLen}
-                 onChange={(e) => {
-                   const v = Number(e.target.value);
-                   setMinLen(Number.isFinite(v) && v >= 0 ? v : 0);
-                 }} />
-        </label>
-        <button className="btn" disabled={!candCol} onClick={runAutoSplit}>
-          auto-split
+        <button ref={autoSplitTrigger} className={'btn-toggle' + (autoSplitOpen ? ' active' : '')}
+          aria-label="Configure auto-split" aria-expanded={autoSplitOpen}
+          onClick={() => autoSplitOpen ? closeAutoSplit() : setAutoSplitOpen(true)}>
+          Auto-split…
         </button>
-        <span style={{ color: '#555' }}>|</span>
-        <span style={{ fontSize: 11, color: '#909090' }}>plot:</span>
-        <SearchableSelect
-          value={displayCol}
-          onChange={setDisplayCol}
-          ariaLabel="Plot column"
-          options={columns.map((column) => ({ value: column, label: column }))}
-          searchPlaceholder="Search plot columns..."
-          optionNoun="signal"
-          style={{ width: 190 }}
-        />
         <span style={{ flex: 1 }} />
         <button className="btn" onClick={addTp}>+ new TP</button>
         <button className="btn" onClick={() => fileRef.current?.click()}>
@@ -418,27 +349,38 @@ export default function SplitView({
       </div>
       {status && <div style={{ fontSize: 11, color: '#569cd6', padding: '0 4px' }}>{status}</div>}
 
-      {displayCol && (
-        <SplitPlot
-          key={`${test}:${displayCol}`}
-          test={test}
-          cols={[displayCol]}
-          range={range}
-          onRangeChange={setRange}
-          tps={tps}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          onChangeTp={patchTp}
-          dataStart={dataStart}
-          dataEnd={dataEnd}
+      {autoSplitOpen && (
+        <AutoSplitPanel
+          key={JSON.stringify([test, meta.columns, meta.n_rows, meta.fs_hz, meta.t_start, meta.edited_at])}
+          test={test} columns={columns} draft={tps}
+          disabled={tpLoadState !== 'ready' || saving}
+          onApply={applyAutoSplit} onClose={closeAutoSplit}
         />
       )}
+
+      <SplitPlotStack
+        key={test}
+        test={test}
+        columns={columns}
+        range={range}
+        onRangeChange={setRange}
+        tps={tps}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        onChangeTp={patchTp}
+        dataStart={dataStart}
+        dataEnd={dataEnd}
+      />
 
       {/* TP table */}
       <div className="panel">
         <div className="section-title">
           Test points <span className="badge">{tps.length}</span>
         </div>
+        <p style={{ fontSize: 11, color: '#909090', margin: '4px 0 8px' }}>
+          CSV includes full-resolution stored data and test_point_id. Unsaved changes download
+          as a draft; plot zoom and filters do not affect the export.
+        </p>
         <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 90px 90px 60px 1fr 130px', gap: 4, fontSize: 11 }}>
           <span style={{ color: '#909090' }}>name</span>
           <span style={{ color: '#909090' }}>label</span>
@@ -447,14 +389,16 @@ export default function SplitView({
           <span style={{ color: '#909090' }}>open</span>
           <span style={{ color: '#909090' }}>notes</span>
           <span />
-          {[...tps].sort((a, b) => a.start_s - b.start_s).map((tp) => {
+          {indexedTps.map((tp) => {
             const sel = tp.id === selectedId;
+            const draft = draftTestPointRange(tp, indexedTps, meta.n_rows);
+            const exportHref = !dirty
+              ? testPointCsvUrl(test, tp.id)
+              : draft ? testPointCsvUrl(test, tp.id, undefined, draft) : undefined;
             return (
               <FragmentRow key={tp.id} tp={tp} sel={sel}
-                exportHref={exportCsvUrl(test, {
-                  t0: tp.start_s,
-                  t1: effectiveEnd(tp, tps, dataEnd),
-                })}
+                exportHref={saving ? undefined : exportHref}
+                isDraft={dirty}
                 onPatch={(p) => patchTp(tp.id, p)}
                 onZoom={() => zoomTo(tp)}
                 onRemove={() => removeTp(tp.id)}
@@ -478,12 +422,13 @@ export default function SplitView({
  *  (Number('') === 0) would teleport the row to the top mid-edit (bug 1.20).
  *  Holding the edit locally until blur keeps the committed value — and thus the
  *  sort order — stable while typing; an empty/invalid value reverts. */
-function NumberCell({ value, disabled, style, onFocus, onCommit }: {
+function NumberCell({ value, disabled, style, onFocus, onCommit, ariaLabel }: {
   value: number | null;
   disabled?: boolean;
   style?: CSSProperties;
   onFocus?: () => void;
   onCommit: (v: number) => void;
+  ariaLabel?: string;
 }) {
   const [text, setText] = useState(value === null ? '' : String(value));
   const [editing, setEditing] = useState(false);
@@ -494,6 +439,7 @@ function NumberCell({ value, disabled, style, onFocus, onCommit }: {
   return (
     <input
       className="input"
+      aria-label={ariaLabel}
       style={style}
       type="number"
       step="0.01"
@@ -514,12 +460,12 @@ function NumberCell({ value, disabled, style, onFocus, onCommit }: {
   );
 }
 
-function FragmentRow({ tp, sel, exportHref, onPatch, onZoom, onRemove, onSelect }: {
+function FragmentRow({ tp, sel, exportHref, isDraft, onPatch, onZoom, onRemove, onSelect }: {
   tp: TestPoint;
   sel: boolean;
-  /** Window-export URL for the TP's CURRENT time range — unlike the saved-TP
-   *  endpoint this also works for unsaved/edited rows. */
-  exportHref: string;
+  /** Shared TP-export URL, optionally with explicit half-open draft rows. */
+  exportHref?: string;
+  isDraft: boolean;
   onPatch: (p: Partial<TestPoint>) => void;
   onZoom: () => void;
   onRemove: () => void;
@@ -532,12 +478,14 @@ function FragmentRow({ tp, sel, exportHref, onPatch, onZoom, onRemove, onSelect 
   return (
     <>
       <input className="input" style={cellStyle} value={tp.name}
+             aria-label={`Name for TP ${tp.id}`}
              onFocus={onSelect}
              onChange={(e) => onPatch({ name: e.target.value })} />
       <input className="input" style={cellStyle} value={tp.label}
              onFocus={onSelect}
              onChange={(e) => onPatch({ label: e.target.value })} />
       <NumberCell style={cellStyle} value={tp.start_s} onFocus={onSelect}
+             ariaLabel={`Start seconds for TP ${tp.id}`}
              onCommit={(v) =>
                onPatch({
                  start_s: tp.end_s !== null && v >= tp.end_s
@@ -545,11 +493,13 @@ function FragmentRow({ tp, sel, exportHref, onPatch, onZoom, onRemove, onSelect 
                    : v,
                })} />
       <NumberCell style={cellStyle} value={tp.end_s} disabled={tp.end_s === null}
+             ariaLabel={`End seconds for TP ${tp.id}`}
              onFocus={onSelect}
              onCommit={(v) =>
                onPatch({ end_s: v <= tp.start_s ? round3(tp.start_s + 0.01) : v })} />
       <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <input type="checkbox" checked={tp.end_s === null}
+               aria-label={`Open end for TP ${tp.id}`}
                title="open end: TP runs until next TP or end of data"
                onChange={(e) =>
                  onPatch({ end_s: e.target.checked ? null : tp.start_s + 5 })} />
@@ -559,9 +509,14 @@ function FragmentRow({ tp, sel, exportHref, onPatch, onZoom, onRemove, onSelect 
              onChange={(e) => onPatch({ notes: e.target.value })} />
       <span style={{ display: 'flex', gap: 4 }}>
         <button className="btn" onClick={onZoom} title="zoom to test point">🔍</button>
+        <span style={{ alignSelf: 'center', color: '#909090' }} title={`Test-point ID ${tp.id}`}>#{tp.id}</span>
         <a className="btn" href={exportHref} download
+           aria-label={`Download ${isDraft ? 'draft ' : ''}CSV for TP ${tp.id}`}
+           aria-disabled={!exportHref || undefined}
+           tabIndex={exportHref ? undefined : -1}
            style={{ textDecoration: 'none' }}
-           title="download CSV of this TP's current time range">⬇</a>
+           title={!exportHref ? 'No samples in this range, or save in progress' :
+             `Download ${isDraft ? 'unsaved draft' : 'saved TP'} CSV with test_point_id`}>⬇</a>
         <button className="btn" onClick={onRemove} title="delete">✕</button>
       </span>
     </>

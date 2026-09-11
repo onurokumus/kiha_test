@@ -1,0 +1,54 @@
+.card {
+  position: relative;
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+
+.plotNumber {
+  flex: none;
+  color: #a0a0a0;
+  font-size: 11px;
+}
+
+.variable {
+  flex: 1 1 200px;
+  max-width: 440px;
+}
+
+.actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.viewport {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tpLabel {
+  font-family: inherit;
+  line-height: 16px;
+}
+
+.tpLabel:focus-visible {
+  outline: 2px solid #9cdcfe;
+  outline-offset: -2px;
+}
+
+.hint {
+  margin-top: 3px;
+  color: #909090;
+  font-size: 10px;
+}

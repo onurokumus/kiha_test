@@ -1527,7 +1527,9 @@ input[type='checkbox'] {
   }
 }
 
-@media (max-width: 700px) {
+/* Six navigation tabs plus import/session actions need the second row at
+   narrower desktop windows and browser zoom, before controls leave the screen. */
+@media (max-width: 900px) {
   .app-header {
     gap: 0;
     padding: 0 12px;
@@ -2230,3 +2232,25 @@ input[type='checkbox'] {
 .uplot .u-cursor-y {
   border-color: #6a6a6a;
 }
+.session-recovery {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  border-bottom: 1px solid #78603d;
+  background: #302b22;
+  color: #eed6ad;
+  max-height: 32vh;
+  overflow: auto;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.session-recovery summary { cursor: pointer; font-weight: 600; }
+.session-recovery ul { margin: 6px 0; padding-left: 20px; }
+.session-recovery p { margin: 6px 0; }
+.session-recovery-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.session-recovery-actions label { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.session-recovery-actions select { max-width: min(360px, 55vw); }
+/* Recovery messages consume vertical space at desktop browser zoom. Scroll
+   the controls with the pane so they cannot leave a one-line plot viewport. */
+.session-recovery ~ .analyze-workspace .analyze-plots-pane { overflow-y: auto; }
+.session-recovery ~ .analyze-workspace .analyze-plots-pane > :first-child { flex-shrink: 0; }
+.session-recovery ~ .analyze-workspace .analyze-plots-pane > :last-child { min-height: 250px; flex-shrink: 0; }

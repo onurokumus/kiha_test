@@ -34,8 +34,8 @@ CORS_ORIGINS = _cors_origins()
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.environ.get("KIHA_DATA_DIR", REPO_ROOT / "data"))
 TESTS_DIR = DATA_DIR / "tests"
-TRASH_DIR = DATA_DIR / "trash"          # soft-deleted tests, undo window
-TRASH_MAX_AGE_S = 3600                  # purged on the next delete after this
+TRASH_DIR = DATA_DIR / "trash"          # UUID entries wrapping preserved test data
+TRASH_MAX_AGE_S = 3600                  # existing expiry on next delete; None retains until explicit deletion
 
 # Assumed sample rate when a file's time column is unusable (non-increasing /
 # corrupted / a single repeated coarse timestamp). Ingest then synthesizes a

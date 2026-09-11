@@ -163,9 +163,14 @@ function PageTooltip() {
         hide();
         return;
       }
-      setTooltip((current) =>
-        current ? { ...current, rect: target.getBoundingClientRect() } : current
-      );
+      const rect = target.getBoundingClientRect();
+      setTooltip((current) => {
+        if (!current) return current;
+        const previous = current.rect;
+        return previous.x === rect.x && previous.y === rect.y &&
+          previous.width === rect.width && previous.height === rect.height
+          ? current : { ...current, rect };
+      });
     };
 
     document.addEventListener('pointerover', handlePointerOver);
@@ -205,8 +210,11 @@ function PageTooltip() {
       placement === 'bottom'
         ? tooltip.rect.bottom + gap
         : Math.max(edge, tooltip.rect.top - bounds.height - gap);
+    // Resize/scroll can fire while focus and layout are settling after zoom.
+    // Do not schedule another layout update for identical tooltip geometry.
+    if (position?.left === left && position.top === top && position.placement === placement) return;
     setPosition({ left, top, placement });
-  }, [tooltip]);
+  }, [tooltip, position]);
 
   if (!tooltip) return null;
 

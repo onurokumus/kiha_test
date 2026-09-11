@@ -59,10 +59,18 @@
 .gridShell {
   container-type: inline-size;
   display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.exportToolbar {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  padding-bottom: 5px;
 }
 
 .gridContainer {
@@ -72,31 +80,34 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow-y: auto;
 }
 
 .gridSingle {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: minmax(220px, 1fr);
 }
 
+/* A wide but short pane also occurs at desktop browser zoom when the scatter
+   stacks above the signals. Keep usable plot heights and scroll extra rows;
+   width-only container queries otherwise squeeze every canvas below 40px. */
 .gridQuad {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(220px, 1fr));
 }
 
 .gridNine {
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-template-rows: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(220px, 1fr));
 }
 
 .gridExpanded {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
+  /* Expanded plots also reserve space for filter controls and a live legend. */
+  grid-template-rows: minmax(320px, 1fr);
 }
 
 .plotWrapper {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   opacity: 1;
   /* 1fr grid tracks are minmax(auto, 1fr): without these the uPlot canvas's
      intrinsic pixel size becomes the track minimum, so after minimizing an
@@ -116,11 +127,17 @@
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: scale(0.95);
   }
   to {
     opacity: 1;
-    transform: scale(1);
+  }
+}
+
+/* Plot coordinates must stay in untransformed CSS pixels throughout the
+   entrance animation; a transformed ancestor also shifts uPlot's cursor. */
+@media (prefers-reduced-motion: reduce) {
+  .plotWrapperVisible {
+    animation: none;
   }
 }
 
@@ -141,3 +158,8 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+.unavailable { padding: 12px; display: flex; flex-direction: column; gap: 8px; overflow: auto; color: #c9d1d9; }
+.unavailable p { font-size: 12px; color: #adb4bf; }
+.unavailable label { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.unavailable select { min-width: 0; max-width: 100%; flex: 1; }
+.unavailable strong { overflow-wrap: anywhere; }

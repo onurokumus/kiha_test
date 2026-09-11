@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { TestInfo, UploadItem } from '../../types';
 
-export type AppTab = 'analyze' | 'split' | 'edit' | 'uploads' | 'settings';
+export type AppTab = 'analyze' | 'split' | 'edit' | 'uploads' | 'components' | 'settings';
 
 interface HeaderProps {
   tests: TestInfo[];
@@ -14,6 +14,7 @@ interface HeaderProps {
   onResumeUpload: (id: number) => void;
   onCancelUpload: (id: number) => void;
   notice?: string;
+  sessionControls?: React.ReactNode;
 }
 
 const chipButton: React.CSSProperties = {
@@ -129,7 +130,7 @@ export const Header: React.FC<HeaderProps> = ({
   onPauseUpload,
   onResumeUpload,
   onCancelUpload,
-  notice,
+  notice, sessionControls,
 }) => {
   const importRef = useRef<HTMLInputElement>(null);
   // Local active uploads render their own chip; only count transfers received
@@ -175,11 +176,13 @@ export const Header: React.FC<HeaderProps> = ({
           {tabButton('split', 'Split')}
           {tabButton('edit', 'Edit')}
           {tabButton('uploads', 'Uploads')}
+          {tabButton('components', 'Components')}
           {tabButton('settings', 'Settings')}
         </nav>
         <button className="btn app-import-button" onClick={() => importRef.current?.click()}>
           <span aria-hidden="true">＋</span> Import CSV
         </button>
+        {sessionControls}
         <input
           ref={importRef}
           type="file"

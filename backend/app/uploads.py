@@ -48,6 +48,9 @@ from .locks import catalog_write, drop_test_lock, test_write
 from .provenance import MAX_UPLOADER_NAME_LENGTH, normalize_uploader_name
 from .status import write_status
 from .store import get_status, write_json_atomic
+from .test_notes import Description, MAX_DESCRIPTION_LENGTH, normalize_test_text
+from . import components
+from .components import ComponentIds
 
 
 logger = logging.getLogger("kiha.uploads")
@@ -79,6 +82,8 @@ class UploadInit(BaseModel):
     time_column: str | None = Field(default=None, max_length=255)
     uploader_name: str | None = Field(
         default=None, max_length=MAX_UPLOADER_NAME_LENGTH)
+    description: Description = ""
+    components: ComponentIds = Field(default_factory=ComponentIds)
 
     @field_validator("uploader_name", mode="before")
     @classmethod
@@ -310,6 +315,18 @@ def _validate_manifest(value: dict | None, name: str) -> dict:
         if normalized_uploader != uploader_name:
             raise UploadStateError(
                 "upload manifest has non-canonical uploader_name")
+    description = value.get("description", "")
+    try:
+        if (not isinstance(description, str)
+                or len(description) > MAX_DESCRIPTION_LENGTH
+                or normalize_test_text(description) != description):
+            raise ValueError("invalid description")
+    except ValueError:
+        raise UploadStateError("upload manifest has invalid description")
+    try:
+        components.ids(value.get("components"))
+    except (ValueError, TypeError):
+        raise UploadStateError("upload manifest has invalid components")
     return value
 
 
@@ -373,6 +390,8 @@ def _session_payload(manifest: dict) -> dict:
         "time_mode": manifest.get("time_mode", "auto"),
         "time_column": manifest.get("time_column"),
         "uploader_name": manifest.get("uploader_name"),
+        "description": manifest.get("description", ""),
+        "components": components.ids(manifest.get("components")),
         "chunk_size": manifest["chunk_size"],
         "total_chunks": manifest["total_chunks"],
         "state": manifest["state"],
@@ -434,16 +453,23 @@ def _identity_matches(manifest: dict, request: UploadInit) -> bool:
         and manifest.get("time_mode", "auto") == request.time_mode
         and manifest.get("time_column") == request.time_column
         and manifest.get("uploader_name") == request.uploader_name
+        and manifest.get("description", "") == request.description
+        and components.ids(manifest.get("components")) == request.components.model_dump(mode="json")
     )
 
 
 def _uploader_status_details(manifest: dict) -> dict:
     uploader_name = manifest.get("uploader_name")
-    return (
+    details = (
         {"uploader_name": uploader_name}
         if uploader_name is not None
         else {}
     )
+    if manifest.get("description"):
+        details["description"] = manifest["description"]
+    if manifest.get("components"):
+        details["components"] = manifest["components"]
+    return details
 
 
 def _remaining_upload_reservations(exclude: str | None = None) -> int:
@@ -574,6 +600,9 @@ def _init_upload(request: UploadInit) -> tuple[dict, bool]:
                 raise HTTPException(
                     409, f"test '{request.name}' already exists")
 
+            # Only new identities need registry lookup. Existing valid sessions
+            # can finish after a registry backup is temporarily unavailable.
+            component_ids = components.validate_references(request.components)
             reserved = _remaining_upload_reservations()
             try:
                 free = shutil.disk_usage(TESTS_DIR).free
@@ -603,6 +632,8 @@ def _init_upload(request: UploadInit) -> tuple[dict, bool]:
                 "fs_hz": request.fs_hz,
                 "time_mode": request.time_mode,
                 "time_column": request.time_column,
+                "description": request.description,
+                "components": component_ids,
                 "chunk_size": UPLOAD_CHUNK_BYTES,
                 "total_chunks": total_chunks,
                 "state": "receiving",
@@ -949,6 +980,8 @@ def ingest_completed_upload(name: str, upload_id: str) -> None:
             time_mode = manifest.get("time_mode", "auto")
             time_column = manifest.get("time_column")
             uploader_name = manifest.get("uploader_name")
+            description = manifest.get("description", "")
+            component_ids = components.ids(manifest.get("components"))
             raw_path = _test_dir(name) / "raw.csv"
         ingest_csv(
             raw_path,
@@ -958,6 +991,8 @@ def ingest_completed_upload(name: str, upload_id: str) -> None:
             time_mode=time_mode,
             time_column=time_column,
             uploader_name=uploader_name,
+            description=description,
+            component_ids=component_ids,
         )
     except Exception as exc:
         logger.exception("upload '%s': ingestion failed", name)

@@ -7,13 +7,17 @@
  */
 
 import { uploaderNameError } from './uploaderAttribution';
+import { validComponentIds, type ComponentIds } from '../utils/components';
+import { MAX_DESCRIPTION_LENGTH, testTextError } from '../utils/testNotes';
 
 export interface UploadResumeRecord {
+  components?: ComponentIds;
   version: 1;
   uploadId: string;
   testName: string;
   fileName: string;
   uploaderName?: string;
+  description?: string;
   sizeBytes: number;
   lastModifiedMs: number;
   fsHz?: number;
@@ -36,6 +40,10 @@ function isRecord(value: unknown): value is UploadResumeRecord {
     typeof item.testName === 'string' &&
     !!item.testName &&
     typeof item.fileName === 'string' &&
+    (item.components === undefined || validComponentIds(item.components)) &&
+    (item.description === undefined ||
+      (typeof item.description === 'string' &&
+        !testTextError(item.description, MAX_DESCRIPTION_LENGTH, 'Description'))) &&
     (item.uploaderName === undefined ||
       (typeof item.uploaderName === 'string' &&
         !uploaderNameError(item.uploaderName))) &&

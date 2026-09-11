@@ -1,0 +1,136 @@
+.summary {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 7px;
+  padding: 3px 0;
+  border: 0;
+  background: none;
+  color: #aab9c4;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.summary[data-tone='warning'] {
+  color: #e2cc8b;
+}
+.summary[data-tone='blocked'] {
+  color: #f6a293;
+}
+.summary[data-tone='ok'] {
+  color: #8bdbc4;
+}
+.summary:hover {
+  text-decoration: underline;
+}
+
+.details {
+  padding: 16px 18px 20px;
+  border-bottom: 1px solid #45535d;
+  background: #20282e;
+  color: #ced8df;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.65;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.heading h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.heading button {
+  flex-shrink: 0;
+}
+.facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
+}
+.facts section {
+  min-width: 0;
+}
+.facts h4 {
+  margin: 0 0 8px;
+  color: #e2ebf1;
+  font-size: 12px;
+}
+.facts p {
+  margin: 7px 0;
+}
+.note {
+  color: #a5b4bf;
+  font-size: 11px;
+}
+.warning {
+  color: #e2cc8b;
+}
+.examples summary {
+  color: #b0d5ed;
+  cursor: pointer;
+}
+.examples {
+  margin: 8px 0;
+}
+.examples ul {
+  padding-left: 18px;
+}
+
+.counts {
+  max-height: 220px;
+  overflow: auto;
+  margin: 10px 0;
+}
+/* The history table has a 900px minimum; nested count tables must not inherit it. */
+.details .counts table {
+  width: 100%;
+  min-width: 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.counts th,
+.counts td {
+  padding: 5px 6px;
+  border-bottom: 1px solid #3c4952;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.counts th:first-child {
+  width: 50%;
+  text-align: left;
+}
+.counts tbody th {
+  font-weight: 400;
+}
+.counts small {
+  display: block;
+  color: #e2cc8b;
+}
+.summary:focus-visible,
+.details :focus-visible {
+  outline: 2px solid #82c5ed;
+  outline-offset: 2px;
+}
+
+@media (max-width: 1100px) {
+  .facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .facts section:last-child {
+    grid-column: 1 / -1;
+  }
+}

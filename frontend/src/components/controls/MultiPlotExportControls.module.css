@@ -1,0 +1,13 @@
+.trigger { font-size: 11px; padding: 4px 8px; }
+.trigger:disabled { opacity: .5; cursor: default; }
+.dialog { width: min(680px, calc(100vw - 48px)); }
+.layoutChoice, .selectionActions { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; }
+.preview { display: grid; gap: 4px; margin-top: 6px; }
+.preview span { padding: 5px; text-align: center; font-size: 11px; background: #30383e; border: 1px solid #4c5963; }
+.plot { padding-top: 10px; border-top: 1px solid #414c53; }
+.plotChoice { display: flex; gap: 8px 12px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.plotChoice label { min-width: 0; flex: 1 1 180px; overflow-wrap: anywhere; }
+.plotChoice input { flex-shrink: 0; }
+.plotChoice select { max-width: 100%; background: #30383e; color: #e1edf4; border: 1px solid #718f9f; border-radius: 3px; padding: 5px; font: inherit; }
+.plotChoice select:focus-visible { outline: 2px solid #a0d7fa; outline-offset: 2px; }
+.dialog p.scope { font-size: 11px; color: #abbac4; margin: 6px 0; }

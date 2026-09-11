@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { componentIds, sameComponents } from '../utils/components';
 import { fetchTests, isAbortError } from '../services/api';
 import {
   cancelUploadSession,
@@ -19,6 +20,7 @@ import {
   UploadResumeRecord,
 } from '../services/uploadPersistence';
 import { normalizeUploaderName } from '../services/uploaderAttribution';
+import { normalizeTestText } from '../utils/testNotes';
 import { TestInfo, UploadItem, UploadPhase } from '../types';
 
 interface Options {
@@ -130,6 +132,8 @@ function uploadInit(
   return {
     name: item.testName,
     source_file: file.name,
+    description: options.description ?? '',
+    components: componentIds(options.components),
     ...(options.uploaderName
       ? { uploader_name: options.uploaderName }
       : {}),
@@ -154,6 +158,8 @@ function resolveUploadOptions(
     : '';
   return {
     ...(uploaderName ? { uploaderName } : {}),
+    description: normalizeTestText(selected?.description ?? ''),
+    components: componentIds(selected?.components),
     fsHz: selected?.fsHz ?? fallbackFsHz,
     timeMode,
     ...(timeColumn.trim() ? { timeColumn } : {}),
@@ -182,6 +188,8 @@ function sameUploadOptions(
     : '';
   return (
     leftUploader === rightUploader &&
+    (left?.description ?? '') === (right.description ?? '') &&
+    sameComponents(left?.components, right.components) &&
     leftMode === rightMode &&
     leftColumn === rightColumn &&
     left?.fsHz === right.fsHz
@@ -190,6 +198,8 @@ function sameUploadOptions(
 
 function uploadOptionsFromSession(session: UploadSession): UploadDataOptions {
   return {
+    description: session.description ?? '',
+    components: componentIds(session.components),
     ...(session.uploader_name ? { uploaderName: session.uploader_name } : {}),
     ...(session.fs_hz !== null && session.fs_hz !== undefined
       ? { fsHz: session.fs_hz }
@@ -237,6 +247,8 @@ export function useUploadManager({
         index + 1,
         {
           uploaderName: record.uploaderName,
+          description: record.description ?? '',
+          components: componentIds(record.components),
           fsHz: record.fsHz,
           timeMode: record.timeMode ?? 'auto',
           timeColumn: record.timeColumn,
@@ -292,9 +304,9 @@ export function useUploadManager({
       sessionIds.current.set(id, session.upload_id);
       const itemOptions = uploadOptions.current.get(id) ?? {};
       const uploaderName = session.uploader_name ?? itemOptions.uploaderName;
-      if (uploaderName !== itemOptions.uploaderName) {
-        uploadOptions.current.set(id, { ...itemOptions, uploaderName });
-      }
+      const description = session.description ?? '';
+      const components = componentIds(session.components);
+      uploadOptions.current.set(id, { ...itemOptions, uploaderName, description, components });
       updateItem(id, {
         sessionId: session.upload_id,
         uploaderName,
@@ -310,6 +322,8 @@ export function useUploadManager({
         uploadId: session.upload_id,
         testName: session.name,
         fileName: session.source_file,
+        description,
+        components,
         ...(uploaderName ? { uploaderName } : {}),
         sizeBytes: session.size_bytes,
         lastModifiedMs: session.last_modified_ms,

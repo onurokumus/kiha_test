@@ -1,3 +1,7 @@
+import { PlotViewports } from './utils/plotViewport';
+import { SessionControls } from './components/controls/SessionControls';
+import { AnalysisSession } from './services/analysisSession';
+import { SessionRecovery } from './services/sessionSources';
 import { CSSProperties, useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { AppTab, Header } from './components/layout/Header';
 import { AxisControls } from './components/controls/AxisControls';
@@ -10,6 +14,7 @@ import SplitView from './components/split/SplitView';
 import EditView from './components/edit/EditView';
 import UploadView from './components/upload/UploadView';
 import SettingsView from './components/settings/SettingsView';
+import ComponentStatisticsView from './components/components/ComponentStatisticsView';
 import { useConfirm } from './components/feedback/confirm';
 import { useTestPointSelection } from './hooks/useTestPointSelection';
 import { useScatterFilter } from './hooks/useScatterFilter';
@@ -20,9 +25,11 @@ import { UploadDataOptions } from './services/resumableUpload';
 import { useUnsavedChanges } from './hooks/useUnsavedChanges';
 import { assignColor } from './utils/colorManager';
 import { tpStatErrorRange } from './utils/scatterRanges';
+import { AxisRange, SavedTimeYRange, timePlotContexts } from './utils/timePlotRanges';
 import { MAX_SELECTED_TEST_POINTS } from './constants/selection';
 import {
   fetchTests,
+  fetchAnalysisSources,
   fetchMeta,
   fetchTestPoints,
   fetchTpStats,
@@ -40,6 +47,7 @@ import {
   PlotDensity,
   saveAnalysisSession,
 } from './services/analysisSession';
+import { AnalysisSource, captureSessionSources, referencedNames, resolveSessionSources, retainPendingSourceReferences } from './services/sessionSources';
 import {
   DatasheetDataPoint,
   ScatterDataPoint,
@@ -111,7 +119,19 @@ function bestRpmColumn(columns: string[]): string {
 function App() {
   const confirmAction = useConfirm();
   const [restoredSession] = useState(loadAnalysisSession);
+  const recoveryInputRef = useRef<AnalysisSession | null>(hasSavedAnalysisSession() ? restoredSession : null);
+  const [sessionEpoch, setSessionEpoch] = useState(0);
+  const [plotViewports, setPlotViewports] = useState<PlotViewports>(restoredSession.plotViewports);
   const [hasRestoredSession] = useState(hasSavedAnalysisSession);
+  const [sessionRecoveryReady, setSessionRecoveryReady] = useState(false);
+  const [recoveryMessages, setRecoveryMessages] = useState<string[]>([]);
+  const [recoveryLegacy, setRecoveryLegacy] = useState(false);
+  const [recoveryNeedsReview, setRecoveryNeedsReview] = useState(false);
+  const [sourceCatalog, setSourceCatalog] = useState<AnalysisSource[]>([]);
+  const [sourceRefreshVersion, setSourceRefreshVersion] = useState(0);
+  const recoverSessionRef = useRef<(legacy?: boolean) => Promise<void>>(async () => {});
+  const recoveryAttemptRef = useRef(0);
+  const recoveredOrderRef = useRef<string[]>([]);
   const [tests, setTests] = useState<TestInfo[]>([]);
   const [currentTest, setCurrentTest] = useState<string>(
     hasRestoredSession ? restoredSession.currentTest : ''
@@ -191,7 +211,7 @@ function App() {
   const [specSource, setSpecSource] = useState<'tp' | 'full'>(
     hasRestoredSession ? restoredSession.specSource : 'tp'
   );
-  // Per-plot DSP filters (TP + Full test modes), shown instead of raw data
+  // Per-plot DSP filters (TP + Full test modes), optionally overlaid on originals
   // while active. Each grid
   // cell has a ≈ button (next to expand) that opens its own filter row —
   // there is no shared/broadcast filter control.
@@ -199,6 +219,11 @@ function App() {
     hasRestoredSession
       ? restoredSession.plotFilters
       : Array.from({ length: 9 }, () => ({ ...DEFAULT_FILTER_UI }))
+  );
+  // Separate display state so switching an overlay never rebuilds filter specs.
+  const [annotationsVisible, setAnnotationsVisible] = useState(restoredSession.annotationsVisible);
+  const [plotShowOriginal, setPlotShowOriginal] = useState<boolean[]>(
+    () => restoredSession.plotShowOriginal
   );
   const [xySource, setXYSource] = useState<'tp' | 'full'>(
     hasRestoredSession ? restoredSession.xySource : 'tp'
@@ -237,7 +262,6 @@ function App() {
     () => window.matchMedia('(max-width: 980px)').matches
   );
   const analyzeWorkspaceRef = useRef<HTMLDivElement>(null);
-  const initialCurrentTestRef = useRef(currentTest);
   const {
     uploads,
     startUploads: handleUploadFiles,
@@ -306,6 +330,24 @@ function App() {
   const { timeZoom, setTimeZoom, resetTimeZoom } = useTimeZoom(
     hasRestoredSession ? restoredSession.timeZoom : null
   );
+  const [timeYRanges, setTimeYRanges] = useState<(SavedTimeYRange | null)[]>(
+    hasRestoredSession ? restoredSession.timeYRanges : []
+  );
+  const [timeZoomResetVersion, setTimeZoomResetVersion] = useState(0);
+  const timeYContexts = useMemo(
+    () => timePlotContexts(plotConfigs, selectedTPs, hiddenTPs),
+    [plotConfigs, selectedTPs, hiddenTPs]
+  );
+  const activeTimeYRanges = timeYContexts.map((context, index) =>
+    timeYRanges[index]?.context === context ? timeYRanges[index]!.range : null
+  );
+  const handleTimeYRangeChange = (index: number, range: AxisRange | null) => {
+    setTimeYRanges((previous) => {
+      const next = [...previous];
+      next[index] = range ? { context: timeYContexts[index], range } : null;
+      return next;
+    });
+  };
 
   /** Per-plot filter specs (null while 'none' or params incomplete). */
   const plotFilterSpecs = useMemo(() => plotFilters.map(buildFilterSpec), [plotFilters]);
@@ -339,6 +381,24 @@ function App() {
     });
     return out;
   }, [metaByTest, settings.datasheetZone]);
+
+  /** XY can plot stored time on either axis. Keep its schema separate from
+   *  signal-only scatter statistics, time traces and spectrum variables. */
+  const xyColumnsByTest = useMemo(() => {
+    const out: Record<string, string[]> = {};
+    Object.entries(metaByTest).forEach(([name, m]) => {
+      if (name !== settings.datasheetZone) out[name] = m.columns;
+    });
+    return out;
+  }, [metaByTest, settings.datasheetZone]);
+  const xyUnionColumns = useMemo(
+    () => [...new Set(Object.values(xyColumnsByTest).flat())].sort(),
+    [xyColumnsByTest]
+  );
+  const xyGridColumns = useMemo(() => {
+    const names = xySource === 'tp' ? [...selectedTPs.map((point) => point.test), currentTest] : [currentTest];
+    return [...new Set(names.flatMap((name) => xyColumnsByTest[name] ?? []))];
+  }, [xySource, selectedTPs, currentTest, xyColumnsByTest]);
 
   /** Columns across the selected test points, ordered by selection (the
    *  first-selected TP's columns come first), deduped. Drives the grid's
@@ -397,6 +457,8 @@ function App() {
   /** Drop every cache for one test (after rebuild/rename/delete/split-save). */
   const invalidateTest = useCallback(
     (name: string) => {
+      setSourceCatalog(previous => previous.filter(source => source.name !== name));
+      setSourceRefreshVersion(version => version + 1);
       // Bump the generation first so any in-flight fetch for this test drops
       // its result instead of writing pre-invalidation data back (1.11).
       testGen.current.set(name, (testGen.current.get(name) ?? 0) + 1);
@@ -447,33 +509,11 @@ function App() {
     [currentTest, setSelectedTPs]
   );
 
-  // Fetch test list on mount, select the first ready test
+  // Resolve persisted identities before hydrating selections or mounting plots.
+  // The ref keeps bootstrap independent of the many setters declared below.
   useEffect(() => {
-    const loadTests = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const list = await fetchTests();
-        const initialTest = initialCurrentTestRef.current;
-        const restoredTestStillExists =
-          initialTest && list.some((test) => test.name === initialTest && test.status === 'ready');
-        if (initialTest && !restoredTestStillExists) setFullRange(null);
-        setTests(list);
-        setCurrentTest((previous) => {
-          const restoredStillExists =
-            previous && list.some((test) => test.name === previous && test.status === 'ready');
-          if (restoredStillExists) return previous;
-          return list.find((test) => test.status === 'ready')?.name ?? '';
-        });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to fetch tests');
-        console.error('Error fetching tests:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadTests();
+    void recoverSessionRef.current();
+    return () => { recoveryAttemptRef.current += 1; };
   }, []);
 
   // Load meta + test points for every ready test; prune tests that are gone.
@@ -505,7 +545,8 @@ function App() {
       if (metaByTest[name] || metaInFlight.current.has(name)) return;
       metaInFlight.current.add(name);
       const gen = testGen.current.get(name) ?? 0;
-      Promise.all([fetchMeta(name), fetchTestPoints(name)])
+      const expectedId = sourceCatalog.find(source => source.name === name)?.id;
+      Promise.all([fetchMeta(name, undefined, expectedId), fetchTestPoints(name, expectedId)])
         .then(([m, tps]) => {
           if ((testGen.current.get(name) ?? 0) !== gen) return; // invalidated mid-flight
           setMetaErrors((previous) => {
@@ -531,14 +572,14 @@ function App() {
         })
         .finally(() => metaInFlight.current.delete(name));
     });
-  }, [tests, metaByTest, metaRetry, scheduleMetaRetry]);
+  }, [tests, metaByTest, metaRetry, scheduleMetaRetry, sourceCatalog]);
 
   // Rebuild lightweight saved selections as each referenced test becomes
   // available. Busy tests stay pending without blocking persistence for the
   // rest of the workspace, and restored points merge with any selections the
   // user made while metadata was loading.
   useEffect(() => {
-    if (loading) return;
+    if (loading || !sessionRecoveryReady) return;
 
     const restored: SelectedTestPoint[] = [];
     const hidden = new Set<string>();
@@ -546,15 +587,15 @@ function App() {
     const selectedIds = new Set(selectedTPs.map((selection) => selection.id));
     let remainingSlots = Math.max(0, MAX_SELECTED_TEST_POINTS - selectedTPs.length);
 
-    pendingRestoredSelections.forEach(({ test, tpId, hidden: wasHidden }) => {
+    pendingRestoredSelections.forEach(({ test, tpId, hidden: wasHidden, color }) => {
       const info = tests.find((candidate) => candidate.name === test);
       if (!info) return; // deleted since the session was saved
       if (info.status !== 'ready') {
-        stillPending.push({ test, tpId, hidden: wasHidden });
+        stillPending.push({ test, tpId, hidden: wasHidden, color });
         return;
       }
       if (!(test in metaByTest) || !(test in tpsByTest)) {
-        stillPending.push({ test, tpId, hidden: wasHidden });
+        stillPending.push({ test, tpId, hidden: wasHidden, color });
         return;
       }
       const point = tpsByTest[test]?.find((candidate) => candidate.id === tpId);
@@ -572,7 +613,7 @@ function App() {
         return;
       }
       if (remainingSlots === 0) {
-        stillPending.push({ test, tpId, hidden: wasHidden });
+        stillPending.push({ test, tpId, hidden: wasHidden, color });
         return;
       }
       restored.push({
@@ -581,7 +622,7 @@ function App() {
         tpId: point.id,
         name: point.name,
         label: point.label,
-        color: assignColor([...selectedTPs, ...restored]),
+        color: color ?? assignColor([...selectedTPs, ...restored]),
         tp: point,
         endS: point.end_s ?? nextStart ?? dataEnd,
         traces: {},
@@ -591,7 +632,9 @@ function App() {
       if (wasHidden) hidden.add(id);
     });
     if (restored.length > 0) {
-      setSelectedTPs((current) => [...current, ...restored]);
+      const rank = new Map(recoveredOrderRef.current.map((id, index) => [id, index]));
+      setSelectedTPs((current) => [...current, ...restored].sort((a, b) =>
+        (rank.get(a.id) ?? MAX_SELECTED_TEST_POINTS) - (rank.get(b.id) ?? MAX_SELECTED_TEST_POINTS)));
     }
     if (hidden.size > 0) {
       setHiddenTPs((current) => new Set([...current, ...hidden]));
@@ -606,6 +649,7 @@ function App() {
     setSelectionSessionHydrated(true);
   }, [
     loading,
+    sessionRecoveryReady,
     metaByTest,
     pendingRestoredSelections,
     selectedTPs,
@@ -635,7 +679,10 @@ function App() {
   // Precedence: in-session pick (axesUserSet) > saved preference (while its
   // column is loaded) > most-shared pair. Recomputed as tests load.
   useEffect(() => {
-    if (!defaultXAxis) return;
+    if (!sessionRecoveryReady || !defaultXAxis) return;
+    // A delayed schema must not overwrite a saved axis before its source loads.
+    if (axesUserSet && [xAxis, yAxis].some(axis => !unionColumns.includes(axis) && sourceCatalog.some(source =>
+      source.status === 'ready' && source.columns?.includes(axis) && !metaByTest[source.name]))) return;
     const prefX =
       settings.scatterX && unionColumns.includes(settings.scatterX) ? settings.scatterX : '';
     const prefY =
@@ -667,6 +714,7 @@ function App() {
     settings.scatterY,
     xAxis,
     yAxis,
+    sessionRecoveryReady, sourceCatalog, metaByTest,
   ]);
 
   // Seed the 3x3 grid from the ordered gridColumns universe (selection-first).
@@ -675,12 +723,28 @@ function App() {
   // (first selected TP's columns lead, then the active test). Never collapses
   // below the columns actually available.
   useEffect(() => {
-    if (gridColumns.length === 0) return;
+    if (loading || !sessionRecoveryReady || gridColumns.length === 0) return;
+    // A partial metadata universe must not compact restored positional slots:
+    // moving a column here would attach the following slot's saved filter to it.
+    // Wait only for ready tests that can contribute to this grid, not unrelated
+    // library tests or busy/deleted pending selections.
+    const readyNames = new Set(tests.filter((test) => test.status === 'ready').map((test) => test.name));
+    if (readyNames.has(currentTest) && !metaByTest[currentTest]) return;
+    if (selectionDriven) {
+      if (selectedTPs.some((selection) => readyNames.has(selection.test) && !metaByTest[selection.test])) return;
+      const selectedIds = new Set(selectedTPs.map((selection) => selection.id));
+      // Metadata arriving and the restore effect adding its TPs are separate
+      // renders. Do not normalize against the earlier, still-partial selection.
+      if (selectedTPs.length < MAX_SELECTED_TEST_POINTS && pendingRestoredSelections.some(
+        ({ test, tpId }) => readyNames.has(test) && !selectedIds.has(`${test}:${tpId}`)
+      )) return;
+    }
     setPlotConfigs((prev) => {
       if (plotsUserEdited) {
-        const valid = prev.filter((c) => gridColumns.includes(c));
-        const filler = gridColumns.filter((c) => !valid.includes(c));
-        return [...valid, ...filler].slice(0, 9);
+        // Slot filters/overlays/Y ranges belong to these exact variables. Keep
+        // an unavailable column in place rather than shifting its neighbours.
+        const filler = gridColumns.filter((c) => !prev.includes(c));
+        return [...prev, ...filler].slice(0, 9);
       }
       // Slot preferences are positional: cell i shows its preferred column when
       // loaded; unset/unavailable slots fill from gridColumns in order.
@@ -697,19 +761,20 @@ function App() {
     // Y falls back to '' = follow the shared grid slot for that cell.
     setXYYCols((prev) =>
       Array.from({ length: 9 }, (_, i) => {
-        if (prev[i] && gridColumns.includes(prev[i])) return prev[i];
+        if (prev[i]) return prev[i];
         const pref = settings.xyYCols[i] ?? '';
-        return pref && gridColumns.includes(pref) ? pref : '';
+        return pref && xyGridColumns.includes(pref) ? pref : '';
       })
     );
     setXYXCols((prev) =>
       Array.from({ length: 9 }, (_, i) => {
-        if (prev[i] && gridColumns.includes(prev[i])) return prev[i];
+        if (prev[i]) return prev[i];
         const pref = settings.xyXCols[i] ?? '';
-        return pref && gridColumns.includes(pref) ? pref : gridColumns[0] || '';
+        return pref && xyGridColumns.includes(pref) ? pref : gridColumns[0] || '';
       })
     );
-  }, [gridColumns, plotsUserEdited, settings.gridColumns, settings.xyYCols, settings.xyXCols]);
+  }, [gridColumns, xyGridColumns, plotsUserEdited, settings.gridColumns, settings.xyYCols, settings.xyXCols,
+    loading, sessionRecoveryReady, tests, currentTest, metaByTest, selectionDriven, selectedTPs, pendingRestoredSelections]);
 
   // Keep an explicit RPM reference for per-revolution spectra. Exact/case-only
   // matches survive test switches; otherwise choose the strongest RPM-like
@@ -719,7 +784,7 @@ function App() {
       const matching = spectrumRpmColumns.find(
         (column) => column.toLocaleLowerCase() === previous.toLocaleLowerCase()
       );
-      return matching ?? bestRpmColumn(spectrumRpmColumns);
+      return matching ?? (previous || bestRpmColumn(spectrumRpmColumns));
     });
   }, [spectrumRpmColumns]);
 
@@ -738,7 +803,7 @@ function App() {
       try {
         const list = await fetchTests();
         setTests(list);
-        if (!currentTest) {
+        if (!currentTest && sessionRecoveryReady && !recoveryNeedsReview && !recoveryLegacy) {
           const firstReady = list.find((t) => t.status === 'ready');
           if (firstReady) setCurrentTest(firstReady.name);
           return;
@@ -760,7 +825,7 @@ function App() {
     return () => window.clearInterval(id);
     // `tab` is read in the bail-out above: without it here, opening the Uploads
     // tab would not (re)start polling unless some other dep also changed (1.17).
-  }, [tests, uploadsActive, currentTest, invalidateTest, tab]);
+  }, [tests, uploadsActive, currentTest, invalidateTest, tab, sessionRecoveryReady, recoveryNeedsReview, recoveryLegacy]);
 
   // Auto-clear transient notices
   useEffect(() => {
@@ -876,8 +941,8 @@ function App() {
   };
 
   // -- Uploads tab callbacks --
-  const handleOpenTest = async (name: string) => {
-    if (await handleTestChange(name)) setTab('analyze');
+  const handleOpenTest = async (name: string, destination: 'analyze' | 'edit' = 'analyze') => {
+    if (await handleTestChange(name)) setTab(destination);
   };
 
   const handleTestDeleted = async (name: string) => {
@@ -897,9 +962,10 @@ function App() {
     }
   };
 
-  const handleTestsChanged = async () => {
+  const handleTestsChanged = async (restoredName?: string) => {
     try {
       setTests(await fetchTests());
+      if (restoredName) invalidateTest(restoredName);
     } catch {
       // poller will catch up
     }
@@ -959,6 +1025,8 @@ function App() {
         .then((file) => {
           if ((testGen.current.get(name) ?? 0) !== generation) return;
           setTpsByTest((prev) => ({ ...prev, [name]: file.test_points }));
+          setSourceCatalog(previous => previous.filter(source => source.name !== name));
+          setSourceRefreshVersion(version => version + 1);
           setNotice(`${name}: test points refreshed`);
         })
         .catch((refreshError) => {
@@ -1011,6 +1079,7 @@ function App() {
 
   // Manual reload of everything shown
   const reloadData = async () => {
+    if (!sessionRecoveryReady) { await recoverSessionRef.current(); return; }
     try {
       setLoading(true);
       setError(null);
@@ -1079,6 +1148,7 @@ function App() {
 
   const {
     filterState,
+    setFilterState,
     filterOptions,
     filterColumns,
     toggleTpKeys,
@@ -1096,18 +1166,22 @@ function App() {
     hasRestoredSession ? restoredSession.filterState : undefined
   );
 
-  // Fetch tp_stats per (test, column) for scatter axes and active filters
+  // Share exact original TP statistics across scatter, filters and visible
+  // time plots. Additional plot columns are scanned only for selected tests.
   useEffect(() => {
-    const needed = Array.from(new Set([xAxis, yAxis, ...filterColumns])).filter(Boolean);
-    if (needed.length === 0) return;
+    const common = [xAxis, yAxis, ...filterColumns];
+    const selectedTests = new Set(selectedTPs.filter((s) => !hiddenTPs.has(s.id)).map((s) => s.test));
 
     Object.entries(tpsByTest).forEach(([test, tps]) => {
       if (tps.length === 0) return;
       const testCols = columnsByTest[test] ?? [];
+      const needed = Array.from(new Set([
+        ...common, ...(selectedTests.has(test) ? traceColumns : []),
+      ])).filter(Boolean);
       needed.forEach((col) => {
         const key = `${test}|${col}`;
         if (!testCols.includes(col)) return;
-        if (statsCache[test]?.[col] || statsInFlight.current.has(key)) return;
+        if (statsCache[test]?.[col] || statsInFlight.current.has(key) || statsErrors[key]) return;
         statsInFlight.current.add(key);
         setLoadingStats((prev) => new Set(prev).add(key));
         setStatsErrors((prev) => {
@@ -1154,7 +1228,7 @@ function App() {
           });
       });
     });
-  }, [tpsByTest, columnsByTest, xAxis, yAxis, filterColumns, statsCache, statsRetry]);
+  }, [tpsByTest, columnsByTest, xAxis, yAxis, filterColumns, statsCache, statsRetry, statsErrors, selectedTPs, hiddenTPs, traceColumns]);
 
   // Fetch missing traces for selected test points (columns shown in the grid,
   // restricted to what each TP's own test actually has)
@@ -1404,17 +1478,30 @@ function App() {
           visibleStatsErrors.length === 1 ? '' : 's'
         } failed. ${statsErrors[visibleStatsErrors[0]]}`
       : null;
-  const retryScatterStats = useCallback(() => {
+  const retryStatistics = useCallback((keys: string[]) => {
     statsRequestEpoch.current += 1;
     statsInFlight.current.clear();
     setLoadingStats(new Set());
     setStatsErrors((prev) => {
       const next = { ...prev };
-      requiredStatsKeys.forEach((key) => delete next[key]);
+      keys.forEach((key) => delete next[key]);
+      return next;
+    });
+    setStatsCache((prev) => {
+      const next = { ...prev };
+      keys.forEach((key) => {
+        const divider = key.indexOf('|');
+        const test = key.slice(0, divider), column = key.slice(divider + 1);
+        if (next[test]?.[column]) {
+          next[test] = { ...next[test] };
+          delete next[test][column];
+        }
+      });
       return next;
     });
     setStatsRetry((attempt) => attempt + 1);
-  }, [requiredStatsKeys]);
+  }, []);
+  const retryScatterStats = () => retryStatistics(requiredStatsKeys);
   const scatterEmptyState = useMemo(() => {
     const pointCount = Object.entries(tpsByTest).reduce(
       (count, [test, points]) => (test === settings.datasheetZone ? count : count + points.length),
@@ -1452,7 +1539,7 @@ function App() {
     yAxis,
   ]);
 
-  const { mainZoom, handleMainWheel, handlePan, resetZoom } = useMainPlotZoom(
+  const { mainZoom, setMainZoom, handleMainWheel, handlePan, resetZoom } = useMainPlotZoom(
     scatterDomainData,
     hasRestoredSession ? restoredSession.mainZoom : null,
     {
@@ -1462,84 +1549,169 @@ function App() {
   );
   resetMainZoomRef.current = resetZoom;
 
-  // Persist the working analysis, not fetched samples. A short debounce keeps
-  // rapid zoom/pan updates from turning into synchronous storage churn.
+  const applyRecoveredSession = (input: AnalysisSession, recovery: SessionRecovery,
+    catalog: AnalysisSource[], list: TestInfo[], reviewed = false) => {
+    recoveryInputRef.current = input;
+    setTests(list);
+    const session = recovery.session;
+    setRecoveryMessages(recovery.messages);
+    setRecoveryLegacy(recovery.legacy);
+    setRecoveryNeedsReview(reviewed ? false : recovery.needsReview);
+    // Invalidate outstanding loads too; a newly opened file can refer to
+    // a source whose previous metadata request has not completed yet.
+    new Set([...Object.keys(metaByTest), ...metaInFlight.current]).forEach(invalidateTest);
+    setSelectedTPs([]);
+    setHiddenTPs(new Set());
+    setCurrentTest(session.currentTest || (referencedNames(input).length === 0
+      ? list.find(test => test.status === 'ready')?.name ?? '' : ''));
+    recoveredOrderRef.current = session.selections.map(selection => `${selection.test}:${selection.tpId}`);
+    setPendingRestoredSelections(session.selections);
+    setSelectionSessionHydrated(false);
+    setFilterState(session.filterState);
+    setXAxis(session.xAxis);
+    setYAxis(session.yAxis);
+    setMainZoom(session.mainZoom);
+    setTimeZoom(session.timeZoom);
+    setTimeYRanges(session.timeYRanges);
+    setFullRange(session.fullRange);
+    setPlotsUserEdited(session.plotsUserEdited);
+    setAxesUserSet(session.axesUserSet);
+    setPlotConfigs(session.plotConfigs);
+    setPlotFilters(session.plotFilters);
+    setPlotShowOriginal(session.plotShowOriginal);
+    setAnnotationsVisible(session.annotationsVisible);
+    setViewMode(session.viewMode);
+    setFullPlotMode(session.fullPlotMode);
+    setSpecMode(session.specMode);
+    setSpecXAxis(session.specXAxis);
+    setSpecRpmCol(session.specRpmCol);
+    setSpecLogY(session.specLogY);
+    setSpecSource(session.specSource);
+    setXYSource(session.xySource);
+    setXYYCols(session.xyYCols);
+    setXYXCols(session.xyXCols);
+    setScatterRatio(session.scatterRatio);
+    setScatterCollapsed(session.scatterCollapsed);
+    setPlotDensity(session.plotDensity);
+    setExpandedPlot(session.expandedPlot);
+    setPlotViewports(session.plotViewports);
+    setClusteringEnabled(session.clusteringEnabled ?? settings.clustering);
+    setDatasheetVisible(session.datasheetVisible ?? settings.datasheetVisible);
+    setShowHorizontalErrorBars(session.showHorizontalErrorBars);
+    setShowVerticalErrorBars(session.showVerticalErrorBars);
+    setSessionEpoch(epoch => epoch + 1);
+    setSourceCatalog(retainPendingSourceReferences(catalog, input.sources));
+    setSessionRecoveryReady(true);
+    setError(null);
+  };
+
+  recoverSessionRef.current = async (reconnectLegacy = false) => {
+    const attempt = ++recoveryAttemptRef.current;
+    setLoading(true); setError(null);
+    try {
+      const [list, catalog] = await Promise.all([fetchTests(), fetchAnalysisSources()]);
+      if (attempt !== recoveryAttemptRef.current) return;
+      const input = recoveryInputRef.current;
+      if (input) {
+        applyRecoveredSession(input, resolveSessionSources(input, catalog.sources, reconnectLegacy), catalog.sources, list);
+      } else {
+        setTests(list);
+        setCurrentTest(list.find(test => test.status === 'ready')?.name ?? '');
+        setSourceCatalog(catalog.sources);
+        setSessionRecoveryReady(true);
+      }
+    } catch (err) {
+      if (attempt === recoveryAttemptRef.current) setError(err instanceof Error ? err.message : 'Source identities could not be checked. Retry recovery.');
+    } finally {
+      if (attempt === recoveryAttemptRef.current) setLoading(false);
+    }
+  };
+
+  const retrySavedRecovery = async (legacy = false) => {
+    if (!(await handleTabChange('analyze'))) return;
+    await recoverSessionRef.current(legacy);
+  };
+
+  // New uploads and lifecycle changes need source references too. Keep a
+  // previously loaded reference until that test is invalidated. A background
+  // refresh must not bless replaced data or new TP bounds using old plot data.
   useEffect(() => {
-    if (loading || !selectionSessionHydrated) return;
-    const id = window.setTimeout(() => {
-      saveAnalysisSession({
-        version: 1,
-        currentTest,
-        xAxis,
-        yAxis,
-        axesUserSet,
-        selections: [
-          ...selectedTPs.map((selection) => ({
-            test: selection.test,
-            tpId: selection.tpId,
-            hidden: hiddenTPs.has(selection.id),
-          })),
-          ...pendingRestoredSelections.filter(
-            (pending) =>
-              !selectedTPs.some(
-                (selection) => selection.test === pending.test && selection.tpId === pending.tpId
-              )
-          ),
-        ].slice(0, MAX_SELECTED_TEST_POINTS),
-        filterState,
-        mainZoom,
-        timeZoom,
-        fullRange,
-        viewMode,
-        fullPlotMode,
-        specMode,
-        specXAxis,
-        specRpmCol,
-        specLogY,
-        specSource,
-        xySource,
-        plotConfigs: plotConfigs.slice(0, 9),
-        plotsUserEdited,
-        plotFilters,
-        xyYCols: xyYCols.slice(0, 9),
-        xyXCols: xyXCols.slice(0, 9),
-        scatterRatio,
-        scatterCollapsed,
-        plotDensity,
-      });
-    }, 250);
-    return () => window.clearTimeout(id);
-  }, [
-    axesUserSet,
-    currentTest,
-    filterState,
-    fullPlotMode,
-    fullRange,
-    hiddenTPs,
-    loading,
-    mainZoom,
-    plotConfigs,
-    plotDensity,
-    plotFilters,
-    plotsUserEdited,
-    scatterCollapsed,
-    scatterRatio,
-    selectedTPs,
-    pendingRestoredSelections,
-    selectionSessionHydrated,
-    specLogY,
-    specMode,
-    specRpmCol,
-    specSource,
-    specXAxis,
-    timeZoom,
-    viewMode,
-    xAxis,
-    xySource,
-    xyXCols,
-    xyYCols,
-    yAxis,
-  ]);
+    if (!sessionRecoveryReady) return;
+    let canceled = false;
+    void fetchAnalysisSources().then(catalog => {
+      if (canceled) return;
+      setSourceCatalog(previous => catalog.sources.map(source => {
+        const old = previous.find(item => item.name === source.name);
+        return old ?? source;
+      }));
+    }).catch(() => { /* Retain verified references; unknown new sources save null IDs. */ });
+    return () => { canceled = true; };
+  }, [sessionRecoveryReady, tests, sourceRefreshVersion]);
+
+  const captureSession = (): AnalysisSession => {
+    const session = {
+      version: 1,
+      plotViewports, expandedPlot, clusteringEnabled, datasheetVisible, showHorizontalErrorBars, showVerticalErrorBars,
+      currentTest,
+      xAxis,
+      yAxis,
+      axesUserSet,
+      selections: [
+        ...selectedTPs.map((selection) => ({
+          test: selection.test,
+          tpId: selection.tpId,
+          hidden: hiddenTPs.has(selection.id),
+          color: selection.color,
+        })),
+        ...pendingRestoredSelections.filter(
+          (pending) =>
+            !selectedTPs.some(
+              (selection) => selection.test === pending.test && selection.tpId === pending.tpId
+            )
+        ),
+      ].sort((a, b) => {
+        const rank = (test: string, tpId: number) => {
+          const index = recoveredOrderRef.current.indexOf(`${test}:${tpId}`);
+          return index < 0 ? MAX_SELECTED_TEST_POINTS : index;
+        };
+        return rank(a.test, a.tpId) - rank(b.test, b.tpId);
+      }).slice(0, MAX_SELECTED_TEST_POINTS),
+      filterState,
+      mainZoom,
+      timeZoom,
+      timeYRanges,
+      fullRange,
+      viewMode,
+      fullPlotMode,
+      specMode,
+      specXAxis,
+      specRpmCol,
+      specLogY,
+      specSource,
+      xySource,
+      plotConfigs: plotConfigs.slice(0, 9),
+      plotsUserEdited,
+      plotFilters,
+      plotShowOriginal,
+      annotationsVisible,
+      xyYCols: xyYCols.slice(0, 9),
+      xyXCols: xyXCols.slice(0, 9),
+      scatterRatio,
+      scatterCollapsed,
+      plotDensity,
+    } satisfies import('./services/analysisSession').AnalysisSession;
+    return { ...session, sources: captureSessionSources(session, sourceCatalog) };
+  };
+  const liveSession = captureSession();
+  const serializedSession = JSON.stringify(liveSession);
+  const sessionSaveDisabled = loading || !sessionRecoveryReady ? 'Wait for source recovery to finish.'
+    : recoveryLegacy || recoveryNeedsReview ? 'Review session recovery before saving.'
+    : !selectionSessionHydrated ? 'Wait for saved selections to load.' : null;
+  useEffect(() => {
+    if (sessionSaveDisabled) return;
+    const timer = window.setTimeout(() => saveAnalysisSession(JSON.parse(serializedSession)), 250);
+    return () => window.clearTimeout(timer);
+  }, [serializedSession, sessionSaveDisabled]);
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 980px)');
@@ -1602,7 +1774,11 @@ function App() {
     else setFullRange(domain);
   };
   const resetActiveTimeZoom = () => {
-    if (viewMode === 'tp') resetTimeZoom();
+    if (viewMode === 'tp') {
+      resetTimeZoom();
+      setTimeYRanges([]);
+      setTimeZoomResetVersion((version) => version + 1);
+    }
     else setFullRange(null);
   };
 
@@ -1661,11 +1837,10 @@ function App() {
     }
   };
 
-  const handleMetaSaved = () => {
-    if (!currentTest) return;
-    fetchMeta(currentTest)
-      .then((m) => setMetaByTest((prev) => ({ ...prev, [currentTest]: m })))
-      .catch(console.error);
+  const handleMetaSaved = (saved: TestMeta) => {
+    setMetaByTest((prev) => ({ ...prev, [saved.name]: saved }));
+    setTests((prev) => prev.map((test) => test.name === saved.name
+      ? { ...test, description: saved.description ?? '', components: saved.components } : test));
   };
 
   const handleTestGone = async (newName: string) => {
@@ -1715,6 +1890,7 @@ function App() {
       onAdoptServerUpload={adoptServerUpload}
       onCancelUpload={cancelUpload}
       onOpenTest={handleOpenTest}
+      onEditNotes={(name) => { void handleOpenTest(name, 'edit'); }}
       onTestDeleted={handleTestDeleted}
       onTestsChanged={handleTestsChanged}
       onStatsRebuilt={handleStatsRebuilt}
@@ -1731,6 +1907,7 @@ function App() {
       onSave={handleSettingsSave}
       onMakeDefault={handleMakeSettingsDefault}
       columns={unionColumns}
+      xyColumns={xyUnionColumns}
       zones={tests.filter((test) => test.status === 'ready').map((test) => test.name)}
     />
   );
@@ -1756,7 +1933,7 @@ function App() {
   );
 
   // Keep navigation and import access available during loading and failures.
-  const needsTestData = tab !== 'uploads' && tab !== 'settings';
+  const needsTestData = tab !== 'uploads' && tab !== 'settings' && tab !== 'components';
   const activeMetaError = currentTest && !meta ? metaErrors[currentTest] : null;
   const waitingForData = loading || Boolean(currentTest && !meta);
   const workspaceError = error || activeMetaError;
@@ -1765,6 +1942,13 @@ function App() {
     <div {...dragHandlers} className="app-shell">
       {dropOverlay}
       <Header
+        sessionControls={<SessionControls onBegin={() => handleTabChange('analyze')}
+          getSession={captureSession} saveDisabledReason={sessionSaveDisabled}
+          onApply={(input, recovery, sources, list) => {
+            ++recoveryAttemptRef.current;
+            applyRecoveredSession(input, recovery, sources, list, true);
+            setLoading(false);
+          }} />}
         tests={tests}
         tab={tab}
         onTabChange={handleTabChange}
@@ -1776,6 +1960,30 @@ function App() {
         onCancelUpload={cancelUpload}
         notice={notice}
       />
+      {sessionRecoveryReady && (recoveryMessages.length > 0 || recoveryLegacy) && (
+        <aside className="session-recovery" aria-label="Session recovery">
+          <details open={recoveryLegacy || recoveryNeedsReview || undefined}>
+            <summary>Session recovery · {recoveryMessages.length} notice{recoveryMessages.length === 1 ? '' : 's'}</summary>
+            <ul>{recoveryMessages.map(message => <li key={message}>{message}</li>)}</ul>
+          </details>
+          {recoveryLegacy && <p>Older sessions saved test names without dataset IDs. Reconnect only if these names still refer to your original tests. Automatic saving is paused until you choose.</p>}
+          {recoveryNeedsReview && !recoveryLegacy && <p>Some saved references could not be recovered. Your saved workspace is retained and automatic saving is paused. Restore missing tests and retry, or continue with the recovered workspace.</p>}
+          <div className="session-recovery-actions">
+            {recoveryLegacy ? <>
+              <button className="btn" disabled={loading} onClick={() => void retrySavedRecovery(true)}>Reconnect legacy session by name</button>
+              <button className="btn" onClick={() => { setRecoveryLegacy(false); setRecoveryNeedsReview(false); setRecoveryMessages(['Legacy source references were discarded. Choose tests to start a fresh analysis.']); }}>Discard legacy references</button>
+            </> : recoveryNeedsReview ? <>
+              <button className="btn" disabled={loading} onClick={() => void retrySavedRecovery()}>Retry session recovery</button>
+              <button className="btn" onClick={() => setRecoveryNeedsReview(false)}>Continue with recovered workspace</button>
+            </> : <button className="btn" disabled={!currentTest} onClick={() => setRecoveryMessages([])}>Dismiss recovery notices</button>}
+            {!currentTest && !recoveryLegacy && <label>Active test <select className="input" aria-label="Choose active test after recovery" value=""
+              onChange={event => { void handleTestChange(event.target.value); }}>
+              <option value="">Choose a test…</option>
+              {tests.filter(test => test.status === 'ready').map(test => <option key={test.name} value={test.name}>{test.name}</option>)}
+            </select></label>}
+          </div>
+        </aside>
+      )}
       {error && !needsTestData && (
         <div className="app-connection-banner" role="alert">
           <span>Test data is unavailable. Check the connection and try again.</span>
@@ -1823,10 +2031,11 @@ function App() {
             ) : (
               <>
                 <h1>
-                  {tests.length ? 'Your tests are not ready yet' : 'Start with your test data'}
+                  {tests.some(test => test.status === 'ready') ? 'Choose a test to continue' : tests.length ? 'Your tests are not ready yet' : 'Start with your test data'}
                 </h1>
                 <p>
-                  {tests.length
+                  {tests.some(test => test.status === 'ready')
+                    ? 'Review session recovery above, or open a test from Uploads.' : tests.length
                     ? 'Open Uploads to follow processing progress or resolve an interrupted import.'
                     : 'Import a test-rig CSV to explore signals and compare operating points.'}
                 </p>
@@ -1859,8 +2068,11 @@ function App() {
         uploadView
       ) : tab === 'settings' ? (
         settingsView
+      ) : tab === 'components' ? (
+        <ComponentStatisticsView onEditTest={name => { void handleOpenTest(name, 'edit'); }} />
       ) : tab === 'split' && meta ? (
         <SplitView
+          key={currentTest}
           test={currentTest}
           meta={meta}
           columns={dataColumns}
@@ -1945,6 +2157,7 @@ function App() {
                   xLabel={xLabel}
                   yLabel={yLabel}
                   mainZoom={mainZoom}
+                  onResetZoom={resetZoom}
                   onToggleTestPoint={handleScatterToggle}
                   onWheel={handleMainWheel}
                   onPan={handlePan}
@@ -2035,8 +2248,10 @@ function App() {
                 setPendingRestoredSelections([]);
                 clearAll();
                 resetTimeZoom();
+                setTimeYRanges([]);
               }}
               timeZoom={activeTimeZoom}
+              hasYZoom={viewMode === 'tp' && activeTimeYRanges.some(Boolean)}
               onResetTimeZoom={resetActiveTimeZoom}
               maxPoints={MAX_SELECTED_TEST_POINTS}
               loadingTestPointIds={loadingTestPointIds}
@@ -2066,10 +2281,15 @@ function App() {
               onPlotDensityChange={handlePlotDensityChange}
             />
             <TimeSeriesGrid
+              key={sessionEpoch}
+              viewports={plotViewports}
+              sourceCatalog={sourceCatalog}
+              onViewportChange={(kind, index, value) => setPlotViewports(previous => ({...previous,
+                [kind]: previous[kind].map((item, i) => i === index ? value : item)}))}
               viewMode={viewMode}
               density={plotDensity}
               test={currentTest}
-              columns={gridColumns}
+              columns={viewMode === 'xy' ? xyGridColumns : gridColumns}
               selectedTPs={selectedTPs}
               hiddenTPs={hiddenTPs}
               expandedPlot={expandedPlot}
@@ -2077,6 +2297,9 @@ function App() {
               timeZoom={activeTimeZoom}
               onTimeZoomChange={handleActiveTimeZoom}
               onTimeZoomReset={resetActiveTimeZoom}
+              timeYRanges={activeTimeYRanges}
+              timeZoomResetVersion={timeZoomResetVersion}
+              onTimeYRangeChange={handleTimeYRangeChange}
               fullPlotMode={fullPlotMode}
               specMode={specMode}
               specXAxis={specXAxis}
@@ -2086,6 +2309,12 @@ function App() {
               fs={meta?.fs_hz ?? null}
               plotFilters={plotFilters}
               plotFilterSpecs={plotFilterSpecs}
+              plotShowOriginal={plotShowOriginal}
+              annotationsVisible={annotationsVisible}
+              onAnnotationsVisibleChange={setAnnotationsVisible}
+              onPlotShowOriginalChange={(i, show) =>
+                setPlotShowOriginal((prev) => prev.map((value, index) => index === i ? show : value))
+              }
               onPlotFilterChange={(i, patch) =>
                 setPlotFilters((prev) => {
                   const next = [...prev];
@@ -2110,9 +2339,12 @@ function App() {
                   return next;
                 })
               }
-              columnsByTest={columnsByTest}
+              columnsByTest={viewMode === 'xy' ? xyColumnsByTest : columnsByTest}
               traceErrors={traceErrors}
               onRetryTraces={retryTestPointTraces}
+              statsCache={statsCache}
+              statsErrors={statsErrors}
+              onRetryStatistics={retryStatistics}
               onBrowseFullTest={() => {
                 if (viewMode === 'spectrum') setSpecSource('full');
                 else if (viewMode === 'xy') setXYSource('full');

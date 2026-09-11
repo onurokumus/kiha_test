@@ -1,6 +1,9 @@
 import { DEFAULT_FILTER_UI, FilterUi } from '../constants/filters';
 import { MAX_SELECTED_TEST_POINTS } from '../constants/selection';
 import { AggMode, ScatterFilterState, SpectrumXAxis, WindowDisplayMode } from '../types';
+import { normalizeTimeYRanges, SavedTimeYRange } from '../utils/timePlotRanges';
+import type { SavedSourceReference } from './sessionSources';
+import { emptyPlotViewports, normalizePlotViewports, PlotViewports } from '../utils/plotViewport';
 
 export type AnalysisViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
 export type PlotDensity = 'single' | 'quad' | 'nine';
@@ -9,10 +12,19 @@ export interface SavedTestPointSelection {
   test: string;
   tpId: number;
   hidden: boolean;
+  color?: string;
 }
 
 export interface AnalysisSession {
   version: 1;
+  plotViewports: PlotViewports;
+  expandedPlot: number | null;
+  clusteringEnabled?: boolean;
+  datasheetVisible?: boolean;
+  showHorizontalErrorBars: boolean;
+  showVerticalErrorBars: boolean;
+  /** Absent only in pre-identity sessions. Empty is deliberately different. */
+  sources?: SavedSourceReference[];
   currentTest: string;
   xAxis: string;
   yAxis: string;
@@ -21,6 +33,7 @@ export interface AnalysisSession {
   filterState: ScatterFilterState;
   mainZoom: [number, number, number, number] | null;
   timeZoom: [number, number] | null;
+  timeYRanges: (SavedTimeYRange | null)[];
   fullRange: [number, number] | null;
   viewMode: AnalysisViewMode;
   fullPlotMode: WindowDisplayMode;
@@ -33,6 +46,9 @@ export interface AnalysisSession {
   plotConfigs: string[];
   plotsUserEdited: boolean;
   plotFilters: FilterUi[];
+  /** Display-only per-grid-slot choice, independent of DSP settings. */
+  plotShowOriginal: boolean[];
+  annotationsVisible: boolean;
   xyYCols: string[];
   xyXCols: string[];
   scatterRatio: number;
@@ -44,6 +60,10 @@ const STORAGE_KEY = 'ptt.analysis-session.v1';
 
 export const defaultAnalysisSession = (): AnalysisSession => ({
   version: 1,
+  plotViewports: emptyPlotViewports(),
+  expandedPlot: null,
+  showHorizontalErrorBars: false,
+  showVerticalErrorBars: false,
   currentTest: '',
   xAxis: '',
   yAxis: '',
@@ -52,6 +72,7 @@ export const defaultAnalysisSession = (): AnalysisSession => ({
   filterState: { tpKeys: [], labels: [], parameterFilters: [] },
   mainZoom: null,
   timeZoom: null,
+  timeYRanges: normalizeTimeYRanges(null),
   fullRange: null,
   viewMode: 'tp',
   fullPlotMode: 'auto',
@@ -64,6 +85,8 @@ export const defaultAnalysisSession = (): AnalysisSession => ({
   plotConfigs: [],
   plotsUserEdited: false,
   plotFilters: Array.from({ length: 9 }, () => ({ ...DEFAULT_FILTER_UI })),
+  plotShowOriginal: Array(9).fill(false),
+  annotationsVisible: true,
   xyYCols: [],
   xyXCols: [],
   scatterRatio: 40,
@@ -190,7 +213,8 @@ export function normalizeAnalysisSession(value: unknown): AnalysisSession {
         if (!isObject(item)) return [];
         const test = stringValue(item.test);
         const tpId = Number(item.tpId);
-        return test && Number.isInteger(tpId) ? [{ test, tpId, hidden: !!item.hidden }] : [];
+        return test && Number.isInteger(tpId) ? [{ test, tpId, hidden: !!item.hidden,
+          color: typeof item.color === 'string' && /^#[0-9a-f]{6}$/i.test(item.color) ? item.color : undefined }] : [];
       })
     : [];
   const rawRatio = Number(value.scatterRatio);
@@ -200,6 +224,20 @@ export function normalizeAnalysisSession(value: unknown): AnalysisSession {
 
   return {
     version: 1,
+    plotViewports: normalizePlotViewports(value.plotViewports),
+    expandedPlot: typeof value.expandedPlot === 'number' && Number.isInteger(value.expandedPlot) && value.expandedPlot >= 0 && value.expandedPlot < 9 ? value.expandedPlot : null,
+    clusteringEnabled: typeof value.clusteringEnabled === 'boolean' ? value.clusteringEnabled : undefined,
+    datasheetVisible: typeof value.datasheetVisible === 'boolean' ? value.datasheetVisible : undefined,
+    showHorizontalErrorBars: value.showHorizontalErrorBars === true,
+    showVerticalErrorBars: value.showVerticalErrorBars === true,
+    sources: Array.isArray(value.sources) ? value.sources.flatMap((item) => {
+      if (!isObject(item) || typeof item.name !== 'string') return [];
+      return [{ name: item.name, id: typeof item.id === 'string' ? item.id : null,
+        revision: typeof item.revision === 'string' ? item.revision : undefined,
+        test_points: Array.isArray(item.test_points) ? item.test_points.flatMap((point) =>
+          isObject(point) && typeof point.id === 'number' && Number.isInteger(point.id) && typeof point.revision === 'string'
+            ? [{ id: point.id, revision: point.revision }] : []) : [] }];
+    }).slice(0, 1000) : undefined,
     currentTest: stringValue(value.currentTest),
     xAxis: stringValue(value.xAxis),
     yAxis: stringValue(value.yAxis),
@@ -208,6 +246,7 @@ export function normalizeAnalysisSession(value: unknown): AnalysisSession {
     filterState: normalizeFilterState(value.filterState),
     mainZoom: zoom(value.mainZoom),
     timeZoom: pair(value.timeZoom),
+    timeYRanges: normalizeTimeYRanges(value.timeYRanges),
     fullRange: pair(value.fullRange),
     viewMode: viewMode(value.viewMode),
     fullPlotMode: windowDisplayMode(value.fullPlotMode),
@@ -222,7 +261,11 @@ export function normalizeAnalysisSession(value: unknown): AnalysisSession {
     plotFilters: Array.from({ length: 9 }, (_, index) =>
       normalizeFilterUi(Array.isArray(value.plotFilters) ? value.plotFilters[index] : null)
     ),
+    plotShowOriginal: Array.from({ length: 9 }, (_, index) =>
+      Array.isArray(value.plotShowOriginal) && value.plotShowOriginal[index] === true
+    ),
     xyYCols: stringArray(value.xyYCols, 9),
+    annotationsVisible: value.annotationsVisible !== false,
     xyXCols: stringArray(value.xyXCols, 9),
     scatterRatio,
     scatterCollapsed: !!value.scatterCollapsed,

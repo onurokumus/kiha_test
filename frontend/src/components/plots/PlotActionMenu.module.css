@@ -1,0 +1,10 @@
+.trigger { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; flex-shrink: 0; border: 1px solid #4d555a; border-radius: 3px; color: #cbd3d9; background: #303437; padding: 0; font-family: inherit; font-size: 18px; line-height: 20px; cursor: pointer; }
+.trigger:hover { background: #3c454b; border-color: #6c7c87; }
+.trigger:focus-visible, .menu button:focus-visible { outline: 2px solid #75bfff; outline-offset: 1px; }
+.menu { position: fixed; z-index: 10000; width: 270px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; box-sizing: border-box; padding: 5px; border: 1px solid #60656a; border-radius: 5px; background: #25292d; color: #eee; box-shadow: 0 6px 24px #0009; font-size: 12px; }
+.caption { color: #aaa; padding: 6px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid #45494d; margin-bottom: 3px; }
+.menu button { display: flex; gap: 5px; width: 100%; border: 0; border-radius: 2px; padding: 7px 5px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.menu button:hover, .menu button:focus { background: #39434c; }
+.menu button[aria-disabled='true'] { color: #aaa; cursor: default; }
+.menu small { display: block; margin-top: 3px; font-size: 10px; color: #aaa; }
+.check { width: 14px; flex: 0 0 14px; }

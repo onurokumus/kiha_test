@@ -29,13 +29,14 @@ class LifecycleTests(DataDirTestCase):
     def test_delete_restore_and_rename_update_embedded_names(self):
         self.make_test()
 
-        self.assertEqual(main.api_delete_test("alpha")["deleted"], "alpha")
+        deleted = main.api_delete_test("alpha")
+        self.assertEqual(deleted["deleted"], "alpha")
         self.assertFalse((self.tests / "alpha").exists())
-        self.assertTrue((self.trash / "alpha").is_dir())
+        self.assertTrue((self.trash / deleted["trash_id"] / "data").is_dir())
 
         self.assertEqual(main.api_restore_test("alpha")["restored"], "alpha")
         self.assertTrue((self.tests / "alpha").is_dir())
-        self.assertFalse((self.trash / "alpha").exists())
+        self.assertEqual(main.api_list_trash()["entries"], [])
 
         self.assertEqual(main.api_rename_test("alpha", "beta")["name"], "beta")
         meta = json.loads((self.tests / "beta" / "meta.json").read_text())
@@ -77,7 +78,7 @@ class LifecycleTests(DataDirTestCase):
         worker.join(2)
         self.assertFalse(worker.is_alive())
         self.assertTrue(finished.is_set())
-        self.assertTrue((self.trash / "alpha").is_dir())
+        self.assertEqual([entry["name"] for entry in main.api_list_trash()["entries"]], ["alpha"])
 
     def test_failed_rename_restores_metadata(self):
         self.make_test()

@@ -1,0 +1,115 @@
+.trigger {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border: 0;
+  border-bottom: 1px dotted #707b83;
+  padding: 1px 0;
+  background: transparent;
+  color: #a9c6d7;
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.trigger:hover {
+  color: #d8eaf5;
+}
+.trigger:focus-visible,
+.panel :focus-visible {
+  outline: 2px solid #9cdcfe;
+  outline-offset: 2px;
+}
+.panel {
+  position: fixed;
+  /* Above scatter hover cards (8000), below page confirmations (8500). */
+  z-index: 8100;
+  width: 650px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  background: #252829;
+  border: 1px solid #60666a;
+  border-radius: 5px;
+  padding: 12px;
+  color: #e0e0e0;
+  box-shadow: 0 5px 24px #0009;
+  font-size: 12px;
+}
+.heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.heading strong {
+  overflow-wrap: anywhere;
+}
+.panel button {
+  background: #333638;
+  color: #e0e0e0;
+  border: 1px solid #62686b;
+  border-radius: 3px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.heading button {
+  flex-shrink: 0;
+}
+.panel p {
+  margin: 8px 0;
+  color: #aebac2;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.tableScroll {
+  overflow: auto;
+  max-height: 50vh;
+  margin: 10px 0;
+}
+.tableScroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.tableScroll th,
+.tableScroll td {
+  text-align: left;
+  padding: 7px;
+  border-bottom: 1px solid #41494e;
+  vertical-align: top;
+}
+.tableScroll thead th {
+  position: sticky;
+  top: 0;
+  background: #303638;
+  white-space: nowrap;
+}
+.tableScroll tbody th {
+  min-width: 150px;
+  max-width: 240px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.tableScroll td {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.context {
+  display: block;
+  margin-top: 3px;
+  color: #aebac2;
+  font-size: 10px;
+}
+.point {
+  display: block;
+  border-left: 3px solid;
+  padding-left: 6px;
+}
+.panel .notice {
+  color: #e7c16f;
+}
+.retry {
+  margin: 2px 0;
+}

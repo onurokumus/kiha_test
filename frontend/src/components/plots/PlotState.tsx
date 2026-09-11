@@ -20,6 +20,8 @@ export interface PlotStateOverlayProps {
   loadingLabel?: string;
   updatingLabel?: string;
   errorTitle?: string;
+  /** When the available data is an explicit original fallback, say so. */
+  dataStatus?: string;
   /** Non-blocking partial-result notice; does not dim the chart. */
   partialMessage?: string | null;
 }
@@ -53,6 +55,7 @@ export const PlotStateOverlay: React.FC<PlotStateOverlayProps> = ({
   loadingLabel = 'Loading telemetry',
   updatingLabel = 'Updating view',
   errorTitle = hasData ? 'Could not update this view' : 'Could not load this view',
+  dataStatus,
   partialMessage,
 }) => {
   const hasError = Boolean(error);
@@ -81,7 +84,7 @@ export const PlotStateOverlay: React.FC<PlotStateOverlayProps> = ({
         <div className={styles.statusPill} role="status" aria-live="polite">
           <ActivityMark />
           <span>{updatingLabel}</span>
-          <span className={styles.staleNote}>showing previous data</span>
+          <span className={styles.staleNote}>{dataStatus ?? 'showing previous data'}</span>
         </div>
       )}
 
@@ -98,7 +101,7 @@ export const PlotStateOverlay: React.FC<PlotStateOverlayProps> = ({
             <div className={styles.messageCopy}>
               <div className={styles.stateTitle}>{errorTitle}</div>
               <div className={styles.stateDetail}>
-                {hasData && <span>Showing the last available data. </span>}
+                {hasData && <span>{dataStatus ?? 'Showing the last available data.'} </span>}
                 {error}
               </div>
             </div>

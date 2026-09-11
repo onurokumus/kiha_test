@@ -57,3 +57,30 @@ class SpectrumRpmTests(DataDirTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("unknown RPM column", response.json()["detail"])
 
+    def test_saved_tp_rpm_uses_identical_rows_and_preserves_per_hz_density(self):
+        directory = self.tests / "rpm-spectrum"
+        frame = pl.read_parquet(directory / "data.parquet")
+        rpm = np.full(self.n, 100_000.0)
+        rpm[50:150] = np.tile([1200.0, -1800.0, 0.0, np.nan, np.inf], 20)
+        frame.with_columns(pl.Series("rpm", rpm)).write_parquet(
+            directory / "data.parquet")
+        store.write_json_atomic(directory / "testpoints.json", {
+            "test_points": [{"id": 8, "start_idx": 50, "end_idx": 150,
+                             "start_s": 0.6, "end_s": 1.6}],
+        })
+        for mode in ("fft", "welch"):
+            with self.subTest(mode=mode):
+                plain = dsp.spectrum("rpm-spectrum", "signal", mode, None, None,
+                                     tp_id=8)
+                result = dsp.spectrum("rpm-spectrum", "signal", mode, None, None,
+                                      rpm_col="rpm", tp_id=8)
+                self.assertEqual((result["i0"], result["i1"]), (50, 150))
+                self.assertEqual(result["mean_rpm"], 1000.0)
+                self.assertEqual(result["min_rpm"], 0.0)
+                self.assertEqual(result["max_rpm"], 1800.0)
+                self.assertEqual(result["rpm_finite_count"], 60)
+                self.assertEqual(result["rpm_nan_count"], 40)
+                self.assertEqual(result["freqs"], plain["freqs"])
+                self.assertEqual(result["mag"], plain["mag"])
+                self.assertEqual(result["method"]["units"], "U²/Hz" if mode == "welch" else "U")
+

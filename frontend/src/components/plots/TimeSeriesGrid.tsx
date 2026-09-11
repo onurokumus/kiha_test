@@ -1,7 +1,10 @@
-import React from 'react';
+import { PlotViewports, PlotViewport } from '../../utils/plotViewport';
+import { AnalysisSource } from '../../services/sessionSources';
+import React, { useMemo } from 'react';
 import {
   FilterSpec,
   SelectedTestPoint,
+  StatsCache,
   SpectrumXAxis,
   TimePlotConfig,
   WindowDisplayMode,
@@ -11,12 +14,19 @@ import { TimePlot } from './TimePlot';
 import { FullTestPlot } from './FullTestPlot';
 import { SpectrumPlot } from './SpectrumPlot';
 import { XYPlot } from './XYPlot';
+import { AxisRange } from '../../utils/timePlotRanges';
+import { createPlotExportRegistry } from '../../utils/plotExportRegistry';
+import { MultiPlotExportControls } from '../controls/MultiPlotExportControls';
+import { useAnnotations } from '../../hooks/useAnnotations';
 import styles from './TimeSeriesGrid.module.css';
 
 export type TimeViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
 export type TimeSeriesGridDensity = 'single' | 'quad' | 'nine';
 
 interface TimeSeriesGridProps {
+  viewports?: PlotViewports;
+  sourceCatalog?: AnalysisSource[];
+  onViewportChange?: (kind: keyof PlotViewports, index: number, value: PlotViewport | null) => void;
   viewMode: TimeViewMode;
   /** Number of plots shown in the normal grid. Expanded mode always shows one. */
   density?: TimeSeriesGridDensity;
@@ -27,12 +37,18 @@ interface TimeSeriesGridProps {
   /** Selected-point trace failures keyed by `${selection.id}|${column}`. */
   traceErrors?: Record<string, string>;
   onRetryTraces?: () => void;
+  statsCache: StatsCache;
+  statsErrors: Record<string, string>;
+  onRetryStatistics: (keys: string[]) => void;
   onBrowseFullTest?: () => void;
   expandedPlot: number | null;
   onToggleExpand: (index: number) => void;
   timeZoom: [number, number] | null;
   onTimeZoomChange: (domain: [number, number]) => void;
   onTimeZoomReset: () => void;
+  timeYRanges: (AxisRange | null)[];
+  timeZoomResetVersion: number;
+  onTimeYRangeChange: (index: number, range: AxisRange | null) => void;
   fullPlotMode: WindowDisplayMode;
   specMode: 'fft' | 'welch';
   specXAxis: SpectrumXAxis;
@@ -41,9 +57,13 @@ interface TimeSeriesGridProps {
   specSource: 'tp' | 'full';
   /** Active test's sample rate (Nyquist hint in per-plot filter rows). */
   fs: number | null;
-  /** Per-plot DSP filters (replace raw traces), index-aligned with plotConfigs. */
+  /** Per-plot DSP filters, index-aligned with plotConfigs. */
   plotFilters: FilterUi[];
   plotFilterSpecs: (FilterSpec | null)[];
+  plotShowOriginal: boolean[];
+  annotationsVisible: boolean;
+  onAnnotationsVisibleChange: (visible: boolean) => void;
+  onPlotShowOriginalChange: (index: number, show: boolean) => void;
   onPlotFilterChange?: (index: number, patch: Partial<FilterUi>) => void;
   xySource: 'tp' | 'full';
   /** XY mode per-plot columns, index-aligned with plotConfigs. Y '' = follow
@@ -60,6 +80,7 @@ interface TimeSeriesGridProps {
 
 export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   viewMode,
+  viewports, sourceCatalog = [], onViewportChange,
   density = 'nine',
   test,
   columns,
@@ -67,12 +88,18 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   hiddenTPs,
   traceErrors = {},
   onRetryTraces,
+  statsCache,
+  statsErrors,
+  onRetryStatistics,
   onBrowseFullTest,
   expandedPlot,
   onToggleExpand,
   timeZoom,
   onTimeZoomChange,
   onTimeZoomReset,
+  timeYRanges,
+  timeZoomResetVersion,
+  onTimeYRangeChange,
   fullPlotMode,
   specMode,
   specXAxis,
@@ -82,6 +109,10 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   fs,
   plotFilters,
   plotFilterSpecs,
+  plotShowOriginal,
+  annotationsVisible,
+  onAnnotationsVisibleChange,
+  onPlotShowOriginalChange,
   onPlotFilterChange,
   xySource,
   xyYCols,
@@ -93,6 +124,10 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   plotConfigs,
   onPlotConfigChange,
 }) => {
+  const exportRegistry = useMemo(createPlotExportRegistry, []);
+  const annotations = useAnnotations(viewMode === 'full' ? [test]
+    : viewMode === 'tp' ? selectedTPs.map((point) => point.test) : []);
+  const annotationProps = { annotations, annotationsVisible, onAnnotationsVisibleChange };
   const densityClass: Record<TimeSeriesGridDensity, string> = {
     single: styles.gridSingle,
     quad: styles.gridQuad,
@@ -183,9 +218,56 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
 
   return (
     <div className={styles.gridShell}>
+      <div className={styles.exportToolbar}>
+        {(viewMode === 'tp' || viewMode === 'full') && <label>
+          <input type="checkbox" checked={annotationsVisible}
+            onChange={(event) => onAnnotationsVisibleChange(event.target.checked)} /> Show time notes
+        </label>}
+        <MultiPlotExportControls registry={exportRegistry}
+          contextKey={JSON.stringify([viewMode, test, density, expandedPlot, visibleSelectionFingerprint, plotConfigs, plotFilterSpecs, plotShowOriginal, fullPlotMode, timeZoom, specSource, specMode, specXAxis, specRpmCol, specLogY, xySource, xyXCols, xyYCols])}
+          kind={viewMode === 'spectrum' || viewMode === 'xy' ? viewMode : 'time'}
+          defaultColumns={density === 'nine' ? 3 : 2}
+          disabledReason={expandedPlot !== null ? 'Restore the grid to export multiple plots.' : null}
+          title={viewMode === 'xy' ? 'XY plots' : viewMode === 'spectrum' ? `Spectrum · ${specMode.toUpperCase()}` : viewMode === 'tp' ? 'Test points' : `Full test · ${test}`} />
+      </div>
       <div className={gridClass}>
         {plotsToShow.map(({ cfg, index: idx }) => {
           const wrapperClass = `${styles.plotWrapper} ${styles.plotWrapperVisible}`;
+          const displayedY = viewMode === 'xy' ? xyYCols[idx] || cfg.key : cfg.key;
+          const missingY = !columns.includes(displayedY);
+          const missingX = viewMode === 'xy' && !columns.includes(xyXCols[idx] ?? '');
+          if (missingY || missingX) return (
+            <section key={`plot-${idx}`} className={`${wrapperClass} ${styles.unavailable}`} aria-label={`Unavailable plot ${idx + 1}`}>
+              <strong>{displayedY} · variable unavailable</strong>
+              <p>Saved plot {idx + 1} stays in this slot. Choose an available variable to resume analysis.</p>
+              {missingY && <label>Y variable <select className="input" aria-label={`Variable for plot ${idx + 1}`} value={displayedY}
+                onChange={event => viewMode === 'xy' ? onXYYColChange?.(idx, event.target.value) : handleConfigChange(idx, event.target.value)}>
+                <option value={displayedY}>{displayedY} (unavailable)</option>
+                {columns.map(column => <option key={column} value={column}>{column}</option>)}
+              </select></label>}
+              {missingX && <label>X variable <select className="input" aria-label={`X variable for plot ${idx + 1}`} value={xyXCols[idx] ?? ''}
+                onChange={event => onXYXColChange?.(idx, event.target.value)}>
+                <option value={xyXCols[idx] ?? ''}>{xyXCols[idx] || 'Choose X'} (unavailable)</option>
+                {columns.map(column => <option key={column} value={column}>{column}</option>)}
+              </select></label>}
+              <button className="btn" onClick={() => onToggleExpand(idx)}>{expandedPlot === idx ? 'Restore grid' : 'Maximize slot'}</button>
+            </section>
+          );
+          const sourceToken = (name: string) => {
+            const source = sourceCatalog.find(item => item.name === name);
+            return [source?.id ?? name, source?.revision ?? null];
+          };
+          const viewportProps = (kind: 'spectrum' | 'xy') => {
+            const source = kind === 'spectrum' ? specSource : xySource;
+            const context = JSON.stringify([kind, displayedY,
+              kind === 'spectrum' ? [specMode, specXAxis, specRpmCol] : xyXCols[idx], source,
+              source === 'full' ? [sourceToken(test), timeZoom] : selectedTPs
+                .filter(point => !hiddenTPs.has(point.id))
+                .map(point => [sourceToken(point.test), point.tpId, point.tp.start_s, point.endS])
+                .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))]);
+            return { viewport: viewports?.[kind][idx], viewportContext: context,
+              onViewportChange: (value: PlotViewport | null) => onViewportChange?.(kind, idx, value) };
+          };
           const shared = {
             cfg,
             isExpanded: expandedPlot === idx,
@@ -199,6 +281,8 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
             filterSpec: plotFilterSpecs[idx] ?? null,
             filterUi: plotFilters[idx] ?? DEFAULT_FILTER_UI,
             onFilterUiChange: (patch: Partial<FilterUi>) => onPlotFilterChange?.(idx, patch),
+            showOriginal: plotShowOriginal[idx] ?? false,
+            onShowOriginalChange: (show: boolean) => onPlotShowOriginalChange(idx, show),
           };
 
           return (
@@ -208,14 +292,22 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
                   key={`tp:${cfg.key}:${visibleSelectionFingerprint}`}
                   {...shared}
                   {...filterProps}
+                  {...annotationProps}
+                  registerExport={exportRegistry.registrations[idx]}
                   selectedTPs={selectedTPs}
                   hiddenTPs={hiddenTPs}
                   traceErrors={traceErrors}
                   onRetryTraces={onRetryTraces}
+                  statsCache={statsCache}
+                  statsErrors={statsErrors}
+                  onRetryStatistics={onRetryStatistics}
                   columnsByTest={columnsByTest}
                   zoomDomain={timeZoom}
                   onZoomChange={onTimeZoomChange}
                   onZoomReset={onTimeZoomReset}
+                  yRange={timeYRanges[idx] ?? null}
+                  zoomResetVersion={timeZoomResetVersion}
+                  onYRangeChange={(range) => onTimeYRangeChange(idx, range)}
                 />
               )}
               {viewMode === 'full' && (
@@ -223,6 +315,8 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
                   key={`full:${test}:${cfg.key}`}
                   {...shared}
                   {...filterProps}
+                  {...annotationProps}
+                  registerExport={exportRegistry.registrations[idx]}
                   test={test}
                   selectedTPs={selectedTPs}
                   hiddenTPs={hiddenTPs}
@@ -234,12 +328,14 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
               )}
               {viewMode === 'spectrum' && (
                 <SpectrumPlot
+                  {...viewportProps('spectrum')}
                   key={`spectrum:${cfg.key}:${specMode}:${specXAxis}:${specRpmCol}:${specSource}:${
                     specSource === 'full' ? test : visibleSelectionFingerprint
                   }`}
                   {...shared}
                   test={test}
                   source={specSource}
+                  registerExport={exportRegistry.registrations[idx]}
                   selectedTPs={selectedTPs}
                   hiddenTPs={hiddenTPs}
                   columnsByTest={columnsByTest}
@@ -252,6 +348,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
               )}
               {viewMode === 'xy' && (
                 <XYPlot
+                  {...viewportProps('xy')}
                   key={`xy:${xyYCols[idx] || cfg.key}:${xyXCols[idx] ?? ''}:${xySource}:${
                     xySource === 'full' ? test : visibleSelectionFingerprint
                   }`}
@@ -262,6 +359,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
                   xCol={xyXCols[idx] ?? ''}
                   onXColChange={(c) => onXYXColChange?.(idx, c)}
                   source={xySource}
+                  registerExport={exportRegistry.registrations[idx]}
                   selectedTPs={selectedTPs}
                   hiddenTPs={hiddenTPs}
                   columnsByTest={columnsByTest}

@@ -32,10 +32,14 @@ class ReaderWriterLock:
         self._waiting_writers = 0
 
     @contextmanager
-    def read(self) -> Iterator[None]:
+    def read(self, check=None) -> Iterator[None]:
         with self._condition:
             while self._writer or self._waiting_writers:
-                self._condition.wait()
+                if check:
+                    check()
+                self._condition.wait(timeout=.1 if check else None)
+            if check:
+                check()
             self._readers += 1
         try:
             yield
@@ -89,8 +93,8 @@ def _test_lock(name: str) -> ReaderWriterLock:
         return _test_locks.setdefault(name, ReaderWriterLock())
 
 
-def test_read(name: str):
-    return _test_lock(name).read()
+def test_read(name: str, *, check=None):
+    return _test_lock(name).read(check)
 
 
 def test_write(name: str):
@@ -130,7 +134,7 @@ def catalog_write():
 
 
 @contextmanager
-def data_read(name: str) -> Iterator[None]:
+def data_read(name: str, *, check=None) -> Iterator[None]:
     """Per-test read lock + process-wide read slot as one context manager, for
     code that cannot use the with_test_read decorator (e.g. a StreamingResponse
     body, which runs after its endpoint returned and released decorator-held
@@ -145,9 +149,18 @@ def data_read(name: str) -> Iterator[None]:
     bounds concurrent NATIVE reads (it wraps the yield where the caller collects)
     which is its only job (the Windows py3.14 crash gate).
     """
-    with test_read(name):
-        with _data_read_slots:
+    with test_read(name, check=check):
+        if check is None:
+            with _data_read_slots:
+                yield
+            return
+        while not _data_read_slots.acquire(timeout=.1):
+            check()
+        try:
+            check()
             yield
+        finally:
+            _data_read_slots.release()
 
 
 def with_test_read(function: Callable[P, R]) -> Callable[P, R]:

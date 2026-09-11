@@ -1,20 +1,24 @@
 """Server-side signal processing: filters over a time window + FFT/Welch spectra.
 
-Filtered series are served in the same window format as store.read_window
-(raw vs min/max envelope, identical level selection and bucket boundaries),
-so the frontend can overlay them on the raw series on a shared time axis.
+Full-test filtered series use the same window format, display levels and
+bucket boundaries as store.read_window. Saved TP filters share exact rows
+and the original trace's time origin, but use TP-local min/max buckets.
 """
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 import polars as pl
 from scipy import signal
 from scipy.ndimage import median_filter, uniform_filter1d
 
+from . import analysis_metadata as analysis
+from . import export_progress as progress
 from .config import MAX_FILTER_SAMPLES, TESTS_DIR
 from .store import (bucket_minmax, get_meta, merge_over_cap, plot_budget,
-                    resolve_window_display, to_json_list, window_bounds)
+                    resolve_window_display, testpoint_range, to_json_list,
+                    window_bounds)
 
 FILTER_KINDS = {"lowpass", "highpass", "bandpass", "bandstop",
                 "moving_avg", "detrend", "despike"}
@@ -174,6 +178,7 @@ def _despike(
     ends = np.flatnonzero(transitions == -1)
 
     for start, end in zip(starts, ends):
+        progress.checkpoint()
         run_length = int(end - start)
         if run_length > max_spike_samples:
             continue
@@ -220,7 +225,30 @@ def _apply(kind: str, v: np.ndarray, fs: float, order: int,
     return signal.sosfiltfilt(sos, v)
 
 
-def filtered_window(name: str, cols: list[str], kind: str,
+@dataclass
+class FilteredSamples:
+    """Full-rate processing result; never use reduced JSON arrays for export.
+
+    ``frame``/``filtered`` span [s0,s1), which may include full-test envelope
+    shoulders. The user's source rows are [i0,i1). Callers hold data_read.
+    """
+
+    frame: pl.DataFrame
+    filtered: dict[str, np.ndarray]
+    time_column: str
+    i0: int
+    i1: int
+    s0: int
+    s1: int
+    mode: str
+    level: int
+    budget: int
+    warnings: dict
+    tp_id: int | None
+    analysis: dict
+
+
+def filtered_samples(name: str, cols: list[str], kind: str,
                     t0: float | None, t1: float | None, px: int,
                     order: int = 4, f1: float | None = None,
                     f2: float | None = None,
@@ -229,9 +257,15 @@ def filtered_window(name: str, cols: list[str], kind: str,
                     max_spike_s: float | None = DEFAULT_MAX_SPIKE_S,
                     threshold: float = DEFAULT_DESPIKE_THRESHOLD,
                     abs_floor: float = DEFAULT_DESPIKE_ABS_FLOOR,
-                    replacement: str = "linear") -> dict:
-    """Filter cols over [t0, t1] at full resolution, then serve like
-    store.read_window so the result aligns 1:1 with the base window."""
+                    replacement: str = "linear",
+                    tp_id: int | None = None) -> FilteredSamples:
+    """Shared full-resolution DSP for plots and exports, before reduction.
+
+    A saved ``tp_id`` instead selects its exact half-open rows. TP-local
+    envelope buckets must not read adjacent samples; their timestamps need
+    not match the original trace's ordered-extrema reduction. Both traces
+    use the actual first stored sample as their relative-time origin.
+    """
     meta = get_meta(name)
     if meta is None:
         raise FileNotFoundError(name)
@@ -240,7 +274,12 @@ def filtered_window(name: str, cols: list[str], kind: str,
     fs = meta["fs_hz"]
     n_rows = meta["n_rows"]
     tcol = meta["time_column"]
-    i0, i1 = window_bounds(meta, t0, t1)
+    if tp_id is not None:
+        if t0 is not None or t1 is not None:
+            raise ValueError("tp_id cannot be combined with t0 or t1")
+        i0, i1 = testpoint_range(name, tp_id)
+    else:
+        i0, i1 = window_bounds(meta, t0, t1)
     n_raw = max(0, i1 - i0)
     if n_raw > MAX_FILTER_SAMPLES:
         raise ValueError(
@@ -261,16 +300,17 @@ def filtered_window(name: str, cols: list[str], kind: str,
     resolved_mode, level = resolve_window_display(n_raw, budget, display)
     raw_mode = resolved_mode == "raw"
 
-    if raw_mode:
+    if raw_mode or tp_id is not None:
         s0, s1 = i0, i1
     else:
         # bucket-aligned slice so envelope buckets match the pyramid's
         b0, b1 = i0 // level, -(-i1 // level)
         s0, s1 = b0 * level, min(b1 * level, n_rows)
 
+    progress.checkpoint()
     df = (pl.scan_parquet(test_dir / "data.parquet")
           .slice(s0, s1 - s0)
-          .select(([tcol] if raw_mode else []) + cols).collect())
+          .select([tcol] + cols).collect())
 
     processing_gaps = _known_gap_slices(meta, s0, s1)
     requested_gap_count = len(_known_gap_slices(meta, i0, i1))
@@ -280,6 +320,7 @@ def filtered_window(name: str, cols: list[str], kind: str,
     spike_event_counts: dict[str, int] = {}
     skipped_segments = 0
     for c in cols:
+        progress.checkpoint()
         v = df[c].to_numpy().astype(np.float64)
         replaced_mask = (
             np.zeros(v.size, dtype=bool)
@@ -314,6 +355,7 @@ def filtered_window(name: str, cols: list[str], kind: str,
                 for gap_start, gap_end in processing_gaps
             ]
             for gap_start, gap_end in relative_gaps + [(v.size, v.size)]:
+                progress.checkpoint()
                 if gap_start > segment_start:
                     segment = v[segment_start:gap_start]
                     clean, mask = _interp_nan(segment)
@@ -371,44 +413,134 @@ def filtered_window(name: str, cols: list[str], kind: str,
         warn["replacement_counts"] = replacement_counts
         warn["spike_event_counts"] = spike_event_counts
 
+    progress.checkpoint()
+    details = analysis.source_context(name, meta, cols, i0, i1, tp_id=tp_id, t0=t0, t1=t1)
+    parameters = {'kind': kind}
+    if kind in {'lowpass', 'highpass', 'bandpass', 'bandstop'}:
+        parameters.update(order=min(max(int(order), 1), 10), f1_hz=f1,
+                          implementation='scipy.signal.sosfiltfilt', design='butterworth',
+                          padtype='odd', padlen='scipy_default')
+        if kind in {'bandpass', 'bandstop'}:
+            parameters['f2_hz'] = f2
+    elif kind == 'moving_avg':
+        parameters.update(window_s=window_s,
+            window_samples=max(1, int(round(window_s * fs))) if window_s is not None and window_s > 0 else None,
+            implementation='scipy.ndimage.uniform_filter1d', boundary='nearest', origin=0)
+    elif kind == 'detrend':
+        parameters.update(implementation='scipy.signal.detrend', type='linear')
+    else:
+        parameters.update(window_s=DEFAULT_DESPIKE_WINDOW_S if window_s is None else window_s,
+            max_spike_s=DEFAULT_MAX_SPIKE_S if max_spike_s is None else max_spike_s,
+            window_samples=despike_params[0], max_spike_samples=despike_params[1],
+            threshold=despike_params[2], abs_floor=despike_params[3],
+            mad_normal_scale=_MAD_NORMAL_SCALE, replacement=replacement)
+    details.update(method_version='kiha-time-filter-v1', filter=parameters,
+        processing_rows={'i0': s0, 'i1': s1, 'bounds': 'half_open'},
+        source_centers={'first_time_s': analysis.clean(float(df[tcol][i0-s0])),
+                        'last_time_s': analysis.clean(float(df[tcol][i1-s0-1]))},
+        missing_values='linear_by_index_hold_edges_then_restore_nonfinite',
+        known_gap_policy='independent_continuous_regions', processing_gap_ranges=processing_gaps,
+        warnings=warn, display={'mode': resolved_mode, 'level': level, 'px': px, 'request': display})
+    return FilteredSamples(
+        df, filt, tcol, i0, i1, s0, s1, resolved_mode, level, budget, warn, tp_id, details)
+
+
+def filtered_window(name: str, cols: list[str], kind: str,
+                    t0: float | None, t1: float | None, px: int,
+                    order: int = 4, f1: float | None = None,
+                    f2: float | None = None,
+                    window_s: float | None = None,
+                    display: str = "auto",
+                    max_spike_s: float | None = DEFAULT_MAX_SPIKE_S,
+                    threshold: float = DEFAULT_DESPIKE_THRESHOLD,
+                    abs_floor: float = DEFAULT_DESPIKE_ABS_FLOOR,
+                    replacement: str = "linear",
+                    tp_id: int | None = None) -> dict:
+    """Reduce the shared full-rate result using the existing plot contract."""
+    samples = filtered_samples(
+        name, cols, kind, t0, t1, px, order=order, f1=f1, f2=f2,
+        window_s=window_s, display=display, max_spike_s=max_spike_s,
+        threshold=threshold, abs_floor=abs_floor, replacement=replacement,
+        tp_id=tp_id)
+    df, filt, tcol = samples.frame, samples.filtered, samples.time_column
+    i0, i1, level, budget = samples.i0, samples.i1, samples.level, samples.budget
+    n_raw, raw_mode, warn = i1 - i0, samples.mode == "raw", samples.warnings
+    scope = ({"tp_id": tp_id, "time_origin_s": float(df[tcol][0])}
+             if tp_id is not None else {})
+    scope["analysis"] = samples.analysis
+
     if raw_mode:
+        t = df[tcol].to_numpy()[::level]
+        if tp_id is not None:
+            scope["relative_t"] = to_json_list(t - scope["time_origin_s"])
         return {"mode": "raw", "level": level, "n_raw": n_raw,
                 "i0": i0, "i1": i1,
-                "t": to_json_list(df[tcol].to_numpy()[::level]),
+                "t": to_json_list(t),
                 "series": {c: to_json_list(filt[c][::level]) for c in cols},
-                **warn}
+                **warn, **scope}
 
-    t = (pl.scan_parquet(test_dir / "pyramid" / f"L{level}.parquet")
-         .slice(b0, b1 - b0).select([tcol]).collect())[tcol].to_numpy()
+    if tp_id is not None:
+        t = df[tcol].to_numpy()[::level]
+    else:
+        test_dir = TESTS_DIR / name
+        b0, b1 = i0 // level, -(-i1 // level)
+        t = (pl.scan_parquet(test_dir / "pyramid" / f"L{level}.parquet")
+             .slice(b0, b1 - b0).select([tcol]).collect())[tcol].to_numpy()
     series = {c: bucket_minmax(filt[c], level) for c in cols}
 
     # same bucket-merge rule as store.read_window when over the budget
     t, series, merge = merge_over_cap(t, series, budget)
+    if tp_id is not None:
+        scope["relative_t"] = to_json_list(t - scope["time_origin_s"])
 
     return {"mode": "envelope", "level": level * merge, "n_raw": n_raw,
             "i0": i0, "i1": i1, "t": to_json_list(t),
             "series": {c: {"min": to_json_list(mn), "max": to_json_list(mx)}
                        for c, (mn, mx) in series.items()},
-            **warn}
+            **warn, **scope}
 
 
-def spectrum(name: str, col: str, mode: str, t0: float | None,
-             t1: float | None, nperseg: int = 4096,
-             max_bins: int = 4000,
-             rpm_col: str | None = None) -> dict:
-    """FFT magnitude spectrum or Welch PSD of one column over [t0, t1].
+SPECTRUM_METHOD_VERSION = "kiha-spectrum-v2"
 
-    When ``rpm_col`` is supplied, the response also carries the mean shaft
-    speed over the identical sample window.  The frontend uses that reference
-    speed to express frequency as cycles per revolution (order).  This is a
-    fixed-speed normalization, not angular resampling, so it is most useful on
-    steady-speed test points or a narrowly zoomed full-test range.
+
+@dataclass
+class SpectrumResult:
+    """Unrounded, unreduced Hz bins and ordinates for analysis/export reuse.
+
+    Callers hold the test read lock for the entire operation.  Metadata records
+    the samples and processing actually used.  Welch values remain density per
+    Hz even when a client chooses to display frequency as shaft order.
     """
+    freqs: np.ndarray
+    mag: np.ndarray
+    metadata: dict
+
+
+def spectrum_samples(name: str, col: str, mode: str, t0: float | None,
+                     t1: float | None, nperseg: int = 4096,
+                     rpm_col: str | None = None,
+                     tp_id: int | None = None) -> SpectrumResult:
+    """Compute one full-resolution stored-signal FFT or Welch result.
+
+    Saved TP rows are authoritative; legacy/open TP bounds use the shared
+    resolver.  Full-test windows retain the existing nominal-time conversion.
+    Display filtering never changes this stored-signal path.
+    """
+    if mode not in {"fft", "welch"}:
+        raise ValueError(f"unknown spectrum mode: {mode}")
+    if tp_id is not None and (t0 is not None or t1 is not None):
+        raise ValueError("tp_id cannot be combined with t0 or t1")
+    if any(value is not None and not math.isfinite(value)
+           for value in (t0, t1)):
+        raise ValueError("time bounds must be finite")
     meta = get_meta(name)
     if meta is None:
         raise FileNotFoundError(name)
-    fs = meta["fs_hz"]
-    i0, i1 = window_bounds(meta, t0, t1)
+    fs = float(meta["fs_hz"])
+    if not math.isfinite(fs) or fs <= 0:
+        raise ValueError("sample rate must be finite and positive")
+    i0, i1 = (testpoint_range(name, tp_id) if tp_id is not None
+              else window_bounds(meta, t0, t1))
     n = max(0, i1 - i0)
     gap_count = len(_known_gap_slices(meta, i0, i1))
     if gap_count:
@@ -424,35 +556,51 @@ def spectrum(name: str, col: str, mode: str, t0: float | None,
     if n < 16:
         raise ValueError("range too short for a spectrum")
 
-    requested_cols = [col]
+    tcol = meta["time_column"]
+    requested_cols = list(dict.fromkeys([tcol, col]))
     if rpm_col is not None and rpm_col not in requested_cols:
         requested_cols.append(rpm_col)
+    progress.checkpoint()
     frame = (pl.scan_parquet(TESTS_DIR / name / "data.parquet")
              .slice(i0, n).select(requested_cols).collect())
+    progress.checkpoint()
+    if frame.height != n:
+        raise ValueError("stored sample count differs from metadata; reload the test")
+    first_time, last_time = float(frame[tcol][0]), float(frame[tcol][-1])
+    if not math.isfinite(first_time) or not math.isfinite(last_time):
+        raise ValueError("selected range has nonfinite boundary timestamps")
     v = frame[col].to_numpy().astype(np.float64)
     clean, mask = _interp_nan(v)
     nan_count = int(v.size - mask.sum())
     if clean is None:
         raise ValueError("range is all NaN")
     clean = signal.detrend(clean, type="constant")  # drop DC so it can't dwarf peaks
+    progress.checkpoint()
 
     extra = {}
     if mode == "welch":
         seg = int(min(max(nperseg, 64), clean.size))
-        freqs, mag = signal.welch(clean, fs=fs, nperseg=seg)
+        overlap = seg // 2
+        # Spell out the existing SciPy defaults to keep the method reproducible
+        # across library upgrades; periodic Hann is distinct from symmetric Hann.
+        window = signal.get_window("hann", seg, fftbins=True)
+        freqs, mag = signal.welch(
+            clean, fs=fs, window=window, nperseg=seg, noverlap=overlap,
+            nfft=seg, detrend="constant", return_onesided=True,
+            scaling="density", average="mean")
         extra["nperseg"] = seg
+        segment_count = 1 + (clean.size - seg) // (seg - overlap)
+        used_samples = seg + (segment_count - 1) * (seg - overlap)
     else:
         mag = np.abs(np.fft.rfft(clean)) * 2 / clean.size
         mag[0] /= 2
         if clean.size % 2 == 0:
             mag[-1] /= 2
         freqs = np.fft.rfftfreq(clean.size, d=1.0 / fs)
-
-    # cap payload; max per bucket so spectral peaks survive
-    factor = max(1, math.ceil(len(freqs) / max_bins))
-    if factor > 1:
-        _, mag = bucket_minmax(mag, factor)
-        freqs = freqs[::factor][: len(mag)]
+        seg, overlap, segment_count, used_samples = None, None, 1, clean.size
+    progress.checkpoint()
+    if not np.isfinite(mag).all():
+        raise ValueError("spectrum contains nonfinite results; check signal magnitude")
 
     rpm_reference = {}
     if rpm_col is not None:
@@ -469,10 +617,76 @@ def spectrum(name: str, col: str, mode: str, t0: float | None,
             "mean_rpm": mean_rpm,
             "min_rpm": float(np.min(finite_rpm)),
             "max_rpm": float(np.max(finite_rpm)),
+            "rpm_finite_count": int(finite_rpm.size),
+            "rpm_nan_count": int(rpm.size - finite_rpm.size),
         }
+    nfft = seg if seg is not None else clean.size
+    peak = int(np.argmax(mag))  # First native bin wins an exact tie.
+    metadata = {
+        "analysis": analysis.source_context(name, meta, [col] + ([rpm_col] if rpm_col else []), i0, i1, tp_id=tp_id, t0=t0, t1=t1),
+        "mode": mode, "col": col, "fs_hz": fs, "n_samples": n,
+        "nan_count": nan_count, "finite_count": int(mask.sum()),
+        "i0": i0, "i1": i1, "tp_id": tp_id,
+        "time_start_s": first_time, "time_end_s": last_time,
+        "method": {
+            "version": SPECTRUM_METHOD_VERSION,
+            "source": "stored", "prefilter": "none", "sampling": "metadata_fs",
+            "missing_values": "linear_by_index_hold_edges", "detrend": "constant",
+            "window": "hann_periodic" if mode == "welch" else "rectangular",
+            "nfft": int(nfft), "bin_spacing_hz": fs / nfft, "onesided": True,
+            "scaling": "density" if mode == "welch" else "peak_amplitude",
+            "units": "U²/Hz" if mode == "welch" else "U",
+            "nperseg": seg, "noverlap": overlap,
+            "average": "mean" if mode == "welch" else None,
+            "segment_count": int(segment_count), "used_samples": int(used_samples),
+            "trailing_samples": int(clean.size - used_samples),
+        },
+        "quality": {
+            "known_gap_count": 0,
+            "gap_metadata_available": isinstance(meta.get("time_gap_ranges"), list),
+            "time_source": meta.get("time_source"),
+            "time_quantized": meta.get("time_quantized"),
+            "jitter_warning": meta.get("jitter_warning"),
+        },
+        "peak": {"frequency_hz": float(freqs[peak]), "magnitude": float(mag[peak]),
+                 "bin_index": peak},
+        **rpm_reference, **extra,
+    }
+    return SpectrumResult(freqs=freqs, mag=mag, metadata=metadata)
 
-    return {"mode": mode, "col": col, "fs_hz": fs, "n_samples": n,
-            "nan_count": nan_count,
-            "freqs": [round(float(f), 4) for f in freqs],
-            "mag": [float(m) if math.isfinite(m) else None for m in mag],
-            **rpm_reference, **extra}
+
+def spectrum(name: str, col: str, mode: str, t0: float | None,
+             t1: float | None, nperseg: int = 4096,
+             max_bins: int = 4000, rpm_col: str | None = None,
+             tp_id: int | None = None) -> dict:
+    """Display payload preserving each retained maximum's actual native bin.
+
+    ``max_bins`` is an internal display cap, never an analysis/export input.
+    Maxima are unsuitable for density integration; use spectrum_samples for
+    the unreduced, uniformly spaced result.  Frequencies are not rounded.
+    """
+    if not isinstance(max_bins, int) or isinstance(max_bins, bool) or max_bins < 1:
+        raise ValueError("max_bins must be a positive integer")
+    result = spectrum_samples(name, col, mode, t0, t1, nperseg,
+                              rpm_col=rpm_col, tp_id=tp_id)
+    count = len(result.freqs)
+    factor = max(1, math.ceil(count / max_bins))
+    if factor == 1:
+        indices = np.arange(count)
+    else:
+        full_buckets = count // factor
+        complete = result.mag[:full_buckets * factor].reshape(-1, factor)
+        indices = np.arange(full_buckets) * factor + np.argmax(complete, axis=1)
+        tail_start = full_buckets * factor
+        if tail_start < count:
+            indices = np.append(indices, tail_start + np.argmax(result.mag[tail_start:]))
+    return {
+        **result.metadata,
+        "freqs": result.freqs[indices].tolist(),
+        "mag": result.mag[indices].tolist(),
+        "bin_indices": indices.tolist(),
+        "reduction": {
+            "method": "max-bin" if factor > 1 else "none", "factor": factor,
+            "n_bins_original": count, "n_bins_returned": int(indices.size),
+        },
+    }

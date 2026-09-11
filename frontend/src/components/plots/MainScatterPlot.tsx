@@ -8,7 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   ZAxis,
-  ErrorBar,
+  Customized,
 } from 'recharts';
 import { DatasheetDataPoint, ScatterDataPoint, TestPoint } from '../../types';
 import { AnimatedDot } from './AnimatedDot';
@@ -17,8 +17,10 @@ import { formatValue } from '../../utils/formatters';
 import { SCATTER_MARGIN, PLOT_INSET_X, PLOT_INSET_Y } from '../../constants/scatterGeometry';
 import { PointSelectionMenu } from './PointSelectionMenu';
 import { CustomScatterTooltip } from './CustomScatterTooltip';
+import { ScatterRangeBars } from './ScatterRangeBars';
 import { clusterPoints, shouldEnableClustering } from '../../utils/pointClustering';
 import { scatterExtents } from '../../utils/scatterRanges';
+import { PlotActionMenu } from './PlotActionMenu';
 
 interface MainScatterPlotProps {
   scatterData: ScatterDataPoint[];
@@ -27,6 +29,7 @@ interface MainScatterPlotProps {
   xLabel: string;
   yLabel: string;
   mainZoom: [number, number, number, number] | null;
+  onResetZoom: () => void;
   onToggleTestPoint: (point: ScatterDataPoint) => void;
   onWheel: (e: React.WheelEvent<HTMLDivElement>) => void;
   onPan: (deltaX: number, deltaY: number, currentBounds?: { xMin: number; xMax: number; yMin: number; yMax: number }) => void;
@@ -40,8 +43,6 @@ interface MenuState {
   position: { x: number; y: number };
 }
 
-const rangeBarShapeRenderer = () => <g aria-hidden="true" pointerEvents="none" />;
-
 export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   scatterData,
   datasheetData,
@@ -49,6 +50,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   xLabel,
   yLabel,
   mainZoom,
+  onResetZoom,
   onToggleTestPoint,
   onWheel,
   onPan,
@@ -656,6 +658,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   return (
     <div
       ref={chartRef}
+      tabIndex={0} aria-label="Plot canvas for test-point overview"
       style={{ flex: 1, minHeight: 0, position: 'relative', cursor: isPanning ? 'grabbing' : 'default' }}
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
@@ -663,6 +666,11 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseLeave}
     >
+      <div style={{ position: 'absolute', right: 8, top: 2, zIndex: 2 }}
+        onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+        <PlotActionMenu label="test-point overview" targetRef={chartRef}
+          contextKey={JSON.stringify([xLabel, yLabel, mainZoom])} onReset={onResetZoom} />
+      </div>
       <ResponsiveContainer width="100%" height="100%">
         <ScatterChart margin={SCATTER_MARGIN}>
           <CartesianGrid strokeDasharray="3 3" stroke="#3c3c3c" />
@@ -697,44 +705,20 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
           <ZAxis range={[100, 100]} />
           <Tooltip
             cursor={isPanning || suppressTooltip ? false : { strokeDasharray: '3 3' }}
-            content={<CustomScatterTooltip />}
+            content={<CustomScatterTooltip chartRef={chartRef} />}
             isAnimationActive={false}
             active={isPanning || suppressTooltip ? false : undefined}
           />
           {(showHorizontalErrorBars || showVerticalErrorBars) && (
-            <Scatter
-              className="scatter-range-series"
-              name="Test-point ranges"
-              data={scatterData}
-              shape={rangeBarShapeRenderer}
-              activeShape={rangeBarShapeRenderer}
-              tooltipType="none"
-              pointerEvents="none"
-              isAnimationActive={false}
-            >
-              {showHorizontalErrorBars && (
-                <ErrorBar
-                  dataKey="xError"
-                  direction="x"
-                  width={6}
-                  stroke="#8ec8ec"
-                  strokeWidth={1.25}
-                  strokeOpacity={0.78}
-                  pointerEvents="none"
+            <Customized
+              component={
+                <ScatterRangeBars
+                  points={scatterData}
+                  horizontal={showHorizontalErrorBars}
+                  vertical={showVerticalErrorBars}
                 />
-              )}
-              {showVerticalErrorBars && (
-                <ErrorBar
-                  dataKey="yError"
-                  direction="y"
-                  width={6}
-                  stroke="#d7ba7d"
-                  strokeWidth={1.25}
-                  strokeOpacity={0.78}
-                  pointerEvents="none"
-                />
-              )}
-            </Scatter>
+              }
+            />
           )}
           {datasheetData.length > 0 && (
             <Scatter

@@ -1,0 +1,309 @@
+.panel {
+  min-width: 0;
+  border-color: #435362;
+  scroll-margin-top: 60px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.header h2 {
+  margin: 0 0 5px;
+  color: #d8e9f5;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.header p {
+  max-width: 76ch;
+  margin: 0;
+  color: #b9c2c9;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 365px), 1fr));
+  align-items: start;
+  gap: 20px;
+}
+
+.rules,
+.proposal {
+  min-width: 0;
+  font-size: 12px;
+}
+
+.variables {
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.variables legend,
+.proposal h3 {
+  padding: 0;
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ddd;
+}
+
+.variables legend span {
+  margin-left: 8px;
+  color: #a0abb5;
+  font-weight: 400;
+}
+
+.variableList {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.variableRow {
+  display: grid;
+  grid-template-columns: 63px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.rowLabel {
+  color: #b9c2c9;
+  font-size: 11px;
+}
+
+.select {
+  width: 100%;
+  min-width: 0;
+}
+
+.remove {
+  font-size: 11px;
+}
+
+.addRow,
+.candidateStatus,
+.previewAction,
+.pagination {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #aeb6bd;
+  font-size: 11px;
+}
+
+.addRow {
+  margin-top: 8px;
+}
+
+.candidateStatus {
+  min-height: 17px;
+  margin-top: 9px;
+  line-height: 1.45;
+}
+
+.methodNote {
+  margin: 10px 0 12px;
+  padding: 8px 10px;
+  border-left: 2px solid #637888;
+  background: #20272d;
+  color: #c0cbd3;
+  line-height: 1.5;
+  font-size: 11px;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.checkbox,
+.duration {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.checkbox input {
+  margin: 0;
+  accent-color: #569cd6;
+}
+
+.duration input {
+  width: 83px;
+  min-width: 0;
+}
+
+.help,
+.sampleSummary,
+.resultStatus {
+  color: #aeb6bd;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.help {
+  margin: 10px 0 12px;
+}
+
+.previewAction {
+  align-items: flex-start;
+}
+
+.previewAction > span {
+  flex-basis: 100%;
+}
+
+.proposal {
+  padding: 12px;
+  background: #202020;
+  border: 1px solid #41464b;
+  border-radius: 3px;
+}
+
+.resultStatus:empty {
+  display: none;
+}
+
+.sampleSummary {
+  margin: 7px 0;
+}
+
+.excluded {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 12px;
+  font-size: 11px;
+  color: #adb6be;
+}
+
+.excluded > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.excluded dd {
+  margin: 0;
+  color: #d0d5da;
+  font-variant-numeric: tabular-nums;
+}
+
+.tableScroll {
+  max-height: 285px;
+  overflow: auto;
+  border: 1px solid #3d4348;
+}
+
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  color: #ccc;
+  font-size: 11px;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #353a3e;
+  vertical-align: top;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  background: #2b3035;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.table tbody th {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.table td:not(.values) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.values {
+  min-width: 110px;
+  max-width: 260px;
+  overflow-wrap: anywhere;
+}
+
+.pagination {
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.pagination > div {
+  display: flex;
+  gap: 6px;
+}
+
+.applyArea {
+  margin-top: 12px;
+  border-top: 1px solid #3d4348;
+  padding-top: 10px;
+}
+
+.applyArea p {
+  margin: 0 0 10px;
+  color: #bdc7ce;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.applyArea strong {
+  color: #e0c99f;
+  font-weight: 600;
+}
+
+.error {
+  margin: 8px 0;
+  color: #f3aaa0;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.error p {
+  margin: 5px 0 0;
+}
+
+.empty {
+  padding: 10px;
+  margin: 10px 0;
+  border: 1px solid #64553d;
+  color: #dcc79f;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.panel button:focus-visible,
+.panel input:focus-visible,
+.tableScroll:focus-visible {
+  outline: 2px solid #74b9ee;
+  outline-offset: 2px;
+}

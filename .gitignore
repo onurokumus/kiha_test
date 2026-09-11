@@ -12,6 +12,7 @@ venv/
 
 # datasets (multi-GB; recreate via ../other_small_project/generate_dummy_data.py + ingest)
 data/
+dummy_data/
 
 # logs & dumps
 *.log

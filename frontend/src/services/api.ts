@@ -18,8 +18,13 @@ import {
   FormulaRecipeList,
   FormulaSpec,
   IdCandidate,
+  AutoSplitOptions,
+  AutoSplitProposal,
+  AnyPlotExportRequest,
+  PlotExportBundleRequest,
   SpectrumData,
   TestInfo,
+  TrashEntry,
   TestMeta,
   TestPoint,
   TestPointsFile,
@@ -28,7 +33,11 @@ import {
   WindowDisplayMode,
   XYData,
 } from '../types';
+import { fetchExportFile } from './exportProgress';
 import type { AppSettings } from '../constants/settings';
+import type { AnnotationDocument, TimeAnnotation } from '../utils/plotAnnotations';
+import type { ComponentCatalog, ComponentIds, ComponentKind, HardwareComponent } from '../utils/components';
+import type { AnalysisSourceCatalog } from './sessionSources';
 
 export const API_BASE = (
   import.meta.env.VITE_API_BASE || `${import.meta.env.BASE_URL}api`
@@ -40,12 +49,18 @@ export function isAbortError(err: unknown): boolean {
 
 // A GET is just a sendJson with no method/body — delegate so the error-detail
 // extraction lives in one place (sendJson is hoisted, defined below).
-function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+export function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   return sendJson<T>(path, { signal });
 }
 
 export async function fetchTests(): Promise<TestInfo[]> {
   return getJson<TestInfo[]>('/tests');
+}
+
+export async function fetchAnalysisSources(): Promise<AnalysisSourceCatalog> {
+  const catalog = await getJson<AnalysisSourceCatalog>('/analysis-sources');
+  if (catalog.version !== 1 || !Array.isArray(catalog.sources)) throw new Error('Unsupported source catalog. Update the application and retry.');
+  return catalog;
 }
 
 /** Shared page defaults. Null means the server has never been configured. */
@@ -70,13 +85,25 @@ export async function putDefaultSettings(settings: AppSettings): Promise<AppSett
   return response.settings;
 }
 
-export async function fetchMeta(name: string): Promise<TestMeta> {
-  return getJson<TestMeta>(`/tests/${encodeURIComponent(name)}`);
+export async function fetchMeta(name: string, signal?: AbortSignal, expectedSourceId?: string | null): Promise<TestMeta> {
+  return getJson<TestMeta>(`/tests/${encodeURIComponent(name)}${expectedSourceId ? `?expected_source_id=${encodeURIComponent(expectedSourceId)}` : ''}`, signal);
 }
 
-export async function fetchTestPoints(name: string): Promise<TestPointsFile> {
+export function fetchAnnotations(name: string, signal?: AbortSignal): Promise<AnnotationDocument> {
+  return getJson(`/tests/${encodeURIComponent(name)}/annotations`, signal);
+}
+
+export function saveAnnotations(document: AnnotationDocument, annotations: TimeAnnotation[]): Promise<AnnotationDocument> {
+  return sendJson(`/tests/${encodeURIComponent(document.test)}/annotations`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expected_revision: document.revision,
+      expected_data_bounds: document.data_bounds, annotations }),
+  });
+}
+
+export async function fetchTestPoints(name: string, expectedSourceId?: string | null): Promise<TestPointsFile> {
   return getJson<TestPointsFile>(
-    `/tests/${encodeURIComponent(name)}/testpoints`
+    `/tests/${encodeURIComponent(name)}/testpoints${expectedSourceId ? `?expected_source_id=${encodeURIComponent(expectedSourceId)}` : ''}`
   );
 }
 
@@ -154,10 +181,23 @@ async function sendJson<T>(path: string, init: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function fetchSplitCandidates(name: string): Promise<IdCandidate[]> {
+export async function fetchSplitCandidates(name: string, signal?: AbortSignal): Promise<IdCandidate[]> {
   return getJson<IdCandidate[]>(
-    `/tests/${encodeURIComponent(name)}/split/candidates`
+    `/tests/${encodeURIComponent(name)}/split/candidates`, signal
   );
+}
+
+export async function previewAutoSplit(
+  name: string,
+  options: AutoSplitOptions,
+  signal?: AbortSignal
+): Promise<AutoSplitProposal> {
+  return sendJson(`/tests/${encodeURIComponent(name)}/split/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(options),
+    signal,
+  });
 }
 
 /** Proposal only — the backend does NOT persist; PUT the result to save. */
@@ -207,11 +247,15 @@ export async function fetchSpectrum(
   t0: number | null,
   t1: number | null,
   rpmCol: string | null = null,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  tpId?: number
 ): Promise<SpectrumData> {
   const params = new URLSearchParams({ col, mode });
-  if (t0 !== null) params.set('t0', String(t0));
-  if (t1 !== null) params.set('t1', String(t1));
+  if (tpId !== undefined) params.set('tp_id', String(tpId));
+  else {
+    if (t0 !== null) params.set('t0', String(t0));
+    if (t1 !== null) params.set('t1', String(t1));
+  }
   if (rpmCol) params.set('rpm_col', rpmCol);
   return getJson<SpectrumData>(
     `/tests/${encodeURIComponent(name)}/spectrum?${params}`,
@@ -229,7 +273,8 @@ export async function fetchFiltered(
   t1: number | null,
   px: number,
   signal?: AbortSignal,
-  display: WindowDisplayMode = 'auto'
+  display: WindowDisplayMode = 'auto',
+  tpId?: number
 ): Promise<FilteredWindow> {
   const params = new URLSearchParams({
     cols: cols.join(','),
@@ -245,23 +290,34 @@ export async function fetchFiltered(
   if (spec.threshold !== undefined) params.set('threshold', String(spec.threshold));
   if (spec.absFloor !== undefined) params.set('abs_floor', String(spec.absFloor));
   if (spec.replacement !== undefined) params.set('replacement', spec.replacement);
-  if (t0 !== null) params.set('t0', String(t0));
-  if (t1 !== null) params.set('t1', String(t1));
+  if (tpId !== undefined) {
+    params.set('tp_id', String(tpId));
+  } else {
+    if (t0 !== null) params.set('t0', String(t0));
+    if (t1 !== null) params.set('t1', String(t1));
+  }
   return getJson<FilteredWindow>(
     `/tests/${encodeURIComponent(name)}/filter?${params}`,
     signal
   );
 }
 
-/** Replace the free-form user_meta descriptors; returns the full meta. */
+/** Global component identities, independent of test folder names. */
+export const fetchComponents = (signal?: AbortSignal): Promise<ComponentCatalog> => getJson('/components', signal);
+export const createComponent = (kind: ComponentKind, name: string): Promise<HardwareComponent> =>
+  sendJson('/components', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, name }) });
+
+/** Patch supplied fields; component changes require their loaded revision. */
 export async function patchUserMeta(
   name: string,
-  userMeta: Record<string, string>
+  userMeta?: Record<string, string>,
+  fields: { description?: string; notes?: string; components?: ComponentIds; expected_components_revision?: number;
+    component_rpm_column?: string | null; expected_component_rpm_revision?: number } = {}
 ): Promise<TestMeta> {
   return sendJson(`/tests/${encodeURIComponent(name)}/meta`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_meta: userMeta }),
+    body: JSON.stringify({ user_meta: userMeta, ...fields }),
   });
 }
 
@@ -324,12 +380,19 @@ export async function deleteTest(name: string): Promise<unknown> {
   return sendJson(`/tests/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
-/** Undo a soft delete. 404s once the trash copy has been purged (~1 h). */
-export async function restoreTest(
-  name: string
-): Promise<{ ok: boolean; restored: string }> {
-  return sendJson(`/tests/${encodeURIComponent(name)}/restore`, {
-    method: 'POST',
+export function fetchTrash(signal?: AbortSignal): Promise<{ entries: TrashEntry[]; retention_seconds: number | null }> {
+  return getJson('/trash', signal);
+}
+
+export function restoreTrash(id: string, name: string): Promise<{ ok: boolean; restored: string }> {
+  return sendJson(`/trash/${encodeURIComponent(id)}/restore`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+  });
+}
+
+export function deleteTrash(ids: string[]): Promise<{ deleted_ids: string[]; failures: { id: string; error: string }[] }> {
+  return sendJson('/trash', {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
   });
 }
 
@@ -351,11 +414,15 @@ export async function fetchXY(
   t0: number | null,
   t1: number | null,
   maxPts = 3000,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  tpId?: number,
 ): Promise<XYData> {
-  const params = new URLSearchParams({ x, y, max_pts: String(maxPts) });
-  if (t0 !== null) params.set('t0', String(t0));
-  if (t1 !== null) params.set('t1', String(t1));
+  const params = new URLSearchParams({ x, y_col: y, max_pts: String(maxPts) });
+  if (tpId !== undefined) params.set('tp_id', String(tpId));
+  else {
+    if (t0 !== null) params.set('t0', String(t0));
+    if (t1 !== null) params.set('t1', String(t1));
+  }
   return getJson<XYData>(
     `/tests/${encodeURIComponent(name)}/xy?${params}`,
     signal
@@ -363,6 +430,47 @@ export async function fetchXY(
 }
 
 // -- CSV downloads (streamed by the backend; use as plain <a href> targets) --
+
+/** Full-resolution single-plot export. The backend stages all sources before
+ * responding; buffer the complete response before offering a browser file. */
+export async function fetchPlotCsv(request: AnyPlotExportRequest, signal: AbortSignal): Promise<{ blob: Blob; filename: string }> {
+  const description = 'kind' in request ? request.kind === 'spectrum' ? `${request.mode}_${request.axis}` : `vs_${request.x_column}_xy` : request.data;
+  return fetchPlotExportFile(exportPath(request), serializePlotRequest(request), request.include_metadata ? 'application/zip' : 'text/csv',
+    `${request.sources.length === 1 ? request.sources[0].test : 'multiple-sources'}_${request.column}_${description}.${request.include_metadata ? 'zip' : 'csv'}`, signal);
+}
+
+export async function fetchPlotCsvBundle(request: PlotExportBundleRequest, signal: AbortSignal): Promise<{ blob: Blob; filename: string }> {
+  const path = request.plots[0] && exportPath(request.plots[0].request);
+  if (!path || request.plots.some((entry) => exportPath(entry.request) !== path)) throw new Error('Export one plot mode at a time.');
+  return fetchPlotExportFile(`${path}/bundle`, {
+    ...request, plots: request.plots.map((entry) => ({ ...entry, request: serializePlotRequest(entry.request) })),
+  }, 'application/zip', `plots_${request.layout}.zip`, signal);
+}
+
+function exportPath(request: AnyPlotExportRequest) {
+  return 'kind' in request ? request.kind === 'xy' ? '/xy-export' : '/spectrum-export' : '/plot-export';
+}
+
+function serializePlotRequest(request: AnyPlotExportRequest) {
+  if ('kind' in request) return request;
+  const spec = request.filter;
+  return { ...request, filter: spec ? {
+      kind: spec.kind, order: spec.order, f1: spec.f1, f2: spec.f2,
+      window_s: spec.windowS, max_spike_s: spec.maxSpikeS,
+      threshold: spec.threshold, abs_floor: spec.absFloor, replacement: spec.replacement,
+  } : null };
+}
+
+async function fetchPlotExportFile(path: string, request: unknown, contentType: string, fallback: string, signal: AbortSignal) {
+  const { response, blob } = await fetchExportFile(API_BASE, path, JSON.stringify(request),
+    'application/json', contentType, signal);
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  const plain = /filename="([^"]+)"/i.exec(disposition)?.[1];
+  let filename = plain ?? fallback;
+  if (encoded) { try { filename = decodeURIComponent(encoded); } catch { /* Use plain fallback. */ } }
+  return { blob, filename };
+}
 
 /** The original uploaded CSV (raw.csv), kept for provenance. */
 export function rawCsvUrl(name: string): string {
@@ -383,8 +491,32 @@ export function exportCsvUrl(
   return `${API_BASE}/tests/${encodeURIComponent(name)}/export${q ? `?${q}` : ''}`;
 }
 
-/** CSV of one SAVED test point (exact index boundaries, server-side). */
-export function testPointCsvUrl(name: string, tpId: number, cols?: string[]): string {
-  const q = cols?.length ? `?cols=${encodeURIComponent(cols.join(','))}` : '';
-  return `${API_BASE}/tests/${encodeURIComponent(name)}/testpoints/${tpId}/export${q}`;
+/** Full-resolution TP CSV with test_point_id. Omit draft for exact saved bounds;
+ *  explicit draft rows are half-open and never save/modify TP definitions. */
+export function testPointCsvUrl(
+  name: string,
+  tpId: number,
+  cols?: string[],
+  draft?: { start_idx: number; end_idx: number }
+): string {
+  const params = new URLSearchParams();
+  if (cols?.length) params.set('cols', cols.join(','));
+  if (draft) {
+    params.set('start_idx', String(draft.start_idx));
+    params.set('end_idx', String(draft.end_idx));
+  }
+  const q = params.toString();
+  return `${API_BASE}/tests/${encodeURIComponent(name)}/testpoints/${tpId}/export${q ? `?${q}` : ''}`;
+}
+
+
+/** Package the exact captured PNG and synchronous loaded-context snapshot. */
+export async function fetchPlotImagePackage(image: Blob, metadata: Record<string, unknown>, filename: string, signal?: AbortSignal) {
+  const encoded = JSON.stringify({ ...metadata, filename }) + '\n';
+  if (new TextEncoder().encode(encoded).length > 2 * 1024 * 1024) {
+    throw new Error('Analysis metadata exceeds 2 MiB. Select fewer plots or sources.');
+  }
+  const { blob } = await fetchExportFile(API_BASE, '/plot-image-export', new Blob([encoded, image]),
+    'application/octet-stream', 'application/zip', signal ?? new AbortController().signal);
+  return blob;
 }

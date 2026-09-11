@@ -1,0 +1,13 @@
+.details {
+  padding: 12px 16px;
+  border-block: 1px solid #3c3c3c;
+  background: #20252a;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.details p { color: #aaa; margin: 8px 0; }
+.list { list-style: none; padding: 0; margin: 8px 0 0; max-height: 240px; overflow-y: auto; }
+.list li { display: flex; align-items: center; gap: 12px; padding: 5px 0; }
+.list li span { flex: 1; min-width: 0; }
+.list a { flex-shrink: 0; text-decoration: none; }

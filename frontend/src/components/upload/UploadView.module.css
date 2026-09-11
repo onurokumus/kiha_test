@@ -175,7 +175,9 @@
 }
 
 .tableScroll table {
-  min-width: 900px;
+  /* Fits the history pane of a 1440px desktop at 150% browser zoom. Narrower
+     windows still have the existing keyboard-accessible horizontal scroll. */
+  min-width: 860px;
 }
 
 .tableScroll tbody tr:hover {
@@ -226,6 +228,15 @@
 
 .page :global(.upload-history-actions) {
   gap: 6px;
+}
+
+/* Links and native buttons have different text alignment defaults. Keep every
+   row action centered, including the original-CSV download link. */
+.page :global(.upload-history-actions .btn) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.4;
 }
 
 .page :global(.btn) {
@@ -389,3 +400,43 @@
     grid-template-columns: 1fr;
   }
 }
+.descriptionField {
+  margin: 10px 0;
+}
+
+.descriptionField textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  min-height: 54px;
+}
+
+.descriptionPreview {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 400;
+  color: #b8c6d0;
+  margin: 3px 0;
+}
+.notesLink {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 3px 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  color: #9fc7df;
+  cursor: pointer;
+}
+
+.notesLink:hover { text-decoration: underline; }
+.notesLink:focus-visible { outline: 2px solid #9fc7df; outline-offset: -2px; }

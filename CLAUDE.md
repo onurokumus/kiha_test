@@ -22,6 +22,8 @@ gotchas), not human onboarding.
 
 ## Hard requirements (from user)
 
+Target devices and input: follow `AGENTS.md`. This application is desktop/laptop-only with keyboard and mouse; mobile and touchscreen interaction are out of scope. Preserve desktop resizing and keyboard accessibility. Right-click menus are allowed, including menu-only secondary actions.
+
 1. No database — ASCII/JSON metadata + Parquet bulk samples, one folder per test
    under `data/tests/<name>/` (meta.json, status.json, testpoints.json,
    data.parquet, pyramid/L{16,256,4096}.parquet, raw.csv).
@@ -524,6 +526,52 @@ gotchas), not human onboarding.
 
 ## API gotchas (learned during Phase 0 verification)
 
+- Phase 10 `GET /api/component-statistics` reports current active-test use, not a
+  lifetime ledger. Edit saves explicit `component_rpm_column` with
+  `expected_component_rpm_revision`; column rename/drop follows/clears it.
+  Runtime = positive finite RPM rows / fs, excluding acquisition gaps. Mean/SD
+  weight seconds across sources. `component_stats.py` caches only numerical
+  summaries, never assignments/totals; read catalog -> test -> native slot.
+  Imports/edits retain separate `acquisition_gap_ranges` through fills/trims;
+  null means lost legacy history, not empty gaps. Do not replace DSP's existing
+  `time_gap_ranges` behavior with this provenance. See
+  `docs/COMPONENT_STATISTICS_METHOD.md` and verification for policy/limits.
+
+- Phase 8a analysis recovery uses `GET /api/analysis-sources`: ready tests lazily
+  receive a separate `source_identity.json` UUID that survives rebuild/rename/
+  trash/restore. Additive autosave `sources` references resolve these IDs, with
+  conservative sample/TP revision checks and explicit legacy-name reconnection.
+  Metadata and TP GETs accept optional `expected_source_id` guards. Retain loaded
+  source references until data invalidation; do not advance old plot references
+  to background metadata changes. `docs/SESSION_RECOVERY_VERIFICATION.md` records
+  the contract/limits. Phase 8b adds portable named JSON Save/Open through
+  `SessionControls` / `sessionFiles`: validate, preview, recheck sources, then
+  apply through App's shared recovery routine. Save captures live state instead
+  of reading debounced localStorage. Source checks/Close never overwrite the
+  workspace; explicit Open accepts recovered references. Spectrum X and XY X/Y
+  viewports are per-slot, with UUID/revision/variable/source/interval context;
+  programmatic uPlot synchronization is muted so auto-ranges cannot overwrite
+  manual ranges. See `docs/SAVED_SESSIONS_VERIFICATION.md` for format and limits.
+
+- Phase 7d trash uses `data/trash/<UUID>/entry.json` plus `data/` containing the
+  preserved test folder. `GET /api/trash` migrates legacy name folders under the
+  catalog writer lock. Restore by UUID via `POST /api/trash/{id}/restore` with
+  `{name}`; a conflict never overwrites active data. The legacy name route only
+  accepts an unambiguous copy. Permanent `DELETE /api/trash` requires an explicit
+  `{ids:[...]}` snapshot and reports partial failures; `deleting` entries cannot
+  restore. One-hour expiry still runs on the next test delete. Trash UUIDs identify
+  deletion occurrences; Phase 8a dataset identities are separate. See
+  `docs/TRASH_VERIFICATION.md`.
+
+- Phase 7a `meta.json` has optional plain-text `description` (1,000 Unicode
+  code points) and `notes` (20,000), separate from legacy `user_meta` keys.
+  `/api/tests/{name}/meta` PATCH changes only supplied fields; explicit
+  `user_meta` still replaces its block, and empty strings clear text. Use the
+  returned metadata in App rather than a second fetch after saving. Upload
+  `description` is immutable session identity, stored in manifest/resume records
+  and passed to ingest; later edits only affect current meta. Missing fields in
+  legacy manifests/records default empty. See `docs/TEST_NOTES_VERIFICATION.md`.
+
 - Upload is a five-route resumable protocol:
   `POST /api/uploads` initializes from
   `{name,source_file,uploader_name,size_bytes,last_modified_ms,fs_hz,time_mode,time_column}`
@@ -566,8 +614,59 @@ gotchas), not human onboarding.
   must wrap it in the TestPointsFile shape {version, test, source_file,
   fs_hz, test_points} and PUT /testpoints.
 - /filter takes `cols` + `type`; /spectrum takes `col` + `mode` (fft|welch).
-  Optional `rpm_col` adds mean/min/max absolute RPM over the identical sample
-  window; Spectrum uses that mean to convert Hz to order (`Hz * 60 / RPM`).
+  Optional `rpm_col` on /spectrum adds mean/min/max absolute RPM over the identical
+  sample window; Spectrum uses that mean to convert Hz to order (`Hz * 60 / RPM`).
+  Phase 6a TP filters use `/filter?tp_id=...` with saved half-open row bounds;
+  never substitute inclusive `t0/t1`. Use returned `relative_t` for each TP's
+  independent filtered facet. Full-test `/filter?t0&t1` remains window-based.
+  `plotShowOriginal` is separate display/session state, not a filter parameter.
+  Scope and verification: `docs/FILTER_METHOD.md`, `docs/FILTER_OVERLAY_VERIFICATION.md`.
+- Phase 6b single time-plot CSV uses `POST /api/plot-export`, staged all-or-error
+  before attachment headers. `dsp.filtered_samples` is the shared unrounded DSP;
+  do not export reduced `/filter` JSON. Full-test export preserves successful
+  t0/t1/px/display processing context; TP filtering uses complete saved rows.
+  Null x_range exports complete source rows; explicit ranges crop actual sample
+  centers after processing. PNG snapshots current uPlot canvas/visible legend.
+  Scope/limits/verification: `docs/PLOT_EXPORT_VERIFICATION.md`.
+- Phase 6e Spectrum CSV uses `POST /api/spectrum-export` and `/bundle` with
+  `dsp.spectrum_samples`, never reduced display JSON. Native frequency bins
+  retain linear amplitude / per-Hz PSD under order or Log Y; frequency crop
+  follows complete interval estimation. Expected saved bounds/fs/method/RPM
+  guard stale context. Time/Spectrum share staging, budgets and mounted PNG
+  capture; see `docs/SPECTRUM_EXPORT_VERIFICATION.md`.
+- Phase 6f XY CSV uses `POST /api/xy-export` and `/bundle`: native finite X/Y
+  pairs in source row order, exact saved TP or loaded Full rows, no interpolation
+  or temporary filters. Default axes mean all pairs; explicit X/Y ranges crop
+  both coordinates. `kiha-xy-v2` display uses unrounded stride samples with full
+  finite/missing counts; `/xy?tp_id&y_col` preserves exact bounds/column names.
+  Never export reduced XY JSON. Expected rows/time-column guard stale scope;
+  full context includes the loaded time range. See `docs/XY_EXPORT_VERIFICATION.md`.
+- Phase 6g plot dialogs default to CSV/PNG plus `analysis.json` in a ZIP;
+  uncheck metadata for file-only delivery. Numerical API `include_metadata`
+  defaults false for compatibility; the bundle's top-level flag controls its
+  manifest. `analysis_metadata.py` collects source/equation context inside the
+  executing source read lock; never reconstruct it from a later metadata read.
+  Display responses retain matching loaded context. PNG captures clone it with
+  axes/visible traces and `POST /api/plot-image-export` packages JSON-line + PNG
+  bytes without source rereads. `kiha-analysis-v1` records actual methods/counts
+  and artifact SHA-256; file stats are not immutable source revisions. Unknown
+  units and unretained edit history stay explicit. JSON is capped at 2 MiB,
+  PNG at 64 MiB/8192px edge/16M pixels. No new persistence or dependencies.
+  See `docs/ANALYSIS_METADATA_VERIFICATION.md`.
+- Phase 6h keeps staged binary export endpoints and adds ephemeral
+  `/api/export-progress` POST + token GET/DELETE, with `X-Export-ID` on the
+  binary request. `export_progress.py` uses a request-scoped ContextVar for
+  stage/count updates and cooperative checks; no retained files or detached
+  jobs. Eight active/64 total trackers, 45s polling lease, 120s terminal TTL.
+  Preserve read-lock-before-slot ordering and cancellable lock waits. A canceled
+  worker must unwind before its spools close; never abandon a native worker.
+  The disconnect monitor cannot consume ASGI receive during image upload, and
+  needs an explicit stop flag because nested cancel scopes can consume cancel.
+  Frontend `useExportTask` and `ExportTaskStatus` share outcomes/Cancel/focus;
+  `services/exportProgress.ts` polls and uses separate keepalive cancellation.
+  Freeze every PNG canvas/provenance synchronously before any yield; only
+  composition/encoding of owned captures yields. Native calls/toBlob finish
+  their current block. See `docs/EXPORT_PROGRESS_VERIFICATION.md`.
 - TP data responses nest time per series (series.<col>.t) with time_origin_s;
   full-test /data responses have a top-level t array.
 - CSV export/download endpoints (GET /export, /testpoints/{id}/export, /raw)
@@ -575,3 +674,10 @@ gotchas), not human onboarding.
   <a href download>, never via getJson. The streaming body locks itself
   (locks.data_read); do NOT wrap these with @with_test_read (the decorator lock
   releases when the endpoint returns, before the body streams).
+- Phase 5 TP exports append `test_point_id` (the definition ID). A colliding
+  source column gets an unused `source_`-prefixed name; full/raw exports are
+  unchanged. Uploads' Split CSV disclosure and Split use the same TP endpoint.
+  No indices means saved bounds; paired `start_idx`/`end_idx` means an unsaved
+  half-open draft with `_draft` filename. Split shares Save's conversion through
+  `utils/testPointExport.ts`. Do not revert Split to inclusive `/export?t0&t1`.
+  Verification and compatibility details: `docs/SPLIT_EXPORT_VERIFICATION.md`.

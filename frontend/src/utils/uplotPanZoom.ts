@@ -1,4 +1,5 @@
 import uPlot from 'uplot';
+import { AxisRange, validAxisRange } from './timePlotRanges';
 
 /** Per-notch wheel zoom factor (span multiplier when zooming in). */
 const WHEEL_STEP = 0.85;
@@ -9,6 +10,8 @@ const MIN_SPAN = 1e-9;
 
 const isPanGesture = (e: MouseEvent) => e.button === 1 || (e.button === 0 && e.shiftKey);
 
+export interface PanZoomControl { cancel: () => void }
+
 /**
  * uPlot plugin: mouse-wheel x-zoom around the cursor + x-pan via shift-drag or
  * middle-button drag. Plain left-drag stays uPlot's select-zoom rectangle
@@ -18,11 +21,15 @@ const isPanGesture = (e: MouseEvent) => e.button === 1 || (e.button === 0 && e.s
  *
  * The new range is applied locally with setScale for instant feedback, then
  * `commit` fires (trailing-debounced for wheel, on mouseup for pan — NOT per
- * mousemove: a commit re-renders all 9 linked grid plots, and TimePlot
- * rebuilds its uPlot instance per zoomDomain change). Omit `commit` for plots
+ * mousemove: a commit re-renders all 9 linked grid plots). Omit `commit` for plots
  * whose zoom is purely client-side (SpectrumPlot).
  */
-export function xPanZoomPlugin(commit?: (range: [number, number]) => void): uPlot.Plugin {
+export function xPanZoomPlugin(
+  commit?: (range: AxisRange) => void,
+  /** TP plots opt in to independent Alt+wheel/drag Y gestures. */
+  commitY?: (range: AxisRange) => void,
+  control?: { current: PanZoomControl | null }
+): uPlot.Plugin {
   let destroyed = false;
   let wheelTimer = 0;
   let pending: [number, number] | null = null;
@@ -34,29 +41,47 @@ export function xPanZoomPlugin(commit?: (range: [number, number]) => void): uPlo
     if (pending && commit) commit(pending);
     pending = null;
   };
+  const cancel = () => {
+    window.clearTimeout(wheelTimer);
+    pending = null;
+    finishPan?.();
+  };
 
   return {
     opts: (_u, opts) => {
       const cursor = (opts.cursor = opts.cursor ?? {});
       const bind = (cursor.bind = cursor.bind ?? {});
       bind.mousedown = (_self, _targ, handler) => (e) => {
-        if (!isPanGesture(e)) handler(e);
+        // Our custom binding replaces uPlot's default primary-button filter.
+        // Retain that filter so right-click only opens the plot action menu.
+        if (e.button === 0 && !isPanGesture(e) && !(commitY && e.altKey)) handler(e);
         return null;
       };
     },
     hooks: {
       ready: (u) => {
+        if (control) control.current = { cancel };
         const onWheel = (e: WheelEvent) => {
-          const min = u.scales.x.min;
-          const max = u.scales.x.max;
+          // Ctrl+wheel belongs to desktop browser zoom, including trackpad pinch.
+          if (commitY && e.ctrlKey) return;
+          const axis = commitY && e.altKey ? 'y' : 'x';
+          const min = u.scales[axis].min;
+          const max = u.scales[axis].max;
           if (destroyed || min == null || max == null || e.deltaY === 0) return;
           e.preventDefault();
           const rect = u.over.getBoundingClientRect();
-          const xVal = u.posToVal(e.clientX - rect.left, 'x');
+          const xVal = u.posToVal(axis === 'x' ? e.clientX - rect.left : e.clientY - rect.top, axis);
           const factor = e.deltaY < 0 ? WHEEL_STEP : 1 / WHEEL_STEP;
           const nMin = xVal - (xVal - min) * factor;
           const nMax = xVal + (max - xVal) * factor;
-          if (!Number.isFinite(nMin) || !Number.isFinite(nMax) || nMax - nMin < MIN_SPAN) return;
+          if (!Number.isFinite(nMin) || !Number.isFinite(nMax) || (axis === 'x' && nMax - nMin < MIN_SPAN)) return;
+          if (axis === 'y') {
+            if (!validAxisRange([nMin, nMax])) return;
+            flush();
+            u.setScale('y', { min: nMin, max: nMax });
+            commitY!([nMin, nMax]);
+            return;
+          }
           u.setScale('x', { min: nMin, max: nMax });
           pending = [nMin, nMax];
           window.clearTimeout(wheelTimer);
@@ -64,6 +89,41 @@ export function xPanZoomPlugin(commit?: (range: [number, number]) => void): uPlo
         };
 
         const onDown = (e: MouseEvent) => {
+          if (!destroyed && commitY && e.altKey && e.button === 0) {
+            e.preventDefault();
+            flush();
+            finishPan?.();
+            const rect = u.over.getBoundingClientRect();
+            if (rect.height <= 0) return;
+            const localY = (event: MouseEvent) => Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+            const start = localY(e);
+            const onMove = (event: MouseEvent) => {
+              const end = localY(event);
+              u.setSelect({ left: 0, width: rect.width, top: Math.min(start, end), height: Math.abs(end - start) }, false);
+            };
+            const cleanup = () => {
+              window.removeEventListener('mousemove', onMove);
+              window.removeEventListener('mouseup', onUp);
+              window.removeEventListener('blur', cleanup);
+              if (!destroyed) u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
+              finishPan = null;
+            };
+            const onUp = (event: MouseEvent) => {
+              const end = localY(event);
+              const range: AxisRange = [u.posToVal(Math.max(start, end), 'y'), u.posToVal(Math.min(start, end), 'y')];
+              cleanup();
+              if (Math.abs(end - start) > 10 && validAxisRange(range)) {
+                u.setScale('y', { min: range[0], max: range[1] });
+                commitY(range);
+              }
+            };
+            finishPan = cleanup;
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+            window.addEventListener('blur', cleanup);
+            return;
+          }
+          if (commitY && e.altKey) return;
           if (destroyed || !isPanGesture(e)) return;
           const min0 = u.scales.x.min;
           const max0 = u.scales.x.max;
@@ -97,10 +157,12 @@ export function xPanZoomPlugin(commit?: (range: [number, number]) => void): uPlo
           window.addEventListener('mouseup', onUp);
         };
 
+        u.over.addEventListener('dblclick', cancel);
         u.over.addEventListener('wheel', onWheel, { passive: false });
         u.over.addEventListener('mousedown', onDown);
         detachReadyListeners = () => {
           u.over.removeEventListener('wheel', onWheel);
+          u.over.removeEventListener('dblclick', cancel);
           u.over.removeEventListener('mousedown', onDown);
         };
       },
@@ -113,6 +175,7 @@ export function xPanZoomPlugin(commit?: (range: [number, number]) => void): uPlo
         detachReadyListeners?.();
         finishPan = null;
         detachReadyListeners = null;
+        if (control) control.current = null;
       },
     },
   };
@@ -136,7 +199,7 @@ export function xyPanZoomPlugin(): uPlot.Plugin {
       const cursor = (opts.cursor = opts.cursor ?? {});
       const bind = (cursor.bind = cursor.bind ?? {});
       bind.mousedown = (_self, _targ, handler) => (e) => {
-        if (!isPanGesture(e)) handler(e);
+        if (e.button === 0 && !isPanGesture(e)) handler(e);
         return null;
       };
     },
@@ -173,12 +236,9 @@ export function xyPanZoomPlugin(): uPlot.Plugin {
             yVal - (yVal - yMin) * factor,
             yVal + (yMax - yVal) * factor,
           ];
-          if (
-            !nextX.every(Number.isFinite) ||
-            !nextY.every(Number.isFinite) ||
-            nextX[1] - nextX[0] < MIN_SPAN ||
-            nextY[1] - nextY[0] < MIN_SPAN
-          ) {
+          // XY axes can be micro/nano units; a fixed time-sized minimum span
+          // prevents legitimate zooms. Use the shared relative tick guard.
+          if (!validAxisRange(nextX) || !validAxisRange(nextY)) {
             return;
           }
 

@@ -1,6 +1,7 @@
 """Read side: test registry, windowed range reads, pyramid level selection."""
 
 import csv
+from contextlib import closing
 import io
 import json
 import math
@@ -13,10 +14,14 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
+import pyarrow as pa
 import pyarrow.csv as pa_csv
 import pyarrow.parquet as pq
 
+from . import analysis_metadata as analysis
+from . import export_progress as progress
 from .config import MAX_POINTS_RAW, POINT_BUDGET_CAP, PYRAMID_LEVELS, TESTS_DIR
+from .quality import quality_summary
 
 
 def list_tests() -> list[dict]:
@@ -32,6 +37,8 @@ def list_tests() -> list[dict]:
         receiving_bytes = status.get("received_bytes")
         out.append({"name": d.name, "status": lifecycle,
                     "error": status.get("error"),
+                    "data_quality": quality_summary(meta),
+                    "quality_revision": _file_revision(d / "meta.json"),
                     "n_rows": meta.get("n_rows"), "fs_hz": meta.get("fs_hz"),
                     "duration_s": meta.get("duration_s"),
                     "n_columns": meta.get("n_columns"),
@@ -50,6 +57,8 @@ def list_tests() -> list[dict]:
                                     or status.get("source_file")),
                     "uploader_name": (meta.get("uploader_name")
                                       or status.get("uploader_name")),
+                    "description": meta.get("description", status.get("description", "")),
+                    "components": meta.get("components", status.get("components")),
                     "created_at": meta.get("created_at") or _dir_created_at(d),
                     "edited_at": meta.get("edited_at"),
                     "ingest_seconds": meta.get("ingest_seconds"),
@@ -68,6 +77,14 @@ def list_tests() -> list[dict]:
                     "received_chunks": status.get("received_chunks"),
                     "total_chunks": status.get("total_chunks")})
     return out
+
+
+def _file_revision(path: Path) -> str | None:
+    """An opaque detail-refresh key; edited_at has only second precision."""
+    try:
+        return str(path.stat().st_mtime_ns)
+    except OSError:
+        return None
 
 
 # name -> (dir mtime_ns, size_bytes) for the last full rglob.  list_tests runs
@@ -308,6 +325,7 @@ def read_window(name: str, cols: list[str], t0: float | None,
         return {
             "mode": "raw", "level": level, "n_raw": n_raw,
             "i0": i0, "i1": i1,
+            "analysis": analysis.source_context(name, meta, cols, i0, i1, t0=t0, t1=t1),
             "t": to_json_list(df[tcol].to_numpy()),
             "series": {c: to_json_list(df[c].to_numpy().astype(np.float64))
                        for c in cols},
@@ -331,6 +349,7 @@ def read_window(name: str, cols: list[str], t0: float | None,
     return {
         "mode": "envelope", "level": level * merge, "n_raw": n_raw,
         "i0": i0, "i1": i1,
+        "analysis": analysis.source_context(name, meta, cols, i0, i1, t0=t0, t1=t1),
         "t": to_json_list(t),
         "series": {c: {"min": to_json_list(mn), "max": to_json_list(mx)}
                    for c, (mn, mx) in series.items()},
@@ -385,29 +404,32 @@ def _iter_parquet_slice(path: Path, columns: list[str],
     late test point, and fixed-size batches keep memory independent of point
     duration.
     """
-    parquet = pq.ParquetFile(path)
-    row_start = 0
-    for row_group in range(parquet.num_row_groups):
-        n_group = parquet.metadata.row_group(row_group).num_rows
-        group_end = row_start + n_group
-        if group_end <= i0:
-            row_start = group_end
-            continue
-        if row_start >= i1:
-            break
-
-        batch_start = row_start
-        for batch in parquet.iter_batches(
-                row_groups=[row_group], columns=columns, batch_size=65536):
-            batch_end = batch_start + batch.num_rows
-            take0 = max(i0, batch_start)
-            take1 = min(i1, batch_end)
-            if take1 > take0:
-                yield take0, batch.slice(take0 - batch_start, take1 - take0)
-            batch_start = batch_end
-            if batch_start >= i1:
+    with pq.ParquetFile(path) as parquet:
+        progress.checkpoint()
+        row_start = 0
+        for row_group in range(parquet.num_row_groups):
+            progress.checkpoint()
+            n_group = parquet.metadata.row_group(row_group).num_rows
+            group_end = row_start + n_group
+            if group_end <= i0:
+                row_start = group_end
+                continue
+            if row_start >= i1:
                 break
-        row_start = group_end
+
+            batch_start = row_start
+            for batch in parquet.iter_batches(
+                    row_groups=[row_group], columns=columns, batch_size=65536):
+                progress.checkpoint()
+                batch_end = batch_start + batch.num_rows
+                take0 = max(i0, batch_start)
+                take1 = min(i1, batch_end)
+                if take1 > take0:
+                    yield take0, batch.slice(take0 - batch_start, take1 - take0)
+                batch_start = batch_end
+                if batch_start >= i1:
+                    break
+            row_start = group_end
 
 
 def _batch_float64(batch, column: str) -> np.ndarray:
@@ -431,27 +453,53 @@ def testpoint_range(name: str, tp_id: int) -> tuple[int, int]:
     return _testpoint_bounds(meta, points, tp)
 
 
-def stream_csv(name: str, columns: list[str], i0: int, i1: int):
+TP_ID_COLUMN = "test_point_id"
+
+
+def tp_export_source_alias(columns: list[str]) -> str:
+    """Stable across column subsets; never overwrite an acquisition channel."""
+    alias = f"source_{TP_ID_COLUMN}"
+    while alias in columns:
+        alias = f"source_{alias}"
+    return alias
+
+
+def stream_csv(name: str, columns: list[str], i0: int, i1: int,
+               tp_id: int | None = None, source_id_alias: str | None = None):
     """Yield CSV bytes (header first) for rows [i0, i1) of data.parquet.
 
     Plain generator with no locking of its own: the caller must hold the
     read locks for the stream's whole lifetime (a StreamingResponse body
     runs after its endpoint returned — see locks.data_read)."""
     path = TESTS_DIR / name / "data.parquet"
+    headers = list(columns)
+    if tp_id is not None:
+        if TP_ID_COLUMN in headers:
+            if not source_id_alias or source_id_alias in headers:
+                raise ValueError("a unique source ID alias is required")
+            headers[headers.index(TP_ID_COLUMN)] = source_id_alias
+        headers.append(TP_ID_COLUMN)
     wrote_header = False
     for _, batch in _iter_parquet_slice(path, columns, i0, i1):
         # select() pins the column order — parquet readers may return the
         # file's schema order, and a CSV header must match the data.
         buf = io.BytesIO()
+        batch = batch.select(columns)
+        if tp_id is not None:
+            # IDs are identifiers, not measurements. Strings also preserve
+            # legacy integer IDs outside Arrow's int64 range without overflow.
+            batch = pa.RecordBatch.from_arrays(
+                [*batch.columns, pa.repeat(str(tp_id), batch.num_rows)],
+                names=headers)
         pa_csv.write_csv(
-            batch.select(columns), buf,
+            batch, buf,
             write_options=pa_csv.WriteOptions(include_header=not wrote_header))
         wrote_header = True
         yield buf.getvalue()
     if not wrote_header:
         # empty range: still emit the header so the download is valid CSV
         text = io.StringIO()
-        csv.writer(text, lineterminator="\n").writerow(columns)
+        csv.writer(text, lineterminator="\n").writerow(headers)
         yield text.getvalue().encode()
 
 
@@ -662,37 +710,91 @@ def read_testpoint_trace(name: str, tp_id: int, cols: list[str],
             "name": tp.get("name", ""),
             "label": tp.get("label", ""),
         },
-        "series": series,
+        "series": {col: {**values, "analysis": {
+            **analysis.source_context(name, meta, [col], i0, i1, tp_id=tp_id),
+            "method_version": "kiha-time-trace-v1", "filter": None,
+            "source_centers": {"first_time_s": origin, "last_time_s": last_t},
+            "display": {"mode": mode, "level": level, "point_budget": int(max_points)},
+        }} for col, values in series.items()},
     }
 
 
+XY_METHOD_VERSION = "kiha-xy-v2"
+
+
+def iter_xy_batches(name: str, columns: list[str], i0: int, i1: int):
+    """Exact source rows shared by XY display and export; caller holds data_read.
+
+    Deduplicate before Arrow reads (X=Y or an axis is time). Close the underlying
+    iterator even if serialization fails or a consumer stops early.
+    """
+    with closing(_iter_parquet_slice(TESTS_DIR / name / "data.parquet",
+                                    list(dict.fromkeys(columns)), i0, i1)) as batches:
+        yield from batches
+
+
 def read_xy(name: str, x_col: str, y_cols: list[str], t0: float | None,
-            t1: float | None, max_pts: int = 3000) -> dict:
-    """Variable-vs-variable data over a time range, stride-decimated.
-    NaN pairs dropped per series."""
+            t1: float | None, max_pts: int = 3000, tp_id: int | None = None) -> dict:
+    """Stride display of original finite pairs, with complete native row counts.
+
+    No coordinate rounding, sorting, interpolation or joining. Stride is applied
+    relative to i0 before finite-pair removal. If it misses every finite pair,
+    retain the first finite pair so a valid source cannot appear empty.
+    """
     meta = get_meta(name)
     if meta is None:
         raise FileNotFoundError(name)
-    i0, i1 = window_bounds(meta, t0, t1)
+    if tp_id is not None and (t0 is not None or t1 is not None):
+        raise ValueError("tp_id cannot be combined with t0 or t1")
+    if any(t is not None and not math.isfinite(t) for t in (t0, t1)):
+        raise ValueError("time bounds must be finite")
+    if t0 is not None and t1 is not None and t0 > t1:
+        raise ValueError("t0 must not exceed t1")
+    if not isinstance(max_pts, int) or isinstance(max_pts, bool) or max_pts < 1:
+        raise ValueError("max_pts must be a positive integer")
+    i0, i1 = testpoint_range(name, tp_id) if tp_id is not None else window_bounds(meta, t0, t1)
     n_raw = i1 - i0
     stride = max(1, math.ceil(n_raw / max_pts))
-
-    # dedupe: y may include x itself (e.g. an XY grid cell whose column
-    # equals the shared x axis) and polars rejects duplicate selects
-    df = (pl.scan_parquet(TESTS_DIR / name / "data.parquet")
-          .slice(i0, n_raw).gather_every(stride)
-          .select(list(dict.fromkeys([x_col] + y_cols))).collect())
-    xv = df[x_col].to_numpy().astype(np.float64)
-
-    series = {}
-    for y in y_cols:
-        yv = df[y].to_numpy().astype(np.float64)
-        m = np.isfinite(xv) & np.isfinite(yv)
-        series[y] = {
-            "x": [round(float(v), 6) for v in xv[m]],
-            "y": [round(float(v), 6) for v in yv[m]],
-        }
-    return {"stride": stride, "n_raw": n_raw, "series": series}
+    tcol = meta["time_column"]
+    series = {y: {"x": [], "y": [], "sample_indices": [], "finite_count": 0,
+                  "missing_pair_count": 0, "fallback_first_finite": False} for y in y_cols}
+    first = {}; seen = 0; first_time = last_time = None
+    with closing(iter_xy_batches(name, [tcol, x_col, *y_cols], i0, i1)) as batches:
+        for start, batch in batches:
+            times = _batch_float64(batch, tcol)
+            if seen == 0:
+                first_time = float(times[0]) if math.isfinite(times[0]) else None
+            last_time = float(times[-1]) if math.isfinite(times[-1]) else None
+            seen += batch.num_rows
+            indices = np.arange(start, start + batch.num_rows, dtype=np.int64)
+            sampled = (indices - i0) % stride == 0
+            xv = _batch_float64(batch, x_col)
+            for y, result in series.items():
+                yv = xv if y == x_col else _batch_float64(batch, y)
+                finite = np.isfinite(xv) & np.isfinite(yv)
+                count = int(finite.sum())
+                result['finite_count'] += count
+                if count and y not in first:
+                    index = int(np.flatnonzero(finite)[0])
+                    first[y] = (int(indices[index]), float(xv[index]), float(yv[index]))
+                keep = finite & sampled
+                result['x'].extend(xv[keep].tolist())
+                result['y'].extend(yv[keep].tolist())
+                result['sample_indices'].extend(indices[keep].tolist())
+    if seen != n_raw:
+        raise ValueError("stored row count does not match XY source bounds")
+    for y, result in series.items():
+        result['missing_pair_count'] = n_raw - result['finite_count']
+        if not result['x'] and y in first:
+            index, x, value = first[y]
+            result.update(x=[x], y=[value], sample_indices=[index], fallback_first_finite=True)
+    return {"stride": stride, "n_raw": n_raw, "series": series,
+            "analysis": analysis.source_context(name, meta, [x_col, *y_cols], i0, i1, tp_id=tp_id, t0=t0, t1=t1),
+            "method_version": XY_METHOD_VERSION, "source": "stored", "prefilter": "none",
+            "missing_values": "omit_nonfinite_pairs", "reduction": "stride",
+            "i0": i0, "i1": i1, "tp_id": tp_id, "time_column": tcol,
+            "time_start_s": first_time, "time_end_s": last_time,
+            "fs_hz": meta.get("fs_hz"), "x_col": x_col}
 
 
 def _tp_stats_fingerprint(name: str) -> list[int]:
@@ -713,17 +815,25 @@ def _tp_stats_fingerprint(name: str) -> list[int]:
             mtime_ns(test_dir / "data.parquet")]
 
 
+TP_STATS_CACHE_VERSION = 2
+TP_SUMMARY_METHOD = "finite-population-v1"
+
+
 def tp_stats(name: str, col: str) -> list[dict]:
-    """Per-test-point mean/min/max of one column, cached per column in a
-    tp_stats.json sidecar. The frontend requests axis + filter columns of
-    every ready test on each Analyze visit; without the cache each request
-    re-scanned the full raw column (~60 MB for a 1 h test)."""
+    """Per-TP rounded scatter aggregates and unrounded mean/population SD,
+    cached per column in a tp_stats.json sidecar. The frontend requests
+    scatter axis/filter columns across ready tests, plus visible time-plot
+    columns for selected tests. Without the cache each request re-scanned
+    the full raw column (~60 MB for a 1 h test)."""
     cache_path = TESTS_DIR / name / "tp_stats.json"
     fingerprint = _tp_stats_fingerprint(name)
     cache = _read_json(cache_path)
-    if (not isinstance(cache, dict) or cache.get("version") != 1
-            or cache.get("fingerprint") != fingerprint):
-        cache = {"version": 1, "fingerprint": fingerprint, "columns": {}}
+    if (not isinstance(cache, dict)
+            or cache.get("version") != TP_STATS_CACHE_VERSION
+            or cache.get("fingerprint") != fingerprint
+            or not isinstance(cache.get("columns"), dict)):
+        cache = {"version": TP_STATS_CACHE_VERSION,
+                 "fingerprint": fingerprint, "columns": {}}
     cached = cache["columns"].get(col)
     if cached is not None:
         return cached
@@ -756,15 +866,39 @@ def rebuild_tp_stats(name: str) -> int:
     columns = (list(existing["columns"].keys())
                if isinstance(existing, dict)
                and isinstance(existing.get("columns"), dict) else [])
-    fresh = {"version": 1, "fingerprint": _tp_stats_fingerprint(name),
+    fresh = {"version": TP_STATS_CACHE_VERSION,
+             "fingerprint": _tp_stats_fingerprint(name),
              "columns": {col: _compute_tp_stats(name, col)
                          for col in columns}}
     write_json_atomic(cache_path, fresh)
     return len(columns)
 
 
+def _population_moments(valid: np.ndarray) -> tuple[float | None, float | None]:
+    """Arithmetic mean and population SD (ddof=0) of finite float64 samples.
+
+    Normal NumPy accumulation preserves accuracy for high-offset signals.
+    Rescale only if a sum/squared deviation overflows or underflows; a finite
+    engineering column must not turn a stats response into invalid JSON.
+    """
+    if len(valid) == 0:
+        return None, None
+    with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+        mean = float(np.mean(valid, dtype=np.float64))
+        std = float(np.std(valid, dtype=np.float64, ddof=0))
+    if (not np.isfinite(mean) or not np.isfinite(std)
+            or (std == 0 and np.any(valid != valid[0]))):
+        scale = float(np.max(np.abs(valid)))
+        scaled = valid / scale if scale else valid
+        if not np.isfinite(mean):
+            mean = float(np.mean(scaled, dtype=np.float64)) * scale
+        # SD <= max(abs(x)) for a population. Clamp rounding at that bound.
+        std = min(1.0, float(np.std(scaled, dtype=np.float64, ddof=0))) * scale
+    return mean, std
+
+
 def _compute_tp_stats(name: str, col: str) -> list[dict]:
-    """Per-test-point mean/min/max of one column (NaN-aware).
+    """Per-test-point aggregates and summary of one column (finite values only).
 
     Row ranges come from the same _testpoint_bounds resolver the CSV export and
     TP-trace paths use, so a test point covers exactly the same samples in the
@@ -784,12 +918,18 @@ def _compute_tp_stats(name: str, col: str) -> list[dict]:
             si, ei = _testpoint_bounds(meta, tps, tp)
             sl = v[si:ei]
         except ValueError:
+            si, ei = None, None
             sl = v[:0]  # empty/reversed range -> reported as n=0
         valid = sl[np.isfinite(sl)]
+        mean, std = _population_moments(valid)
         stat = {"id": tp["id"], "name": tp["name"], "label": tp["label"],
-                "n": int(len(sl)), "n_valid": int(len(valid))}
+                "n": int(len(sl)), "n_valid": int(len(valid)),
+                "summary": {"method": TP_SUMMARY_METHOD, "mean": mean,
+                            "std_population": std, "i0": si, "i1": ei}}
         if len(valid):
-            stat.update(mean=round(float(valid.mean()), 6),
+            # Preserve the existing rounded scatter/filter fields; the header
+            # uses summary.mean so small-unit signals do not round to zero.
+            stat.update(mean=round(mean, 6),
                         min=round(float(valid.min()), 6),
                         max=round(float(valid.max()), 6))
         else:

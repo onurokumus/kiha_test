@@ -11,13 +11,12 @@ skips both (see CLAUDE.md).
 import asyncio
 import json
 import logging
-import os
 import re
-import shutil
 import time
 import uuid
 from collections import Counter
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -29,12 +28,19 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from . import dsp, edit, formula, recipes, split, store, uploads
+from . import dsp, edit, export_progress, formula, image_export, plot_export, recipes, spectrum_export, split, store, uploads, xy_export
 from .config import (CORS_ORIGINS, DATA_DIR, POINT_BUDGET_CAP, TESTS_DIR,
                      TRASH_DIR, TRASH_MAX_AGE_S)
 from .locks import (catalog_read, catalog_write, data_read, drop_test_lock,
                     test_read, test_write, tests_write, with_test_read)
 from .status import BUSY_STATUSES, INGEST_LIKE, write_status
+from .test_notes import Description, Notes
+from . import annotations
+from . import components
+from . import component_stats
+from .components import ComponentIds
+from . import trash
+from . import analysis_sources
 
 
 logger = logging.getLogger("kiha.api")
@@ -106,9 +112,16 @@ app.add_middleware(
     allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition", "X-Export-Rows", "X-Export-Sources",
+                    "X-Export-Plots"],
 )
 
 app.include_router(uploads.router)
+app.include_router(plot_export.router)
+app.include_router(spectrum_export.router)
+app.include_router(xy_export.router)
+app.include_router(image_export.router)
+app.include_router(export_progress.router)
 
 
 @app.middleware("http")
@@ -223,6 +236,10 @@ def api_put_settings_defaults(payload: AppSettingsDefaults):
 
 # ---------- tests ----------
 
+@app.get("/api/analysis-sources")
+def api_analysis_sources():
+    return analysis_sources.catalog()
+
 @app.get("/api/tests")
 def api_list_tests():
     with catalog_read():
@@ -231,7 +248,8 @@ def api_list_tests():
 
 @app.get("/api/tests/{name}")
 @with_test_read
-def api_get_meta(name: str):
+def api_get_meta(name: str, expected_source_id: uuid.UUID | None = None):
+    analysis_sources.verify_reference(name, expected_source_id)
     meta = store.get_meta(name)
     if meta is None:
         raise HTTPException(404, f"test '{name}' not found or not ready")
@@ -244,15 +262,56 @@ def api_get_status(name: str):
 
 
 def _purge_trash():
-    if not TRASH_DIR.exists():
+    if TRASH_MAX_AGE_S is None:
         return
     now = time.time()
-    for d in TRASH_DIR.iterdir():
+    for entry in trash.list_entries(TRASH_DIR):
         try:
-            if now - d.stat().st_mtime > TRASH_MAX_AGE_S:
-                shutil.rmtree(d) if d.is_dir() else d.unlink()
-        except OSError:
-            pass
+            if entry.get('deleted_at') and now - datetime.fromisoformat(entry['deleted_at']).timestamp() > TRASH_MAX_AGE_S:
+                trash.delete_permanently(TRASH_DIR, entry['id'])
+        except (OSError, HTTPException, ValueError):
+            logger.warning("Could not expire trash entry %s", entry['id'])
+
+
+@app.get("/api/trash")
+def api_list_trash():
+    with catalog_write():
+        return {"entries": trash.list_entries(TRASH_DIR), "retention_seconds": TRASH_MAX_AGE_S}
+
+
+class TrashRestore(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, max_length=200)
+
+
+@app.post("/api/trash/{entry_id}/restore")
+def api_restore_trash(entry_id: uuid.UUID, payload: TrashRestore):
+    with catalog_write():
+        _, entry = trash.get_entry(TRASH_DIR, str(entry_id))
+        name = payload.name if payload.name is not None else entry['name']
+        trash.validate_name(name)
+        with test_write(name):
+            return trash.restore(TRASH_DIR, TESTS_DIR, str(entry_id), name)
+
+
+class TrashDeleteBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=10000)
+
+
+@app.delete("/api/trash")
+def api_delete_trash_batch(payload: TrashDeleteBatch):
+    with catalog_write():
+        return trash.delete_batch(TRASH_DIR, [str(value) for value in payload.ids])
+
+
+@app.delete("/api/trash/{entry_id}")
+def api_delete_trash(entry_id: uuid.UUID):
+    with catalog_write():
+        result = trash.delete_batch(TRASH_DIR, [str(entry_id)])
+        if result['failures']:
+            raise HTTPException(409, result['failures'][0]['error'])
+        return result
 
 
 @app.delete("/api/tests/{name}")
@@ -262,7 +321,7 @@ def api_delete_test(name: str):
     # its result (the status pre-check also avoids blocking for minutes on
     # the per-test lock the receiving/ingesting job holds).
     status = store.get_status(name).get("status")
-    if status in INGEST_LIKE:
+    if status in BUSY_STATUSES:
         raise HTTPException(409, f"'{name}' is still {status}")
 
     # Keep the catalog locked until the removed name's lock is forgotten. An
@@ -271,49 +330,38 @@ def api_delete_test(name: str):
     with catalog_write():
         with test_write(name):
             tests_root = TESTS_DIR.resolve()
-            test_dir = (TESTS_DIR / name).resolve()
-            if test_dir.parent != tests_root or not test_dir.is_dir():
+            test_dir = TESTS_DIR / name
+            if test_dir.is_symlink() or test_dir.is_junction() or test_dir.resolve().parent != tests_root or not test_dir.is_dir():
                 raise HTTPException(404, f"test '{name}' not found")
             status = store.get_status(name).get("status")
-            if status in INGEST_LIKE:
+            if status in BUSY_STATUSES:
                 raise HTTPException(409, f"'{name}' is still {status}")
-            TRASH_DIR.mkdir(parents=True, exist_ok=True)
             _purge_trash()
-            dst = TRASH_DIR / name
             try:
-                if dst.exists():
-                    shutil.rmtree(dst)
-                test_dir.rename(dst)
-                os.utime(dst)  # move keeps the old mtime; reset purge clock
-            except OSError as e:
+                entry = trash.move_to_trash(TRASH_DIR, test_dir, name)
+            except OSError:
+                logger.warning("Could not move test %s to trash", name, exc_info=True)
                 raise HTTPException(
-                    409, f"could not delete '{name}' (files in use?): {e}")
-            if not dst.is_dir():
-                raise HTTPException(
-                    500, f"delete of '{name}' did not complete")
+                    409, f"Could not move '{name}' to trash. Check disk access and close any external file viewers, then retry.") from None
         # The name is gone from tests/; restore/init creates a fresh lock only
         # after this catalog critical section exits.
         drop_test_lock(name)
-    return {"ok": True, "deleted": name, "restorable": True}
+    store._size_cache.pop(name, None)
+    return {"ok": True, "deleted": name, "restorable": True, "trash_id": entry['id']}
 
 
 @app.post("/api/tests/{name}/restore")
 def api_restore_test(name: str):
-    with catalog_write(), test_write(name):
-        trash_root = TRASH_DIR.resolve()
-        src = (TRASH_DIR / name).resolve() if TRASH_DIR.exists() else None
-        if src is None or src.parent != trash_root or not src.is_dir():
+    """Legacy name route: only an unambiguous trash copy may be restored."""
+    with catalog_write():
+        matches = [entry for entry in trash.list_entries(TRASH_DIR) if entry['name'] == name]
+        if not matches:
             raise HTTPException(404, f"no restorable copy of '{name}'")
-        dst = TESTS_DIR / name
-        if dst.exists():
-            raise HTTPException(409, f"test '{name}' already exists")
-        try:
-            src.rename(dst)
-        except OSError as e:
-            raise HTTPException(409, f"could not restore '{name}': {e}")
-        if not dst.is_dir():
-            raise HTTPException(500, f"restore of '{name}' did not complete")
-    return {"ok": True, "restored": name}
+        if len(matches) != 1:
+            raise HTTPException(409, "Several deleted tests have this name. Restore the intended entry by its trash ID.")
+        trash.validate_name(name)
+        with test_write(name):
+            return trash.restore(TRASH_DIR, TESTS_DIR, matches[0]['id'], name)
 
 
 TEST_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -387,8 +435,44 @@ def api_rename_test(name: str, new_name: str = Query(...)):
 
 # ---------- editing ----------
 
+@app.get("/api/tests/{name}/annotations")
+def api_get_annotations(name: str):
+    _reject_if_busy(name)
+    with test_read(name):
+        _reject_if_busy(name)
+        return annotations.read_annotations(name)
+
+
+@app.put("/api/tests/{name}/annotations")
+def api_put_annotations(name: str, payload: annotations.AnnotationPatch):
+    _reject_if_busy(name)
+    with test_write(name):
+        _reject_if_busy(name)
+        return annotations.replace_annotations(name, payload)
+
+@app.get("/api/components")
+def api_components():
+    return components.list_components()
+
+
+@app.post("/api/components")
+def api_create_component(payload: components.ComponentCreate):
+    return components.create_component(payload)
+
+
+@app.get("/api/component-statistics")
+def api_component_statistics():
+    return component_stats.statistics()
+
+
 class UserMetaPatch(BaseModel):
     user_meta: dict[str, str] = Field(default_factory=dict)
+    description: Description = ""
+    notes: Notes = ""
+    components: ComponentIds = Field(default_factory=ComponentIds)
+    expected_components_revision: int | None = Field(default=None, ge=0, strict=True)
+    component_rpm_column: str | None = Field(default=None, min_length=1, strict=True)
+    expected_component_rpm_revision: int | None = Field(default=None, ge=0, strict=True)
 
 
 class FormulaSpec(BaseModel):
@@ -431,18 +515,25 @@ class EditOps(BaseModel):
 
 @app.patch("/api/tests/{name}/meta")
 def api_patch_meta(name: str, payload: UserMetaPatch):
-    """Replace the free-form user_meta block (prop/motor/ESC descriptors...).
-    Nothing else in meta.json is writable from the API."""
+    """Patch supplied text fields; user_meta, when supplied, remains a replacement.
+    Omitted fields and all scientific/provenance metadata are preserved.
+    """
     _reject_if_busy(name)  # don't park on the lock during a rebuild/upload
     with test_write(name):
         if store.get_status(name).get("status") in BUSY_STATUSES:
             raise HTTPException(409, f"'{name}' became busy; retry")
         meta_path = TESTS_DIR / name / "meta.json"
         try:
-            meta = json.loads(meta_path.read_text())
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):
             raise HTTPException(404, f"test '{name}' not found")
-        meta["user_meta"] = payload.user_meta
+        if "components" in payload.model_fields_set:
+            components.apply_assignments(meta, payload.components, payload.expected_components_revision)
+        if "component_rpm_column" in payload.model_fields_set:
+            component_stats.apply_rpm(meta, payload.component_rpm_column, payload.expected_component_rpm_revision)
+        for key in ("user_meta", "description", "notes"):
+            if key in payload.model_fields_set:
+                meta[key] = getattr(payload, key)
         store.write_json_atomic(meta_path, meta)
         return meta
 
@@ -678,20 +769,55 @@ def api_export(name: str, cols: str = "",
 
 
 @app.get("/api/tests/{name}/testpoints/{tp_id}/export")
-def api_export_testpoint(name: str, tp_id: int, cols: str = ""):
-    """Exact-boundary CSV of one saved test point."""
-    meta = store.get_meta(name)
-    if meta is None:
-        raise HTTPException(404, f"test '{name}' not found or not ready")
-    columns = _export_columns(meta, cols)
-    try:
-        i0, i1 = store.testpoint_range(name, tp_id)
-    except KeyError:
-        raise HTTPException(
-            404, f"test point {tp_id} not found in test '{name}'")
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-    return _csv_response(name, columns, i0, i1, f"{name}_tp{tp_id}.csv")
+def api_export_testpoint(name: str, tp_id: int, cols: str = "",
+                         start_idx: int | None = None,
+                         end_idx: int | None = None):
+    """Full-resolution TP CSV with generated test_point_id on every row.
+
+    No indices: use the saved TP. Both indices: explicit half-open draft rows,
+    without reading or writing saved definitions (also supports new TPs).
+    """
+    if (start_idx is None) != (end_idx is None):
+        raise HTTPException(400, "draft export requires both start_idx and end_idx")
+    draft = start_idx is not None
+
+    def resolve():
+        _reject_if_busy(name)
+        meta = store.get_meta(name)
+        if meta is None:
+            raise HTTPException(404, f"test '{name}' not found or not ready")
+        if store.get_status(name).get("status") == "error":
+            raise HTTPException(409, "test data is unavailable; download the original CSV")
+        columns = _export_columns(meta, cols)
+        try:
+            if draft:
+                # Same clamping/empty-range policy as saved points. The editor
+                # supplies its Save-converted row indices, including open ends.
+                i0, i1 = store._testpoint_bounds(meta, [], {
+                    "id": tp_id, "start_idx": start_idx, "end_idx": end_idx})
+            else:
+                i0, i1 = store.testpoint_range(name, tp_id)
+        except KeyError:
+            raise HTTPException(404, f"test point {tp_id} not found in test '{name}'")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return columns, i0, i1, store.tp_export_source_alias(meta["columns"])
+
+    # Preflight errors before sending attachment headers. Resolve again under
+    # the body lock so a save/rebuild between response creation and streaming
+    # cannot pair stale TP bounds/schema with newly written samples.
+    _reject_if_busy(name)
+    with test_read(name):
+        resolve()
+
+    def stream():
+        with data_read(name):
+            columns, i0, i1, alias = resolve()
+            yield from store.stream_csv(name, columns, i0, i1, tp_id, alias)
+
+    suffix = "_draft" if draft else ""
+    return StreamingResponse(stream(), media_type="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="{name}_tp{tp_id}{suffix}.csv"'})
 
 
 @app.get("/api/tests/{name}/raw")
@@ -712,19 +838,27 @@ def api_download_raw(name: str):
 
 @app.get("/api/tests/{name}/xy")
 @with_test_read
-def api_xy(name: str, x: str = Query(...), y: str = Query(...),
+def api_xy(name: str, x: str = Query(...), y: str | None = None,
            t0: float | None = None, t1: float | None = None,
-           max_pts: int = Query(3000, ge=4, le=20000)):
+           max_pts: int = Query(3000, ge=4, le=20000), tp_id: int | None = None,
+           y_col: str | None = None):
     meta = store.get_meta(name)
     if meta is None:
         raise HTTPException(404, f"test '{name}' not found or not ready")
-    y_cols = [c.strip() for c in y.split(",") if c.strip()]
+    if y_col is not None and y is not None:
+        raise HTTPException(400, "use y_col for one exact variable or y for the legacy column list")
+    y_cols = [y_col] if y_col is not None else [c.strip() for c in (y or '').split(",") if c.strip()]
     unknown = [c for c in [x] + y_cols if c not in meta["columns"]]
     if unknown:
         raise HTTPException(400, f"unknown columns: {unknown}")
     if not y_cols:
         raise HTTPException(400, "no y columns requested")
-    return store.read_xy(name, x, y_cols, t0, t1, max_pts)
+    try:
+        return store.read_xy(name, x, y_cols, t0, t1, max_pts, tp_id=tp_id)
+    except KeyError:
+        raise HTTPException(404, f"test point {tp_id} not found in '{name}'")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 
 @app.get("/api/tests/{name}/tp_stats")
@@ -767,7 +901,8 @@ def api_filter(name: str,
                threshold: float = dsp.DEFAULT_DESPIKE_THRESHOLD,
                abs_floor: float = dsp.DEFAULT_DESPIKE_ABS_FLOOR,
                replacement: Literal["linear", "median"] = "linear",
-               display: Literal["auto", "line", "envelope"] = "auto"):
+               display: Literal["auto", "line", "envelope"] = "auto",
+               tp_id: int | None = None):
     meta = store.get_meta(name)
     if meta is None:
         raise HTTPException(404, f"test '{name}' not found or not ready")
@@ -778,7 +913,9 @@ def api_filter(name: str,
             order=order, f1=f1, f2=f2, window_s=window_s,
             display=display, max_spike_s=max_spike_s,
             threshold=threshold, abs_floor=abs_floor,
-            replacement=replacement)
+            replacement=replacement, tp_id=tp_id)
+    except KeyError:
+        raise HTTPException(404, f"test point {tp_id} not found")
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -789,7 +926,8 @@ def api_spectrum(name: str, col: str = Query(...),
                  mode: Literal["fft", "welch"] = "fft",
                  t0: float | None = None, t1: float | None = None,
                  nperseg: int = 4096,
-                 rpm_col: str | None = None):
+                 rpm_col: str | None = None,
+                 tp_id: int | None = None):
     meta = store.get_meta(name)
     if meta is None:
         raise HTTPException(404, f"test '{name}' not found or not ready")
@@ -799,12 +937,39 @@ def api_spectrum(name: str, col: str = Query(...),
         raise HTTPException(400, f"unknown RPM column: {rpm_col}")
     try:
         return dsp.spectrum(
-            name, col, mode, t0, t1, nperseg, rpm_col=rpm_col)
+            name, col, mode, t0, t1, nperseg, rpm_col=rpm_col, tp_id=tp_id)
+    except KeyError:
+        raise HTTPException(404, f"test point {tp_id} not found")
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
 # ---------- split ----------
+
+class AutoSplitPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    columns: list[Annotated[str, Field(min_length=1)]] = Field(
+        min_length=1, max_length=split.MAX_SPLIT_COLUMNS)
+    ignore_zero: Annotated[bool, Field(strict=True)] = True
+    min_len_s: Annotated[float, Field(ge=0, allow_inf_nan=False)] = 1.0
+
+
+@app.post("/api/tests/{name}/split/preview")
+def api_autosplit_preview(name: str, payload: AutoSplitPreviewRequest):
+    # A rebuild may hold its writer for minutes. Fail promptly before waiting,
+    # then recheck under the native-read gate to close the readiness race.
+    _reject_if_busy(name)
+    with data_read(name):
+        _reject_if_busy(name)
+        if store.get_meta(name) is None:
+            raise HTTPException(404, f"test '{name}' not found or not ready")
+        try:
+            return split.preview_autosplit(
+                name, payload.columns, payload.ignore_zero, payload.min_len_s)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
 
 @app.get("/api/tests/{name}/split/candidates")
 @with_test_read
@@ -832,7 +997,8 @@ def api_autosplit(name: str, col: str = Query(...),
 
 @app.get("/api/tests/{name}/testpoints")
 @with_test_read
-def api_get_testpoints(name: str):
+def api_get_testpoints(name: str, expected_source_id: uuid.UUID | None = None):
+    analysis_sources.verify_reference(name, expected_source_id)
     if store.get_meta(name) is None:
         raise HTTPException(404, f"test '{name}' not found or not ready")
     return store.read_testpoints(name)

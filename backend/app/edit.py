@@ -190,11 +190,29 @@ def _rebuild(name: str, ops: dict) -> None:
                 derived_variables, compiled_formulas, edited_at)
         derived_variables = formula.refresh_missing_dependencies(
             derived_variables, columns)
+        inf_counts: dict[str, int] = {}
         nan_counts, level_rows = build_pyramid(tmp_parquet, tmp_pyramid,
-                                               new_tcol)
+                                               new_tcol, inf_counts=inf_counts)
         gap_ranges = _updated_gap_ranges(
             meta, fs, t_start, n_rows, policy)
         missing_rows = sum(end - start for start, end in gap_ranges)
+        # DSP's time_gap_ranges may clear after filling. Component use must
+        # still exclude fabricated acquisition rows. None explicitly means a
+        # legacy fill already discarded that history; never bless it as empty.
+        acquisition_gaps = meta.get('acquisition_gap_ranges',
+            meta.get('time_gap_ranges', []) if meta.get('nan_policy', 'keep_gaps') == 'keep_gaps' else None)
+        if acquisition_gaps is not None and (not isinstance(acquisition_gaps, list) or any(
+                not isinstance(pair, list) or len(pair) != 2 or
+                not all(type(v) is int for v in pair) or not 0 <= pair[0] < pair[1] <= meta['n_rows']
+                for pair in acquisition_gaps)):
+            acquisition_gaps = None  # Corruption cannot become a claim of no gaps.
+        if acquisition_gaps is not None:
+            acquisition_gaps = _updated_gap_ranges(
+                {**meta, 'time_gap_ranges': acquisition_gaps}, fs, t_start, n_rows, None)
+        rpm_column = meta.get('component_rpm_column')
+        next_rpm = rename.get(rpm_column, rpm_column)
+        if next_rpm not in columns:
+            next_rpm = None
         # Column/formula/fill edits leave row identity unchanged. Only a trim
         # may alter points; resolve its result against the OLD rows before the
         # commit so invalid point metadata cannot fail after files are swapped.
@@ -223,13 +241,18 @@ def _rebuild(name: str, ops: dict) -> None:
             "missing_rows_inserted": missing_rows,
             "time_gap_seconds": missing_rows / fs,
             "time_gap_ranges": gap_ranges,
+            "acquisition_gap_ranges": acquisition_gaps,
             "nan_counts": {c: n for c, n in nan_counts.items() if n > 0},
+            "inf_counts": {c: n for c, n in inf_counts.items() if n > 0},
             "nan_policy": policy or meta.get("nan_policy", "keep_gaps"),
             "pyramid_rows": level_rows,
             "derived_variables": derived_variables,
             "edited_at": edited_at,
             "edit_seconds": round(time.time() - t_begin, 1),
         })
+        if next_rpm != rpm_column:
+            meta['component_rpm_column'] = next_rpm
+            meta['component_rpm_revision'] = meta.get('component_rpm_revision', 0) + 1
         write_json_atomic(test_dir / "meta.json", meta)
         # the data changed: drop the tp_stats sidecar so nothing serves
         # averages computed against the old columns/rows

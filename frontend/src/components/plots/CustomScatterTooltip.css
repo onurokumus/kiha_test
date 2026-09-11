@@ -1,0 +1,24 @@
+/* Portaled out of the scatter panel's clipping and containment contexts. */
+.chart-tooltip.scatter-tooltip {
+  position: fixed;
+  z-index: 8000;
+  pointer-events: none;
+  box-sizing: border-box;
+  min-width: min(180px, calc(100vw - 16px));
+  max-width: min(360px, calc(100vw - 16px));
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.scatter-tooltip .chart-tooltip__row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  gap: 12px;
+}
+
+.scatter-tooltip .chart-tooltip__row > span {
+  min-width: 0;
+}
+
+.scatter-tooltip .chart-tooltip__value {
+  text-align: right;
+}
