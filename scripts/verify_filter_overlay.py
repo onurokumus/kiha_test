@@ -1,4 +1,4 @@
-"""Phase 6a live filter overlay verification with isolated data and Chromium.
+"""Single-line TP filtering and original overlays with isolated data and Chromium.
 
 Run with global Python/Playwright; backend/native operations exclusively use
 the project's Python 3.13 child. Browser-only uPlot instrumentation inspects
@@ -28,8 +28,8 @@ ORIGIN = 1000.125
 POINTS = [
     {'id': 7, 'name': 'Short spike', 'label': 'raw', 'start_s': .075,
      'end_s': .675, 'start_idx': 100, 'end_idx': 700},
-    {'id': 9, 'name': 'Long spike', 'label': 'envelope', 'start_s': 1.975,
-     'end_s': 8.475, 'start_idx': 2000, 'end_idx': 8500},
+    {'id': 9, 'name': 'Long spike', 'label': 'reduced', 'start_s': 1.975,
+     'end_s': 21.975, 'start_idx': 2000, 'end_idx': 22000},
 ]
 FILTER = {'kind': 'despike', 'despikeWindowMs': '25', 'maxSpikeMs': '3',
           'threshold': '3.5', 'absFloor': '2', 'replacement': 'linear'}
@@ -37,7 +37,7 @@ FILTER = {'kind': 'despike', 'despikeWindowMs': '25', 'maxSpikeMs': '3',
 
 def make_data(request):
     lines = ['time,' + ','.join(COLS)]
-    for i in range(9000):
+    for i in range(24000):
         if 4500 <= i < 4510:
             continue
         value = 500 if i in (400, 4000) else 10 + math.sin(i / 150)
@@ -56,18 +56,26 @@ def make_data(request):
         assert response.ok, response.text()
         originals[point['id']] = response.json()
     assert originals[7]['mode'] == 'raw' and originals[9]['mode'] == 'envelope'
+    # The old TP request used auto, which selects two min/max arrays here.
+    # Compare the real backend contract without changing production sources.
+    automatic = request.get(f'tests/{TEST}/filter', params={
+        'cols': LOAD, 'type': 'despike', 'tp_id': 9, 'px': 674, 'display': 'auto',
+        'window_s': .025, 'max_spike_s': .003, 'threshold': 3.5,
+        'abs_floor': 2, 'replacement': 'linear'})
+    assert automatic.ok, automatic.text()
+    assert automatic.json()['mode'] == 'envelope', automatic.json()['mode']
     return originals
 
 
-def seed(page):
+def seed(page, catalog):
     settings = {'scatterX': LOAD, 'scatterY': REFERENCE, 'clustering': False,
                 'gridColumns': COLS, 'defaultViewMode': 'tp'}
     # Deliberately omit plotShowOriginal: an older session must default false.
-    session = {'version': 1, 'currentTest': TEST, 'xAxis': LOAD, 'yAxis': REFERENCE,
+    session = {'version': 1, 'sources': catalog, 'currentTest': TEST, 'xAxis': LOAD, 'yAxis': REFERENCE,
                'axesUserSet': True, 'selections': [
                    {'test': TEST, 'tpId': p['id'], 'hidden': False} for p in POINTS],
                'plotConfigs': COLS, 'plotsUserEdited': True, 'plotDensity': 'quad',
-               'plotFilters': [FILTER, FILTER, {}, {}], 'scatterCollapsed': True}
+               'plotFilters': [{}, FILTER, {}, {}], 'scatterCollapsed': True, 'viewMode': 'tp'}
     page.add_init_script(f'''if (!sessionStorage.getItem('overlay-seeded')) {{
         localStorage.clear(); sessionStorage.setItem('overlay-seeded', 'true');
         localStorage.setItem('ptt.settings.v1', {json.dumps(json.dumps(settings))});
@@ -80,8 +88,41 @@ def plot(page, col=LOAD, full=False):
 
 
 def toggle(page, col=LOAD, full=False):
-    return plot(page, col, full).get_by_role('button',
-        name=f'Show original alongside filtered for {col}', exact=True)
+    open_menu(page, col, full)
+    return page.get_by_role('menuitemcheckbox', name=re.compile('^Show original with filtered'))
+
+
+def open_menu(page, col=LOAD, full=False):
+    button = plot(page, col, full).get_by_role('button', name=f'Plot actions for {col}', exact=True)
+    button.focus()
+    page.keyboard.press('Enter')
+    expect(page.get_by_role('menu', name=f'Plot actions for {col}', exact=True)).to_be_visible()
+
+
+def assert_toggle(page, col=LOAD, full=False, checked=False, enabled=True):
+    control = toggle(page, col, full)
+    expect(control).to_have_attribute('aria-checked', str(checked).lower())
+    expect(control).to_have_attribute('aria-disabled', str(not enabled).lower())
+    page.keyboard.press('Escape')
+
+
+def filter_dialog(page, col=LOAD, full=False):
+    open_menu(page, col, full)
+    page.get_by_role('menuitem', name='Filter settings…', exact=True).click()
+    dialog = page.get_by_role('dialog', name=f'Filter settings for {col}', exact=True)
+    expect(dialog).to_be_visible()
+    return dialog
+
+
+def close_filter(page, dialog):
+    page.keyboard.press('Escape')
+    expect(dialog).to_have_count(0)
+
+
+def set_threshold(page, value, full=False):
+    dialog = filter_dialog(page, full=full)
+    dialog.get_by_label('Threshold (MAD)', exact=True).fill(value)
+    close_filter(page, dialog)
 
 
 def snapshot(page, col=LOAD, full=False):
@@ -115,8 +156,15 @@ def assert_distinct(actual, full=False):
                 assert all(s['color'][:7] == b[0]['color'][:7] for s in a), (a, b)
 
 
-def assert_tp_data(actual, originals, responses, col=LOAD):
+def assert_tp_data(actual, originals, responses, col=LOAD, visible=None):
     assert actual['mode'] == 2
+    visible = POINTS if visible is None else visible
+    filtered = [s for s in actual['series'] if 'filtered' in s['label'].lower()]
+    assert len(filtered) == len(visible), actual['series']
+    assert not actual['bands'], actual['bands']
+    for point in visible:
+        assert sum(point['name'] in s['label'] for s in filtered) == 1, filtered
+    assert all(not re.search(r'\b(min|max)\b', s['label']) for s in filtered), filtered
     for index, series in enumerate(actual['series'], 1):
         point = next(p for p in POINTS if p['name'] in series['label'])
         times, values = actual['data'][index]
@@ -127,6 +175,8 @@ def assert_tp_data(actual, originals, responses, col=LOAD):
             match = next(r for r in reversed(responses) if r['query'].get('tp_id') == [str(point['id'])]
                          and r['query']['cols'] == [col] and r['status'] == 200)
             body = match['body']
+            assert match['query'].get('display') == ['line'], match['query']
+            assert body['mode'] == 'raw', body['mode']
             assert (body['i0'], body['i1']) == (point['start_idx'], point['end_idx'])
             assert math.isclose(body['time_origin_s'], originals[point['id']]['time_origin_s'], abs_tol=1e-6), (
                 body['time_origin_s'], originals[point['id']]['time_origin_s'])
@@ -135,9 +185,11 @@ def assert_tp_data(actual, originals, responses, col=LOAD):
             assert len(times) == len(expected_t) and all(math.isclose(a,b,abs_tol=1e-9)
                 for a,b in zip(times,expected_t)), (point['id'], times[:4], expected_t[:4])
             expected = body['series'][col]
-            if body['mode'] == 'envelope':
-                expected = expected['max' if ' max' in series['label'] else 'min']
             assert values == [v for t,v in zip(body['t'],expected) if t is not None], series
+            if point['id'] == 9:
+                assert body['level'] > 1 and len(times) <= 8000, 'Long TP did not use bounded line reduction'
+                assert body['n_raw'] == point['end_idx'] - point['start_idx']
+            assert all(a < b for a,b in zip(times, times[1:])), point
 
 
 def browser_toggle(page, requests, col=LOAD, full=False, expected=True):
@@ -146,7 +198,7 @@ def browser_toggle(page, requests, col=LOAD, full=False, expected=True):
     control = toggle(page, col, full)
     control.focus()
     page.keyboard.press('Enter')
-    expect(control).to_have_attribute('aria-pressed', str(expected).lower())
+    assert_toggle(page, col, full, checked=expected)
     expect(plot(page, col, full)).to_have_attribute('data-filter-display', 'overlay' if expected else 'filtered')
     page.wait_for_timeout(600)
     assert len(requests) == before, 'Display-only toggle refetched filters'
@@ -156,7 +208,7 @@ def check_layout(target):
     assert target.evaluate('''el => {
         const r=el.getBoundingClientRect();
         return r.left >= 0 && r.right <= innerWidth+1 && el.scrollWidth <= el.clientWidth+1 &&
-            [...el.querySelectorAll('button[aria-label^="Show original"],button[aria-label^="Expand"],button[aria-label^="Minimize"]')]
+            [...el.querySelectorAll('[data-plot-toolbar] button')]
                 .every(b => {const q=b.getBoundingClientRect();return q.left >= r.left && q.right<=r.right+1;});
     }'''), 'Plot or header actions overflow'
 
@@ -206,6 +258,7 @@ def run_checks(web, api, dataset, temporary, output):
     with sync_playwright() as playwright:
         request = playwright.request.new_context(base_url=api+'/')
         originals = make_data(request)
+        catalog = request.get('analysis-sources').json()['sources']
         hashes_before = dataset_hashes(dataset)
         points_before = request.get(f'tests/{TEST}/testpoints').json()
         context = playwright.chromium.launch_persistent_context(str(temporary/'profile'),
@@ -213,6 +266,7 @@ def run_checks(web, api, dataset, temporary, output):
                 f'--disable-extensions-except={extension}',f'--load-extension={extension}',
                 '--window-size=1440,1000'])
         page = context.pages[0]
+        page.set_default_timeout(10000)
         errors, requests, responses, writes, held, windows, held_original = [], [], [], [], [], [], []
         state = {'failure':'','hold':False,'hold_original':False,'misalign':False}
         page.on('pageerror',lambda error:errors.append(error.stack or str(error)))
@@ -262,26 +316,38 @@ def run_checks(web, api, dataset, temporary, output):
         context.route(f'**/tests/{TEST}/data?*',data_route)
         context.route(f'**/tests/{TEST}/testpoints/7/data?*',original_route)
         try:
-            seed(page)
+            seed(page, catalog)
             worker=context.service_workers[0] if context.service_workers else context.wait_for_event('serviceworker')
             page.goto(web)
             page.wait_for_load_state('networkidle')
+            expect(plot(page)).to_have_attribute('data-filter-display','original')
+            assert_toggle(page, enabled=False)
+            # Reproduce the user's action through the current compact UI.
+            dialog = filter_dialog(page)
+            dialog.get_by_role('combobox').first.select_option('despike')
+            for label, value in (('Window (ms)', '25'), ('Max spike (ms)', '3'),
+                                 ('Threshold (MAD)', '3.5'), ('Min jump (units)', '2')):
+                dialog.get_by_label(label, exact=True).fill(value)
+            dialog.get_by_role('combobox').nth(1).select_option('linear')
+            close_filter(page, dialog)
             for col in (LOAD,SECOND):
-                expect(toggle(page,col)).to_have_attribute('aria-pressed','false')
+                assert_toggle(page,col)
                 expect(plot(page,col)).to_have_attribute('data-filter-display','filtered')
-            expect(toggle(page,REFERENCE)).to_have_count(0)
+            assert_toggle(page,REFERENCE,enabled=False)
             expect(plot(page,REFERENCE)).to_have_attribute('data-filter-display','original')
             initial=snapshot(page)
             assert all('filtered' in s['label'] for s in initial['series'])
             assert_tp_data(initial,originals,responses)
-            assert any(r.get('body',{}).get('mode')=='raw' for r in responses)
-            assert any(r.get('body',{}).get('mode')=='envelope' for r in responses)
+            assert all(r.get('body',{}).get('mode')=='raw' for r in responses)
             assert any(r.get('body',{}).get('replacement_counts',{}).get(LOAD,0)>0 for r in responses)
+            page.mouse.move(5,5)
+            page.get_by_role('button', name='Analyze', exact=True).focus()
+            capture_browser_view(context.new_cdp_session(page),output/'tp-despike-single-lines.png')
             browser_toggle(page,requests)
             actual=snapshot(page)
             assert_distinct(actual)
             assert_tp_data(actual,originals,responses)
-            expect(toggle(page,SECOND)).to_have_attribute('aria-pressed','false')
+            assert_toggle(page,SECOND)
             expect(plot(page,SECOND)).to_have_attribute('data-filter-display','filtered')
             stats=plot(page).get_by_role('button',name=re.compile('^Statistics for load_N:'))
             expect(stats).to_contain_text('Original means')
@@ -289,7 +355,7 @@ def run_checks(web, api, dataset, temporary, output):
             panel=page.get_by_role('dialog',name='Statistics for load_N',exact=True)
             expect(panel).to_contain_text('Original data · complete test points')
             page.keyboard.press('Escape')
-            print('PASS: legacy defaults, two independent slots, exact saved TP bounds/time origins, real raw/envelope arrays and distinguished styles; original statistics',flush=True)
+            print('PASS: adding Despike through menu/dialog draws one line per 600/20000-sample TP; bounded line reduction, exact saved rows/time origins, independent slots, optional original overlay and original statistics',flush=True)
 
             page.get_by_role('button',name=re.compile('Expand selection tray')).click()
             page.get_by_role('button',name=f'Hide Long spike from {TEST}',exact=True).click()
@@ -302,8 +368,8 @@ def run_checks(web, api, dataset, temporary, output):
             page.wait_for_function("JSON.parse(localStorage.getItem('ptt.analysis-session.v1')).plotShowOriginal[0] === true")
             page.reload()
             page.wait_for_load_state('networkidle')
-            expect(toggle(page)).to_have_attribute('aria-pressed','true')
-            expect(toggle(page,SECOND)).to_have_attribute('aria-pressed','false')
+            assert_toggle(page,checked=True)
+            assert_toggle(page,SECOND)
             assert_tp_data(snapshot(page),originals,responses)
             print('PASS: TP hide/reveal and independent original-display persistence on reload',flush=True)
 
@@ -311,7 +377,7 @@ def run_checks(web, api, dataset, temporary, output):
             # overlay may show all original TPs and only successful filters.
             plot(page).get_by_role('button',name=f'Expand {LOAD}',exact=True).click()
             state['failure']='partial'
-            plot(page).get_by_label('Threshold (MAD)',exact=True).fill('4')
+            set_threshold(page,'4')
             expect(plot(page)).to_contain_text('1 of 2 filtered test-point')
             partial=snapshot(page)
             assert any('Short spike' in s['label'] and 'filtered' in s['label'] for s in partial['series'])
@@ -319,9 +385,10 @@ def run_checks(web, api, dataset, temporary, output):
             state['failure']=''
             plot(page).get_by_role('button',name='Retry',exact=True).click()
             expect(plot(page)).not_to_contain_text('1 of 2 filtered test-point')
+            expect(plot(page)).to_have_attribute('data-filter-display','overlay')
             assert_tp_data(snapshot(page),originals,responses)
             state['failure']='all'
-            plot(page).get_by_label('Threshold (MAD)',exact=True).fill('4.5')
+            set_threshold(page,'4.5')
             expect(plot(page).get_by_role('alert')).to_contain_text('could not be applied')
             expect(plot(page)).to_have_attribute('data-filter-display','original')
             assert not any('filtered' in s['label'] for s in snapshot(page)['series'])
@@ -331,10 +398,10 @@ def run_checks(web, api, dataset, temporary, output):
             print('PASS: partial/all filter failure, honest raw fallback and explicit Retry',flush=True)
 
             state['hold']=True
-            plot(page).get_by_label('Threshold (MAD)',exact=True).fill('5')
+            set_threshold(page,'5')
             page.wait_for_timeout(700)
             assert held, 'Delayed filter response was not held'
-            plot(page).get_by_label('Threshold (MAD)',exact=True).fill('5.5')
+            set_threshold(page,'5.5')
             expect(plot(page)).to_have_attribute('data-filter-display','overlay')
             newest=snapshot(page)
             for route,response in held:
@@ -395,7 +462,7 @@ def run_checks(web, api, dataset, temporary, output):
 
             page.get_by_role('button',name='Full test',exact=True).click()
             expect(plot(page,full=True)).to_have_attribute('data-filter-display','overlay')
-            expect(toggle(page,SECOND,True)).to_have_attribute('aria-pressed','false')
+            assert_toggle(page,SECOND,True)
             for mode in ('Line','Min/max'):
                 page.get_by_role('group',name='Full-test trace style').get_by_role('button',name=mode,exact=True).click()
                 expect(plot(page,full=True)).to_have_attribute('data-filter-display','overlay')
@@ -432,14 +499,14 @@ def run_checks(web, api, dataset, temporary, output):
 
             state['failure']='all'
             plot(page,full=True).get_by_role('button',name=f'Expand {LOAD}',exact=True).click()
-            plot(page,full=True).get_by_label('Threshold (MAD)',exact=True).fill('6')
+            set_threshold(page,'6',full=True)
             expect(plot(page,full=True).get_by_role('alert')).to_contain_text('Could not apply the filter')
             expect(plot(page,full=True)).to_have_attribute('data-filter-display','original')
             state['failure']=''
             plot(page,full=True).get_by_role('button',name='Retry',exact=True).click()
             expect(plot(page,full=True)).to_have_attribute('data-filter-display','overlay')
             state['misalign']=True
-            plot(page,full=True).get_by_label('Threshold (MAD)',exact=True).fill('6.5')
+            set_threshold(page,'6.5',full=True)
             expect(plot(page,full=True).get_by_role('alert')).to_be_visible()
             expect(plot(page,full=True)).to_have_attribute('data-filter-display','original')
             state['misalign']=False

@@ -246,6 +246,8 @@ export const TimePlot: React.FC<TimePlotProps> = ({
   // Filtered trace per visible TP: exact saved rows in its own test,
   // returned relative to the actual first sample. Fetched once per
   // (spec, TP set, column) — zoom stays client-side like the raw traces.
+  // Keep one line per TP: auto would split long filtered traces into
+  // separate min/max edges, unlike the unfiltered TP overlay.
   useEffect(() => {
     // Only TPs whose own test has this column can be filtered — the raw
     // traces are already restricted the same way by App's trace fetcher.
@@ -268,7 +270,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
           try {
             const w = await fetchFiltered(
               s.test, [cfg.key], filterSpec, null, null, px,
-              controller.signal, 'auto', s.tpId
+              controller.signal, 'line', s.tpId
             );
             // Older backends ignore unknown query parameters. Never present a
             // full/inclusive window as a correctly aligned filtered TP.
@@ -666,7 +668,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
       const summary = statsCache[point.test]?.[cfg.key]?.[point.tpId]?.summary;
       const i0 = data !== 'original' && result ? result.i0 : summary?.i0 ?? point.tp.start_idx;
       const i1 = data !== 'original' && result ? result.i1 : summary?.i1 ?? point.tp.end_idx;
-      return { test: point.test, tp_id: point.tpId, px: 800, display: 'auto' as const,
+      return { test: point.test, tp_id: point.tpId, px: 800, display: 'line' as const,
         ...(i0 != null && i1 != null ? { expected_i0: i0, expected_i1: i1 } : {}) };
     });
     return { column: cfg.key, data, sources,
