@@ -21,6 +21,7 @@ import pyarrow.parquet as pq
 from . import analysis_metadata as analysis
 from . import export_progress as progress
 from .config import MAX_POINTS_RAW, POINT_BUDGET_CAP, PYRAMID_LEVELS, TESTS_DIR
+from .csv_values import test_point_id_scalar
 from .quality import quality_summary
 
 
@@ -489,10 +490,8 @@ def stream_csv(name: str, columns: list[str], i0: int, i1: int,
         buf = io.BytesIO()
         batch = batch.select(columns)
         if tp_id is not None:
-            # IDs are identifiers, not measurements. Strings also preserve
-            # legacy integer IDs outside Arrow's int64 range without overflow.
             batch = pa.RecordBatch.from_arrays(
-                [*batch.columns, pa.repeat(str(tp_id), batch.num_rows)],
+                [*batch.columns, pa.repeat(test_point_id_scalar(tp_id), batch.num_rows)],
                 names=headers)
         pa_csv.write_csv(
             batch, buf,

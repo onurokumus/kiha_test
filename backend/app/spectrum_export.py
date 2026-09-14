@@ -16,6 +16,7 @@ import pyarrow.csv as pa_csv
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from . import dsp, plot_export as shared, export_progress as progress
+from .csv_values import test_point_id_scalar
 
 router = APIRouter()
 
@@ -121,7 +122,7 @@ def prepare_export(request: SpectrumExportRequest, *, row_budget=None, metadata=
         # Repeated metadata makes each source block independently interpretable;
         # all fields come from this calculation, not the client's display JSON.
         metadata = {
-            'source_test': source.test, 'test_point_id': str(source.tp_id) if source.tp_id is not None else None,
+            'source_test': source.test, 'test_point_id': test_point_id_scalar(source.tp_id),
             'source_i0': info['i0'], 'source_i1': info['i1'],
             'time_start_s': info['time_start_s'], 'time_end_s': info['time_end_s'],
             'fs_hz': info['fs_hz'], 'n_samples': info['n_samples'],

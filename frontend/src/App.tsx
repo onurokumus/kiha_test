@@ -26,6 +26,7 @@ import { useUnsavedChanges } from './hooks/useUnsavedChanges';
 import { assignColor } from './utils/colorManager';
 import { tpStatErrorRange } from './utils/scatterRanges';
 import { AxisRange, SavedTimeYRange, timePlotContexts } from './utils/timePlotRanges';
+import { changeWaterfallColorRange, SavedWaterfallColorRange } from './utils/waterfallColorRange';
 import { MAX_SELECTED_TEST_POINTS } from './constants/selection';
 import {
   fetchTests,
@@ -205,6 +206,9 @@ function App() {
   const [waterfallOverlap, setWaterfallOverlap] = useState(restoredSession.waterfallOverlap);
   const [waterfallResolution, setWaterfallResolution] = useState(restoredSession.waterfallResolution);
   const [waterfallBand, setWaterfallBand] = useState(restoredSession.waterfallBand);
+  const [waterfallColorRanges, setWaterfallColorRanges] = useState<(SavedWaterfallColorRange | null)[]>(
+    restoredSession.waterfallColorRanges
+  );
   const [specMode, setSpecMode] = useState<'fft' | 'welch' | 'waterfall'>(
     hasRestoredSession ? restoredSession.specMode : settings.specMode
   );
@@ -1603,6 +1607,7 @@ function App() {
     setWaterfallOverlap(session.waterfallOverlap);
     setWaterfallResolution(session.waterfallResolution);
     setWaterfallBand(session.waterfallBand);
+    setWaterfallColorRanges(session.waterfallColorRanges);
     setSpecMode(session.specMode);
     setSpecXAxis(session.specXAxis);
     setSpecRpmCol(session.specRpmCol);
@@ -1730,6 +1735,7 @@ function App() {
       viewMode,
       fullPlotMode,
       waterfallWindow, waterfallOverlap, waterfallResolution, waterfallBand,
+      waterfallColorRanges,
       specMode,
       specXAxis,
       specRpmCol,
@@ -2349,6 +2355,10 @@ function App() {
               sourceCatalog={sourceCatalog}
               onViewportChange={(kind, index, value) => setPlotViewports(previous => ({...previous,
                 [kind]: previous[kind].map((item, i) => i === index ? value : item)}))}
+              waterfallColorRanges={waterfallColorRanges}
+              onWaterfallColorRangeChange={(index, column, logColor, range) =>
+                setWaterfallColorRanges(previous => previous.map((saved, i) => i === index
+                  ? changeWaterfallColorRange(saved, column, logColor, range) : saved))}
               viewMode={viewMode}
               density={plotDensity}
               test={currentTest}

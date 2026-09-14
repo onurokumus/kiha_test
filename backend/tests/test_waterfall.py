@@ -126,6 +126,21 @@ class WaterfallTests(DataDirTestCase):
         self.assertTrue(0<len(cropped)<len(rows))
         self.assertTrue(all(float(r['frequency_start_hz'])<=12 and float(r['frequency_end_hz'])>=10 for r in cropped))
 
+    def test_tp_csv_ids_are_unquoted_and_preserve_large_integers(self):
+        self.write_signal(np.sin(np.arange(512)*.4),128)
+        for tp_id in (7, 2**70 + 17):
+            with self.subTest(tp_id=tp_id):
+                store.write_testpoints('method', {'test_points': [
+                    {'id': tp_id, 'start_idx': 0, 'end_idx': 512, 'start_s': 0}]})
+                payload=self.export_request()
+                payload['sources'][0]['tp_id']=tp_id
+                response=self.client.post('/api/waterfall-export',json=payload)
+                self.assertEqual(response.status_code,200,response.text)
+                rows=list(csv.DictReader(io.StringIO(response.text)))
+                self.assertEqual({row['test_point_id'] for row in rows},{str(tp_id)})
+                self.assertTrue(all(line.startswith(f'"method",{tp_id},')
+                                    for line in response.text.splitlines()[1:]))
+
     def test_export_stale_bounds_rate_invalid_options_and_bundle(self):
         self.write_signal(np.arange(512,dtype=float),128)
         payload=self.export_request()

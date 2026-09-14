@@ -5,6 +5,7 @@ import { normalizeTimeYRanges, SavedTimeYRange } from '../utils/timePlotRanges';
 import type { SavedSourceReference } from './sessionSources';
 import { emptyPlotViewports, normalizePlotViewports, PlotViewports } from '../utils/plotViewport';
 import { DEFAULT_WATERFALL_SETTINGS, normalizeWaterfallSettings, WaterfallSettings } from '../constants/waterfall';
+import { normalizeWaterfallColorRanges, SavedWaterfallColorRange } from '../utils/waterfallColorRange';
 
 export type AnalysisViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
 export type PlotDensity = 'single' | 'quad' | 'nine';
@@ -18,6 +19,7 @@ export interface SavedTestPointSelection {
 
 export interface AnalysisSession extends WaterfallSettings {
   version: 1;
+  waterfallColorRanges: (SavedWaterfallColorRange | null)[];
   plotViewports: PlotViewports;
   expandedPlot: number | null;
   clusteringEnabled?: boolean;
@@ -61,6 +63,7 @@ const STORAGE_KEY = 'ptt.analysis-session.v1';
 
 export const defaultAnalysisSession = (): AnalysisSession => ({
   version: 1,
+  waterfallColorRanges: normalizeWaterfallColorRanges(null),
   plotViewports: emptyPlotViewports(),
   expandedPlot: null,
   showHorizontalErrorBars: false,
@@ -226,6 +229,7 @@ export function normalizeAnalysisSession(value: unknown): AnalysisSession {
 
   return {
     version: 1,
+    waterfallColorRanges: normalizeWaterfallColorRanges(value.waterfallColorRanges),
     plotViewports: normalizePlotViewports(value.plotViewports),
     expandedPlot: typeof value.expandedPlot === 'number' && Number.isInteger(value.expandedPlot) && value.expandedPlot >= 0 && value.expandedPlot < 9 ? value.expandedPlot : null,
     clusteringEnabled: typeof value.clusteringEnabled === 'boolean' ? value.clusteringEnabled : undefined,

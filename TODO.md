@@ -2,6 +2,29 @@
 
 Open items below are listed in recommended implementation order. Complete each phase before moving to the next, except for independent small fixes.
 
+## Requested CSV test-point ID formatting (2026-09-14)
+
+- [x] Remove surrounding quotes from exported test-point ID values.
+
+Independent user-requested fix ahead of Phase 11b. Uploads/Split and all plot
+exports share exact integer/decimal CSV IDs up to 76 digits; still larger legacy
+IDs retain lossless quoted text. Other CSV values and escaping are unchanged.
+Focused export tests (108 / 134 subtests), full backend suite (490 / 445 subtests),
+frontend build/lint and independent scoped review pass.
+
+## Requested waterfall color limits (2026-09-14)
+
+- [x] Add controls for the waterfall FFT color-bar minimum and maximum.
+
+Completed ahead of independent Phase 11b. Per-plot Min/Max/Apply/Auto share source
+scales and retain independent linear/log limits through zoom and sessions.
+Finite-range validation and precise narrow-range labels preserve readable
+color bars; PNG records exact limits and CSV magnitudes remain unchanged.
+Build/lint, 489 backend tests, 26 helper tests, nine new browser groups and all
+eight existing detail-regression groups pass. Session Save/Open, duplicate slots,
+keyboard/maximize/1100px/125%/150%, real exports and unchanged fixture sources
+verified. See [color-limit verification](docs/WATERFALL_COLOR_VERIFICATION.md).
+
 ## Requested high-detail waterfall (2026-09-11)
 
 - [x] Preserve fine waterfall detail, especially 0–200 Hz, with Hz-based resolution choices, refinement when zooming, and matching saved sessions and exports.

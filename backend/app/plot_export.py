@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 from . import analysis_metadata as analysis
 from . import dsp, store, export_progress as progress
 from .config import MAX_FILTER_SAMPLES
+from .csv_values import test_point_id_scalar
 from .locks import data_read, test_read
 from .status import BUSY_STATUSES
 
@@ -273,8 +274,7 @@ def _write_source(output, source: ExportSource, column: str,
             names = ["source_test", "test_point_id", "sample_index", "time_s", "tp_time_s"]
             arrays = [
                 pa.repeat(source.test, count),
-                (pa.repeat(str(source.tp_id), count) if source.tp_id is not None
-                 else pa.nulls(count, type=pa.string())),
+                pa.repeat(test_point_id_scalar(source.tp_id), count),
                 pa.array(indices[keep]),
                 batch.column(batch.schema.get_field_index(time_column)).filter(mask),
                 (pa.array(tp_time[keep]) if tp_time is not None

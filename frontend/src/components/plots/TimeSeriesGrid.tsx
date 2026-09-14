@@ -17,6 +17,7 @@ import { WaterfallPlot } from './WaterfallPlot';
 import { SpectrumPlot } from './SpectrumPlot';
 import { XYPlot } from './XYPlot';
 import { AxisRange } from '../../utils/timePlotRanges';
+import { SavedWaterfallColorRange } from '../../utils/waterfallColorRange';
 import { createPlotExportRegistry } from '../../utils/plotExportRegistry';
 import { MultiPlotExportControls } from '../controls/MultiPlotExportControls';
 import { useAnnotations } from '../../hooks/useAnnotations';
@@ -57,6 +58,8 @@ interface TimeSeriesGridProps {
   waterfallOverlap: number;
   waterfallResolution: number | null;
   waterfallBand: WaterfallBand;
+  waterfallColorRanges: (SavedWaterfallColorRange | null)[];
+  onWaterfallColorRangeChange: (index: number, column: string, logColor: boolean, range: AxisRange | null) => void;
   specMode: 'fft' | 'welch' | 'waterfall';
   specXAxis: SpectrumXAxis;
   specRpmCol: string;
@@ -109,6 +112,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   onTimeYRangeChange,
   fullPlotMode,
   waterfallWindow, waterfallOverlap, waterfallResolution, waterfallBand,
+  waterfallColorRanges, onWaterfallColorRangeChange,
   specMode,
   specXAxis,
   specRpmCol,
@@ -238,7 +242,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
           </svg>
         </button>}
         <MultiPlotExportControls registry={exportRegistry}
-          contextKey={JSON.stringify([viewMode, test, density, expandedPlot, visibleSelectionFingerprint, plotConfigs, plotFilterSpecs, plotShowOriginal, fullPlotMode, timeZoom, waterfallWindow, waterfallOverlap, waterfallResolution, waterfallBand, specSource, specMode, specXAxis, specRpmCol, specLogY, xySource, xyXCols, xyYCols])}
+          contextKey={JSON.stringify([viewMode, test, density, expandedPlot, visibleSelectionFingerprint, plotConfigs, plotFilterSpecs, plotShowOriginal, fullPlotMode, timeZoom, waterfallWindow, waterfallOverlap, waterfallResolution, waterfallBand, waterfallColorRanges, specSource, specMode, specXAxis, specRpmCol, specLogY, xySource, xyXCols, xyYCols])}
           kind={viewMode === 'spectrum' && specMode === 'waterfall' ? 'waterfall' : viewMode === 'spectrum' || viewMode === 'xy' ? viewMode : 'time'}
           defaultColumns={density === 'nine' ? 3 : 2}
           disabledReason={expandedPlot !== null ? 'Restore the grid to export multiple plots.' : null}
@@ -351,6 +355,9 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
                   selectedTPs={selectedTPs} hiddenTPs={hiddenTPs} columnsByTest={columnsByTest}
                   range={timeZoom} nperseg={waterfallWindow} overlap={waterfallOverlap} logColor={specLogY}
                   resolutionHz={waterfallResolution} frequencyBand={waterfallBand}
+                  colorRange={waterfallColorRanges[idx]?.column === cfg.key
+                    ? waterfallColorRanges[idx]?.[specLogY ? 'log' : 'linear'] ?? null : null}
+                  onColorRangeChange={colorRange => onWaterfallColorRangeChange(idx, cfg.key, specLogY, colorRange)}
                   registerExport={exportRegistry.registrations[idx]} />
               )}
               {viewMode === 'spectrum' && specMode !== 'waterfall' && (

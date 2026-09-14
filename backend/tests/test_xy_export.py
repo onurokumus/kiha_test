@@ -165,7 +165,10 @@ class XYExportTests(PlotExportFixture):
                         time_column='elapsed', extra={'position':np.arange(79)[::-1]})
         sources=self.payload()['sources']+[{'test':'other','tp_id':large,'expected_i0':2,
             'expected_i1':79,'expected_time_column':'elapsed'}]
-        rows=self.rows(self.export(sources=sources)); other=[r for r in rows if r['source_test']=='other']
+        response=self.export(sources=sources)
+        rows=self.rows(response); other=[r for r in rows if r['source_test']=='other']
+        self.assertIn(f'"other",{large},2,79,',response.text)
+        self.assertIn('"pairs",7,',response.text)
         self.assertEqual(len(other),77); self.assertEqual(other[0]['test_point_id'],str(large))
         self.assertEqual([int(r['sample_index']) for r in other],list(range(2,79)))
         self.assertTrue(all(r['source_fs_hz']=='500' and r['time_column']=='elapsed' for r in other))

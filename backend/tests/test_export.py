@@ -82,6 +82,7 @@ class ExportTests(DataDirTestCase):
         self.assertEqual(df.height, 3)  # rows [2, 5)
         self.assertEqual(df.columns, ["time", "thrust", "test_point_id"])
         self.assertEqual(df["test_point_id"].to_list(), [3, 3, 3])
+        self.assertTrue(all(line.endswith(',3') for line in r.text.splitlines()[1:]))
         self.assertEqual(df["thrust"].to_list(), [4.0, 6.0, 8.0])
 
     def test_adjacent_legacy_and_open_points_keep_their_own_ids(self):
@@ -114,6 +115,7 @@ class ExportTests(DataDirTestCase):
                 self.assertEqual(df.columns, ["time", "rpm", "test_point_id"])
                 self.assertEqual(df["rpm"].to_list(), [1004, 1005, 1006])
                 self.assertEqual(df["test_point_id"].to_list(), [tp_id] * 3)
+                self.assertTrue(all(line.endswith(f',{tp_id}') for line in r.text.splitlines()[1:]))
         self.assertEqual((self.tests / "alpha/testpoints.json").read_bytes(), saved)
 
     def test_draft_clamps_and_rejects_invalid_ranges(self):
@@ -186,13 +188,19 @@ class ExportTests(DataDirTestCase):
         self.assertEqual(df["signal"].is_nan().sum(), 1)
         np.testing.assert_array_equal(df["signal"].to_numpy(), frame["signal"][2:-2].to_numpy())
         self.assertEqual(r.content.count(b'"test_point_id"'), 1)
+        self.assertNotIn(b',"12"\n', r.content)
 
     def test_identifier_larger_than_int64_is_preserved(self):
-        tp_id = 10 ** 30
-        r = self.client.get(f"/api/tests/alpha/testpoints/{tp_id}/export?start_idx=0&end_idx=1")
-        self.assertEqual(r.status_code, 200)
-        rows = list(csv.DictReader(io.StringIO(r.text)))
-        self.assertEqual(rows[0]["test_point_id"], str(tp_id))
+        for tp_id in (0, -4, -(2**63), 2**63 - 1, -(2**63) - 1,
+                      2**63, 10**30, -(10**75), 10**76 - 1, 10**90):
+            with self.subTest(tp_id=tp_id):
+                r = self.client.get(f"/api/tests/alpha/testpoints/{tp_id}/export?start_idx=0&end_idx=1")
+                self.assertEqual(r.status_code, 200)
+                rows = list(csv.DictReader(io.StringIO(r.text)))
+                self.assertEqual(rows[0]["test_point_id"], str(tp_id))
+                # Extreme legacy IDs beyond Arrow decimal capacity stay lossless.
+                if len(str(abs(tp_id))) <= 76:
+                    self.assertTrue(r.text.splitlines()[1].endswith(f',{tp_id}'))
 
     def test_missing_busy_failed_and_empty_tp_export_fail_before_attachment(self):
         self.assertEqual(self.client.get("/api/tests/missing/testpoints/3/export").status_code, 404)

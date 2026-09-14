@@ -13,6 +13,7 @@ import pyarrow.csv as pa_csv
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from . import plot_export as shared, store, export_progress as progress
+from .csv_values import test_point_id_scalar
 
 router = APIRouter()
 
@@ -121,7 +122,7 @@ def prepare_export(request: XYExportRequest, *, row_budget=None, metadata=None):
                 if not count:
                     continue
                 metadata = {
-                    'source_test': source.test, 'test_point_id': str(source.tp_id) if source.tp_id is not None else None,
+                    'source_test': source.test, 'test_point_id': test_point_id_scalar(source.tp_id),
                     'source_i0': i0, 'source_i1': i1, 'source_fs_hz': meta.get('fs_hz'),
                     'time_column': tcol, 'method_version': store.XY_METHOD_VERSION,
                     'source': 'stored', 'prefilter': 'none', 'missing_values': 'omit_nonfinite_pairs',

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import type { SelectedTestPoint, TimePlotConfig, WaterfallData, WaterfallExportRequest } from '../../types';
@@ -6,6 +6,7 @@ import { fetchWaterfall, isAbortError } from '../../services/api';
 import { AXIS_STYLE } from '../../constants/uplotTheme';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
 import { usePlotViewport, type ViewportProps } from '../../utils/plotViewport';
+import { validWaterfallColorRange, waterfallColorTicks } from '../../utils/waterfallColorRange';
 import { capturePlotPng, encodeAndDownload, type PlotPngCapture } from '../../utils/plotPngExport';
 import { imageMetadata } from '../../utils/analysisMetadata';
 import { downloadPlotCsv } from '../../utils/plotExport';
@@ -22,6 +23,7 @@ interface Props extends ViewportProps {
   selectedTPs: SelectedTestPoint[]; hiddenTPs: Set<string>; columnsByTest: Record<string, string[]>;
   range: [number, number] | null; nperseg: number; overlap: number; logColor: boolean;
   resolutionHz: number | null; frequencyBand: 'low' | 'full';
+  colorRange: [number, number] | null; onColorRangeChange: (range: [number, number] | null) => void;
   isExpanded: boolean; onToggleExpand: () => void; registerExport?: RegisterPlotExport;
   isEditMode?: boolean; allConfigs?: TimePlotConfig[]; onConfigChange?: (value: string) => void;
 }
@@ -40,6 +42,48 @@ function cellAt(edges: number[], value: number) {
   let low = 0, high = edges.length - 1;
   while (low + 1 < high) { const mid = (low + high) >> 1; if (edges[mid] <= value) low = mid; else high = mid; }
   return Math.min(low, edges.length - 2);
+}
+
+function ColorRangeControls({ scale, manual, logColor, onChange }: {
+  scale: [number, number]; manual: boolean; logColor: boolean;
+  onChange: (range: [number, number] | null) => void;
+}) {
+  const id = useId();
+  const [draft, setDraft] = useState<{ min: string; max: string } | null>(null);
+  const [error, setError] = useState('');
+  const manualMin = manual ? scale[0] : null, manualMax = manual ? scale[1] : null;
+  useEffect(() => { setDraft(null); setError(''); }, [manualMin, manualMax]);
+  // Untouched Auto fields follow the current grid. Preserve both draft values
+  // while typing, even if a viewport refinement finishes in the background.
+  const values = draft ?? { min: String(scale[0]), max: String(scale[1]) };
+  const apply = () => {
+    const range = [Number(values.min), Number(values.max)];
+    if (!values.min.trim() || !values.max.trim() || !range.every(Number.isFinite)) {
+      setError('Enter a finite minimum and maximum.');
+    } else if (!logColor && range[0] < 0) {
+      setError('Linear color minimum must be zero or greater.');
+    } else if (!validWaterfallColorRange(range, logColor)) {
+      setError('Maximum must be greater than minimum, with a finite span.');
+    } else {
+      onChange(range); setDraft(null); setError('');
+    }
+  };
+  return <form className={styles.colorControls} aria-label="Waterfall color range" noValidate
+    onSubmit={event => { event.preventDefault(); apply(); }}>
+    <span className={styles.colorLabel} title={logColor ? 'Limits use log10 of magnitude in U, not dB. For example, -3 means 0.001 U.' : 'Limits use linear magnitude in the signal unit U.'}>
+      Color ({logColor ? 'log10(U)' : 'U'})
+    </span>
+    {(['min', 'max'] as const).map(bound => <label key={bound}>
+      {bound === 'min' ? 'Min' : 'Max'}
+      <input type="number" step="any" min={!logColor && bound === 'min' ? 0 : undefined}
+        aria-label={`Color ${bound}`} aria-invalid={!!error} aria-describedby={error ? `${id}-error` : undefined}
+        value={values[bound]} onChange={event => { setDraft({ ...values, [bound]: event.target.value }); setError(''); }} />
+    </label>)}
+    <button type="submit">Apply</button>
+    <button type="button" aria-pressed={!manual} title="Fit the color range to the loaded magnitudes"
+      onClick={() => { onChange(null); setDraft(null); setError(''); }}>Auto</button>
+    {error && <span id={`${id}-error`} role="alert" className={styles.colorError}>{error}</span>}
+  </form>;
 }
 
 function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, viewportContext, onViewportChange, register }: {
@@ -71,6 +115,9 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
     const rows = data.magnitude.length, cols = data.magnitude[0]?.length ?? 0;
     const bitmap = document.createElement('canvas'); bitmap.width = Math.max(1, cols); bitmap.height = Math.max(1, rows);
     const ctx = bitmap.getContext('2d')!;
+    const colorTicks = waterfallColorTicks([lo, hi]);
+    ctx.font = '9px Segoe UI';
+    const colorGutter = Math.max(66, Math.ceil(Math.max(...colorTicks.map(tick => ctx.measureText(tick.label).width))) + 27);
     const pixels = ctx.createImageData(bitmap.width, bitmap.height);
     data.magnitude.forEach((row, y) => row.forEach((v, x) => {
       const value = logColor ? v > 0 ? Math.log10(v) : lo : v;
@@ -98,11 +145,11 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
       stops.forEach((rgb, i) => gradient.addColorStop(i / (stops.length-1), `rgb(${rgb.join(',')})`));
       c.fillStyle = gradient; c.fillRect(x, b.top, w, b.height);
       c.fillStyle = '#bbc3cc'; c.font = `${9 * ratio}px Segoe UI`; c.textAlign = 'left';
-      [0, .5, 1].forEach(v => c.fillText(fmt(lo + v*(hi-lo)), x+w+3*ratio, b.top + b.height*(1-v) + (v===0 ? 0 : 7*ratio)));
+      colorTicks.forEach(({ fraction: v, label }) => c.fillText(label, x+w+3*ratio, b.top + b.height*(1-v) + (v===0 ? 0 : 7*ratio)));
     };
     control.sync(() => {
       const u = new uPlot({ width: box.width, height: box.height,
-        padding: [12, 66, 0, 0], legend: { show: false },
+        padding: [12, colorGutter, 0, 0], legend: { show: false },
         scales: { x: { time: false, range: (_u, min, max) => [min ?? 0, max ?? defaultXMax] }, y: { range: () => [defaultYMin, defaultYMax] } },
         axes: [{ ...AXIS_STYLE, label: 'Frequency (Hz)', size: 35, labelSize: 16 },
           { ...AXIS_STYLE, label: 'Elapsed time (s)', size: 48, labelSize: 16 }],
@@ -140,7 +187,8 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
 
 export function WaterfallPlot(props: Props) {
   const { cfg, test, source, selectedTPs, hiddenTPs, columnsByTest, range, nperseg, overlap,
-    resolutionHz, frequencyBand, logColor, isExpanded, onToggleExpand, viewport, viewportContext, onViewportChange } = props;
+    resolutionHz, frequencyBand, logColor, colorRange, onColorRangeChange,
+    isExpanded, onToggleExpand, viewport, viewportContext, onViewportChange } = props;
   const body = useRef<HTMLDivElement>(null), dialog = useRef<HTMLDialogElement>(null);
   const plots = useRef(new Map<string, uPlot>()), exportActions = useRef<PlotExportActions>(null);
   const [retry, setRetry] = useState(0);
@@ -183,11 +231,13 @@ export function WaterfallPlot(props: Props) {
     // Debounce pointer gestures; color alone never recalculates the FFT.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, retry]);
-  const scale = useMemo<[number, number]>(() => {
+  const autoScale = useMemo<[number, number]>(() => {
     let max = 0;
     traces.forEach(tr => tr.data.magnitude.forEach(row => row.forEach(v => { max = Math.max(max, v); })));
     return logColor ? [max > 0 ? Math.log10(max)-6 : -6, max > 0 ? Math.log10(max) : 0] : [0, max || 1];
   }, [traces, logColor]);
+  const scale = colorRange ?? autoScale;
+  const colorDescription = `${logColor ? 'log10(U); zero at color minimum' : 'linear amplitude U'}; ${colorRange ? 'manual' : 'auto'} range ${scale.map(value => colorRange ? String(value) : fmt(value)).join(' to ')}`;
   const reason = pending ? 'Wait for the waterfall calculation.' : errors.length ? 'Retry failed sources before exporting.' : !traces.length ? 'Select a source to export.' : traces.some(tr => !tr.data.magnitude.length) ? 'No FFT cells for one or more sources in this view. Reset axes or choose an overlapping range.' : null;
   const reset = () => onViewportChange?.(null);
   const scope = 'Windowed FFT of stored samples. Frequency in Hz; elapsed time from each selected interval. Shared color range across sources of this variable. U is the signal unit.';
@@ -208,11 +258,12 @@ export function WaterfallPlot(props: Props) {
         const u = plots.current.get(tr.label); if (!u) throw new Error('Wait for the waterfall canvas.');
         const metadata = Object.fromEntries(Object.entries(tr.data).filter(([key]) => key !== 'magnitude'));
         captures.push(capturePlotPng(u, { title: `${cfg.label} · Waterfall FFT · ${tr.label}`, scope: [scope],
-          details: [`Color: ${logColor ? 'log10(U), 6-decade floor; zero at floor' : 'linear amplitude U'}; range ${scale.map(fmt).join(' to ')}.`,
+          details: [`Color: ${colorDescription}. Values outside the range use the endpoint colors.`,
             `Hann window ${tr.data.method.nperseg} samples (${fmt(tr.data.method.window_seconds)} s), overlap ${overlap}%; Δf ${fmt(tr.data.method.bin_spacing_hz)} Hz.`,
             `Grid ${tr.data.reduction.method}; maximum over ${tr.data.reduction.time_factor} frames × ${tr.data.reduction.frequency_factor} bins per full cell. ${tr.data.nan_count} missing samples interpolated; ${tr.data.method.trailing_samples} trailing samples unused.`],
           provenance: { kind: 'waterfall', column: cfg.key, test: tr.test, tp_id: tr.tpId, loaded: metadata,
-            color_transform: logColor ? 'log10' : 'linear', color_range: scale } }));
+            color_transform: logColor ? 'log10' : 'linear', color_range: scale,
+            color_range_mode: colorRange ? 'manual' : 'auto' } }));
         if (captures.reduce((sum, c) => sum + c.canvas.width*c.canvas.height, 0) > 16_000_000) {
           throw new Error('Too many sources for one image. Select fewer test points.');
         }
@@ -230,7 +281,7 @@ export function WaterfallPlot(props: Props) {
   };
   usePlotExportRegistration(props.registerExport, { label: cfg.label, scope, defaultData: 'original',
     originalReason: reason, filteredReason: null, pngReason: reason, buildCsvRequest: request, capturePng: capture });
-  const closeDetails = () => { dialog.current?.close(); body.current?.focus(); };
+  const closeDetails = () => { dialog.current?.close(); body.current?.focus({ preventScroll: true }); };
   useEffect(() => { dialog.current?.close(); }, [key]);
   return <div className={`${common.plotContainer} ${isExpanded ? styles.expanded : ''}`} role="group" aria-label={`${cfg.label} waterfall plot`}>
     <PlotHeader label={cfg.label} isExpanded={isExpanded} onToggleExpand={onToggleExpand}
@@ -238,7 +289,7 @@ export function WaterfallPlot(props: Props) {
       actions={<>
         <PlotActionMenu label={cfg.label} targetRef={body} contextKey={key} onReset={reset}
           exportActions={exportActions} onAnalysisDetails={() => dialog.current?.showModal()} />
-        <PlotExportControls hideTrigger actionsRef={exportActions} label={cfg.label} contextKey={`${key}:${logColor}`} scope={scope}
+        <PlotExportControls hideTrigger actionsRef={exportActions} label={cfg.label} contextKey={`${key}:${logColor}:${JSON.stringify(colorRange)}`} scope={scope}
           defaultData="original" originalReason={reason} filteredReason={null} pngReason={reason}
           csvLabel="Waterfall grid · linear magnitude" csvDescription="One row per displayed cell intersecting the viewport. Includes time/frequency bounds and source identity; aggregated cells contain maxima, not native FFT bins."
           onCsv={(_data, signal, includeMetadata) => downloadPlotCsv({ ...request(), include_metadata: includeMetadata }, signal)}
@@ -248,11 +299,13 @@ export function WaterfallPlot(props: Props) {
         onChange={v => props.onConfigChange?.(v)} ariaLabel="Plot variable" appearance="plot" size="compact" />}
     </PlotHeader>
     <div className={styles.body} ref={body} tabIndex={0}>
+      <ColorRangeControls key={`${cfg.key}:${logColor}`}
+        scale={scale} manual={colorRange !== null} logColor={logColor} onChange={onColorRangeChange} />
       {pending && !traces.length && <p role="status" className={styles.failure}>Calculating waterfall FFT…</p>}
       {!pending && !sources.length && <p className={styles.failure}>Select test points to compare, or choose Full test.</p>}
       {errors.map(message => <p role="alert" className={styles.failure} key={message}>{message}</p>)}
       {!!errors.length && <button className="btn" onClick={() => setRetry(v=>v+1)}>Retry waterfall</button>}
-      {!!traces.length && <div className={styles.hint} role="status">{pending ? 'Refining visible grid… · ' : ''}Color: {logColor ? 'log10(U), 6-decade floor' : 'magnitude (U)'} · {traces.length > 1 ? 'shared ' : ''}{scale.map(fmt).join(' to ')} · drag to zoom · Shift-drag to pan · Home / double-click to reset</div>}
+      {!!traces.length && <div className={styles.hint} role="status">{pending ? 'Refining visible grid… · ' : ''}Color: {traces.length > 1 ? 'shared ' : ''}{colorDescription} · drag to zoom · Shift-drag to pan · Home / double-click to reset axes</div>}
       <div className={styles.facets}>
         {traces.map(tr => <Heatmap key={`${baseKey}:${tr.label}`} trace={tr} scale={scale} logColor={logColor} expanded={isExpanded} frequencyBand={frequencyBand}
           viewport={viewport} viewportContext={viewportContext} onViewportChange={onViewportChange}
@@ -264,7 +317,8 @@ export function WaterfallPlot(props: Props) {
       <h3>Waterfall FFT · {cfg.label}</h3>
       <p>{scope}</p>
       <p>Each complete window is mean-centered, multiplied by a periodic Hann window, then transformed. One-sided magnitude is divided by the window sum; interior frequency bins are doubled. No padding or time-plot filtering. Known acquisition gaps prevent analysis. Missing signal values are interpolated by sample index.</p>
-      <p>Time marks nominal window centers relative to the selected interval. Source timestamps are retained in hover and CSV. Log color is log10(U), with a floor six decades below the shared maximum; it is not dB. Reduced cells report maxima over explicit ranges. Smaller windows improve time resolution; larger windows give finer frequency bins.</p>
+      <p>Time marks nominal window centers relative to the selected interval. Source timestamps are retained in hover and CSV. Log color is log10(U), not dB. Auto uses a floor six decades below the shared maximum. Manual Min/Max limits use the displayed color units and stay fixed while zooming; zero and values below the minimum use the bottom color, and values above the maximum use the top color. Linear and log limits are saved separately for each plot variable. Color limits do not change hover magnitudes or CSV data. Reduced cells report maxima over explicit ranges. Smaller windows improve time resolution; larger windows give finer frequency bins.</p>
+      <p>Current color: {colorDescription}.</p>
       <p>Zoom reloads the visible FFT bins and time frames before reduction. Frame origins remain anchored to the selected source interval. Bin spacing is not a guarantee that two equally close tones can be separated: the Hann window broadens peaks. Higher overlap adds correlated frames without undoing the time blur of a longer window. Each window has its mean removed, so 0 Hz does not represent the original DC level.</p>
       {traces.map(tr => <section key={tr.label}><h4>{tr.label}</h4><p>Rows [{tr.data.i0}, {tr.data.i1}) · {tr.data.fs_hz} Hz · {tr.data.nan_count} missing values interpolated.</p>
         <p>Native bin spacing {fmt(tr.data.method.bin_spacing_hz)} Hz · typical displayed cell {fmt(tr.data.method.bin_spacing_hz * tr.data.reduction.frequency_factor)} Hz × {fmt(tr.data.method.step_seconds * tr.data.reduction.time_factor)} s · window {fmt(tr.data.method.window_seconds)} s.</p>

@@ -12,10 +12,27 @@ Full-test time interval. Each grid slot uses its selected variable. Sources
 with missing variables report individual errors rather than disappearing.
 
 All sources of one variable share a color range. Different variables use their
-own scales because their units can differ. Linear color spans zero to the
-largest loaded magnitude. **Log color** displays log10(magnitude in U), with a
-floor six decades below the shared maximum; zero maps to that floor. It is not
-dB or PSD. Physical units are inherited from the signal; U means its unit.
+own scales because their units can differ. With **Auto**, linear color spans
+zero to the largest loaded magnitude; **Log color** displays log10(magnitude
+in U), with a floor six decades below the shared maximum. It is not dB or PSD.
+Physical units are inherited from the signal; U means its unit.
+
+Each plot has **Min / Max / Apply / Auto** color controls. Enter both limits
+and press **Apply** (or Enter) to hold a fixed color range across all its source
+maps, including while zooming or changing FFT detail. Limits use the displayed
+color units: U for linear color, log10(U) for log color (for example, -3 means
+0.001 U). Both must be finite with min < max and a finite span; linear min
+must be nonnegative. Invalid input leaves the applied range unchanged. Values
+outside the range use the endpoint colors; zero always uses the bottom color.
+**Auto** fits the loaded grid again and clears the current mode's manual limits.
+The other color mode keeps its own limits. Axis resets only reset axes.
+
+Manual limits are saved per plot slot and variable, separately for linear and
+log color, in automatic and explicit sessions. They survive maximize/restore,
+source changes and FFT settings. A different variable in the slot uses Auto
+until its own limits are set; old sessions without color settings use Auto.
+Color edits redraw the existing FFT grid without recalculating it. Hover and
+CSV retain the original linear magnitudes, including values outside the limits.
 
 Drag to zoom both axes, wheel to zoom frequency, Shift-drag or middle-drag to
 pan frequency, and Alt-wheel/Alt-drag to adjust elapsed time. The maps in a slot
@@ -132,7 +149,8 @@ include all its sources. Selected slots support 2×2/3×3 packages.
   `analysis.json` (default) for full executed method/provenance. No log-color
   transformation is applied to CSV, and no native-bin export is implied.
 - PNG freezes the current maps, axes, color scales and source/method details.
-  Its metadata describes loaded results. Large source sets may need fewer
+  Its metadata describes loaded results, the exact applied color limits,
+  linear/log transform and Auto/manual mode. Large source sets may need fewer
   selected points to fit the existing image size limits.
 - Empty, loading, failed or incomplete source sets cannot export. Changing
   source/settings suppresses stale responses. Requests retain the existing
@@ -141,5 +159,5 @@ include all its sources. Selected slots support 2×2/3×3 packages.
 
 Method parameters are independent of the ordinary FFT/Welch and Per rev
 settings. Waterfall currently uses Hz only. Future extensions such as a 3D
-surface, configurable windows, manual color limits or native-window CSV are
+surface, configurable windows or native-window CSV are
 separate features.

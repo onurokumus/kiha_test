@@ -6,6 +6,16 @@
 .expanded .chart { height: clamp(180px, calc(100cqh - 85px), 550px); }
 .readout { min-height: 28px; padding: 2px 10px 5px; font-size: 10px; color: #bdc7d2; overflow-wrap: anywhere; }
 .hint { font-size: 10px; color: #aeb5bc; padding: 4px 2px; }
+.colorControls { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px; padding: 4px 2px; font-size: 11px; color: #bdc7d2; }
+.colorLabel { white-space: nowrap; }
+.colorControls label { display: inline-flex; align-items: center; gap: 4px; }
+.colorControls input { width: 82px; min-width: 0; padding: 3px 5px; color: #e0e0e0; background: #202124; border: 1px solid #555; border-radius: 3px; font: inherit; }
+.colorControls button { padding: 3px 7px; color: #e0e0e0; background: #333438; border: 1px solid #555; border-radius: 3px; font: inherit; cursor: pointer; }
+.colorControls button:hover { background: #414247; }
+.colorControls button[aria-pressed="true"] { color: #b4dcff; border-color: #569cd6; }
+.colorControls input:focus-visible, .colorControls button:focus-visible { outline: 2px solid #569cd6; outline-offset: 1px; }
+.colorControls input[aria-invalid="true"] { border-color: #e8bf83; }
+.colorError { flex-basis: 100%; color: #e8bf83; }
 .failure { padding: 12px; font-size: 12px; color: #e8bf83; }
 .dialog { color: #e0e0e0; background: #252526; border: 1px solid #555; border-radius: 8px; width: min(760px, 90vw); max-height: 85vh; overflow: auto; }
 .dialog::backdrop { background: #0009; }

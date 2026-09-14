@@ -26,6 +26,10 @@ const { defaultAnalysisSession, normalizeAnalysisSession, loadAnalysisSession, s
   loadTs(fileURLToPath(new URL('../src/services/analysisSession.ts', import.meta.url)));
 const { parseSessionFile } =
   loadTs(fileURLToPath(new URL('../src/services/sessionFiles.ts', import.meta.url)));
+const { resolveSessionSources } =
+  loadTs(fileURLToPath(new URL('../src/services/sessionSources.ts', import.meta.url)));
+const { validWaterfallColorRange, waterfallColorTicks, normalizeWaterfallColorRanges, changeWaterfallColorRange } =
+  loadTs(fileURLToPath(new URL('../src/utils/waterfallColorRange.ts', import.meta.url)));
 
 const waterfall = session => ({
   window: session.waterfallWindow,
@@ -94,9 +98,13 @@ test('browser autosave and reload retain fine settings and recover legacy settin
   } };
   try {
     assert.equal(loadAnalysisSession().waterfallResolution, 0.25);
-    const fine = { ...defaultAnalysisSession(), waterfallResolution: 0.1, waterfallBand: 'full' };
+    const fine = { ...defaultAnalysisSession(), waterfallResolution: 0.1, waterfallBand: 'full',
+      waterfallColorRanges: normalizeWaterfallColorRanges([
+        { column: 'vibration', linear: [0, 0.2], log: [-8, -1] },
+      ]) };
     saveAnalysisSession(fine);
     assert.deepEqual(waterfall(loadAnalysisSession()), waterfall(fine));
+    assert.deepEqual(loadAnalysisSession().waterfallColorRanges, fine.waterfallColorRanges);
     const legacy = { ...fine, waterfallWindow: 4096, waterfallOverlap: 25 };
     delete legacy.waterfallResolution;
     delete legacy.waterfallBand;
@@ -108,4 +116,149 @@ test('browser autosave and reload retain fine settings and recover legacy settin
   } finally {
     delete globalThis.window;
   }
+});
+
+test('color limits validate exact finite units without rejecting small amplitudes', () => {
+  for (const bounds of [[0, 1], [0, Number.MIN_VALUE], [1e-20, 2e-20], [0, Number.MAX_VALUE]]) {
+    assert.equal(validWaterfallColorRange(bounds, false), true);
+    assert.equal(validWaterfallColorRange(bounds, true), true);
+  }
+  assert.equal(validWaterfallColorRange([-9, -2], true), true);
+  assert.equal(validWaterfallColorRange([-1, 0], false), false);
+  for (const bounds of [null, {}, [], [0], [0, 1, 2], ['0', 1], [0, '1'],
+    [null, 1], [0, true], [NaN, 1], [0, Infinity], [1, 1], [2, 1],
+    [-Number.MAX_VALUE, Number.MAX_VALUE]]) {
+    assert.equal(validWaterfallColorRange(bounds, false), false);
+    assert.equal(validWaterfallColorRange(bounds, true), false);
+  }
+});
+
+test('color ticks increase precision for narrow ranges without inventing adjacent-double midpoints', () => {
+  assert.deepEqual(waterfallColorTicks([1, 1.00001]), [
+    { fraction: 0, label: '1' }, { fraction: 0.5, label: '1.000005' },
+    { fraction: 1, label: '1.00001' },
+  ]);
+  assert.deepEqual(waterfallColorTicks([1, 1 + Number.EPSILON]), [
+    { fraction: 0, label: '1' }, { fraction: 1, label: '1.0000000000000002' },
+  ]);
+  assert.deepEqual(waterfallColorTicks([-1 - Number.EPSILON, -1]), [
+    { fraction: 0, label: '-1.0000000000000002' }, { fraction: 1, label: '-1' },
+  ]);
+});
+
+test('color ticks keep ordinary and tiny ranges readable and reject non-finite widths', () => {
+  assert.deepEqual(waterfallColorTicks([0, 1]), [
+    { fraction: 0, label: '0' }, { fraction: 0.5, label: '0.5' }, { fraction: 1, label: '1' },
+  ]);
+  assert.deepEqual(waterfallColorTicks([-8, -2]), [
+    { fraction: 0, label: '-8' }, { fraction: 0.5, label: '-5' }, { fraction: 1, label: '-2' },
+  ]);
+  assert.deepEqual(waterfallColorTicks([1e-20, 2e-20]), [
+    { fraction: 0, label: '1e-20' }, { fraction: 0.5, label: '1.5e-20' },
+    { fraction: 1, label: '2e-20' },
+  ]);
+  assert.deepEqual(waterfallColorTicks([0, Number.MIN_VALUE]), [
+    { fraction: 0, label: '0' }, { fraction: 1, label: '5e-324' },
+  ]);
+  const largeTicks = waterfallColorTicks([1e308, 1.2e308]);
+  assert.equal(largeTicks.length, 3);
+  assert.deepEqual(largeTicks.map(tick => tick.label), ['1e+308', '1.1e+308', '1.2e+308']);
+  for (const range of [[0, Number.MAX_VALUE], [-Number.MAX_VALUE, -1e308]]) {
+    const ticks = waterfallColorTicks(range);
+    assert.equal(ticks.length, 3);
+    assert.ok(ticks.every(tick => Number.isFinite(Number(tick.label))));
+    assert.equal(new Set(ticks.map(tick => tick.label)).size, 3);
+    assert.equal(ticks[range[0] === 0 ? 2 : 0].label,
+      String(range[0] === 0 ? Number.MAX_VALUE : -Number.MAX_VALUE));
+  }
+  for (const range of [[0, Infinity], [1, 1], [-Number.MAX_VALUE, Number.MAX_VALUE]]) {
+    assert.deepEqual(waterfallColorTicks(range), []);
+  }
+});
+
+test('color range recovery preserves nine independent slots and discards malformed entries', () => {
+  const valid = { column: 'vibration', linear: [0, 0.5], log: [-7, -1] };
+  const recovered = normalizeWaterfallColorRanges([
+    valid, { ...valid, linear: [-1, 1] }, { ...valid, log: null },
+    { ...valid, log: [1, 1] }, { ...valid, column: 3 }, null,
+    { column: 'vibration', linear: null, log: null }, valid, valid, valid,
+  ]);
+  assert.equal(recovered.length, 9);
+  assert.deepEqual(recovered.slice(0, 7), [valid, null, { ...valid, log: null }, null, null,
+    null, { column: 'vibration', linear: null, log: null }]);
+  assert.notEqual(recovered[0], valid);
+  assert.notEqual(recovered[0].linear, valid.linear);
+  for (const input of [undefined, null, 'bad', {}]) {
+    assert.deepEqual(normalizeWaterfallColorRanges(input), Array(9).fill(null));
+  }
+});
+
+test('changing one color mode preserves the other and prevents cross-variable limits', () => {
+  const saved = { column: 'vibration', linear: [0, 0.5], log: [-7, -1] };
+  const changed = changeWaterfallColorRange(saved, 'vibration', true, [-6, -2]);
+  assert.deepEqual(changed, { ...saved, log: [-6, -2] });
+  assert.deepEqual(changeWaterfallColorRange(changed, 'vibration', true, null), {
+    ...saved, log: null,
+  });
+  assert.deepEqual(changeWaterfallColorRange(saved, 'temperature', false, [0, 30]), {
+    column: 'temperature', linear: [0, 30], log: null,
+  });
+  assert.deepEqual(changeWaterfallColorRange(null, 'temperature', true, [-4, 1]), {
+    column: 'temperature', linear: null, log: [-4, 1],
+  });
+  assert.deepEqual(saved, { column: 'vibration', linear: [0, 0.5], log: [-7, -1] });
+});
+
+test('new and legacy sessions use Auto; session files retain per-slot linear and log limits', () => {
+  const empty = Array(9).fill(null);
+  assert.deepEqual(defaultAnalysisSession().waterfallColorRanges, empty);
+  const legacy = defaultAnalysisSession();
+  delete legacy.waterfallColorRanges;
+  assert.deepEqual(normalizeAnalysisSession(legacy).waterfallColorRanges, empty);
+  assert.deepEqual(parseSessionFile(JSON.stringify(legacy)).session.waterfallColorRanges, empty);
+  const ranges = normalizeWaterfallColorRanges([
+    { column: 'vibration', linear: [0, 0.5], log: [-7, -1] },
+    { column: 'vibration', linear: [0.1, 0.2], log: null },
+    { column: 'temperature', linear: null, log: [-2, 3] },
+  ]);
+  const session = { ...legacy, plotConfigs: ['vibration', 'vibration', 'temperature'],
+    waterfallColorRanges: ranges, specLogY: true };
+  const file = parseSessionFile(JSON.stringify({ format: 'ptt-analysis-session', version: 1,
+    name: 'Comparable color limits', savedAt: '2026-09-14T10:00:00Z', session }));
+  assert.deepEqual(file.session.waterfallColorRanges, ranges);
+  assert.equal(file.session.specLogY, true);
+});
+
+test('session files reject malformed color limits while browser recovery keeps valid slots', () => {
+  const valid = { column: 'vibration', linear: [0, 0.5], log: [-7, -1] };
+  const invalid = [false, [], {}, { ...valid, column: '' }, { ...valid, column: 2 },
+    { column: 'vibration', linear: [0, 1] }, { ...valid, linear: [-1, 2] },
+    { ...valid, linear: ['0', 1] }, { ...valid, linear: [0, null] },
+    { ...valid, log: [0, 0] }, { ...valid, log: [2, 1] },
+    { ...valid, log: [-Number.MAX_VALUE, Number.MAX_VALUE] }];
+  for (const entry of invalid) {
+    const session = { ...defaultAnalysisSession(), waterfallColorRanges: [valid, entry] };
+    assert.throws(() => parseSessionFile(JSON.stringify(session)), /Invalid session waterfall color ranges/);
+    assert.deepEqual(normalizeAnalysisSession(session).waterfallColorRanges.slice(0, 2), [valid, null]);
+  }
+  for (const ranges of [null, {}, 'bad', Array(10).fill(null)]) {
+    assert.throws(() => parseSessionFile(JSON.stringify({ ...defaultAnalysisSession(),
+      waterfallColorRanges: ranges })), /Invalid session waterfallColorRanges/);
+  }
+});
+
+test('source recovery retains manual color limits across rename, changed data and unavailable variables', () => {
+  const ranges = normalizeWaterfallColorRanges([
+    { column: 'vibration', linear: [0, 0.5], log: [-7, -1] },
+  ]);
+  const saved = { ...defaultAnalysisSession(), currentTest: 'original', plotConfigs: ['vibration'],
+    waterfallColorRanges: ranges, sources: [{ name: 'original', id: 'same-id',
+      revision: 'before', test_points: [] }] };
+  const recovery = resolveSessionSources(saved, [{ name: 'renamed', id: 'same-id',
+    revision: 'after', test_points: [], status: 'ready', columns: ['temperature'] }]);
+  assert.equal(recovery.session.currentTest, 'renamed');
+  assert.deepEqual(recovery.session.waterfallColorRanges, ranges);
+  assert.deepEqual(recovery.session.plotConfigs, ['vibration']);
+  assert.equal(recovery.session.plotsUserEdited, true);
+  assert.ok(recovery.messages.some(message => message.includes('vibration is unavailable')));
 });

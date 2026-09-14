@@ -107,7 +107,10 @@ class SpectrumExportTests(PlotExportFixture):
                         [{'id': large, 'start_idx': 0, 'end_idx': 120}], fs=500.)
         sources = self.payload()['sources'] + [{'test': 'other', 'tp_id': large,
             'expected_i0': 0, 'expected_i1': 120, 'expected_fs_hz': 500.}]
-        rows = self.rows(self.export(sources=sources))
+        response = self.export(sources=sources)
+        rows = self.rows(response)
+        self.assertIn(f'"other",{large},0,120,', response.text)
+        self.assertIn('"native",9,', response.text)
         first = [row for row in rows if row['source_test'] == 'native']
         other = [row for row in rows if row['source_test'] == 'other']
         self.check_values(first); self.check_values(other, values=values, fs=500.)

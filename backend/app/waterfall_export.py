@@ -9,6 +9,7 @@ import pyarrow.csv as pa_csv
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from . import plot_export as shared, export_progress as progress, waterfall
+from .csv_values import test_point_id_scalar
 
 router = APIRouter()
 
@@ -93,7 +94,7 @@ def prepare_export(request, *, row_budget=None, metadata=None):
             progress.checkpoint()
             if not len(cols):
                 continue
-            scalar = {'source_test': source.test, 'test_point_id': source.tp_id, 'variable': request.column,
+            scalar = {'source_test': source.test, 'test_point_id': test_point_id_scalar(source.tp_id), 'variable': request.column,
                 'source_i0': i0, 'source_i1': i1, 'fs_hz': result['fs_hz'],
                 'method_version': result['method']['version'], 'nperseg': result['method']['nperseg'],
                 'noverlap': result['method']['noverlap'], 'nan_count': result['nan_count'],

@@ -85,6 +85,7 @@ export function parseSessionFile(text: string): SessionFile {
     'plotShowOriginal',
     'plotFilters',
     'timeYRanges',
+    'waterfallColorRanges',
   ]) {
     const items = raw[key];
     if (items === undefined) continue;
@@ -206,6 +207,11 @@ export function parseSessionFile(text: string): SessionFile {
     raw.timeYRanges.some((v, i) => v !== null && !normalized.timeYRanges[i])
   )
     return fail('time Y ranges');
+  if (
+    Array.isArray(raw.waterfallColorRanges) &&
+    raw.waterfallColorRanges.some((value, index) => value !== null && !normalized.waterfallColorRanges[index])
+  )
+    return fail('waterfall color ranges');
   return { name, savedAt, session: normalized };
 }
 
