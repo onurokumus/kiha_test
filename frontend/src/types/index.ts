@@ -346,6 +346,8 @@ export interface PlotExportSource {
 export interface PlotExportRequest {
   include_metadata?: boolean;
   column: string;
+  /** Full-test comparison variables, with the primary column first (up to six). */
+  columns?: string[];
   data: PlotExportData;
   sources: PlotExportSource[];
   filter: FilterSpec | null;

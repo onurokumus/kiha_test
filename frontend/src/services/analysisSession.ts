@@ -47,6 +47,8 @@ export interface AnalysisSession extends WaterfallSettings {
   specSource: 'tp' | 'full';
   xySource: 'tp' | 'full';
   plotConfigs: string[];
+  /** Full-test comparison variables beyond each slot's shared primary column. */
+  fullPlotExtraColumns: string[][];
   plotsUserEdited: boolean;
   plotFilters: FilterUi[];
   /** Display-only per-grid-slot choice, independent of DSP settings. */
@@ -88,6 +90,7 @@ export const defaultAnalysisSession = (): AnalysisSession => ({
   specSource: 'tp',
   xySource: 'tp',
   plotConfigs: [],
+  fullPlotExtraColumns: Array.from({ length: 9 }, () => []),
   plotsUserEdited: false,
   plotFilters: Array.from({ length: 9 }, () => ({ ...DEFAULT_FILTER_UI })),
   plotShowOriginal: Array(9).fill(false),
@@ -113,6 +116,18 @@ const stringArray = (value: unknown, max = 1000): string[] =>
   Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string').slice(0, max)
     : [];
+
+/** Keep comparison variables positional during best-effort browser recovery.
+ * Missing entries are empty; invalid/duplicate columns never consume capacity. */
+export function normalizeFullPlotExtraColumns(value: unknown, primaryColumns: string[]): string[][] {
+  return Array.from({ length: 9 }, (_, index) => {
+    const primary = primaryColumns[index];
+    const columns = Array.isArray(value) ? value[index] : null;
+    if (!primary || !Array.isArray(columns)) return [];
+    return [...new Set(columns.filter((column): column is string =>
+      typeof column === 'string' && column !== '' && column !== primary))].slice(0, 5);
+  });
+}
 
 const finiteTuple = <T extends 2 | 4>(value: unknown, length: T): number[] | null => {
   if (!Array.isArray(value) || value.length !== length) return null;
@@ -264,6 +279,7 @@ export function normalizeAnalysisSession(value: unknown): AnalysisSession {
     specSource: value.specMode === 'waterfall' && value.specSource !== 'tp' ? 'full' : source(value.specSource),
     xySource: source(value.xySource),
     plotConfigs: stringArray(value.plotConfigs, 9),
+    fullPlotExtraColumns: normalizeFullPlotExtraColumns(value.fullPlotExtraColumns, stringArray(value.plotConfigs, 9)),
     plotsUserEdited: !!value.plotsUserEdited,
     plotFilters: Array.from({ length: 9 }, (_, index) =>
       normalizeFilterUi(Array.isArray(value.plotFilters) ? value.plotFilters[index] : null)

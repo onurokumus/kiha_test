@@ -75,6 +75,36 @@ class AnalysisMetadataTests(PlotExportFixture):
         self.assertEqual(response.content, csv_bytes)
         self.assertIn('text/csv', response.headers['content-type'])
 
+    def test_full_comparison_sidecar_includes_every_variable_and_transitive_equation(self):
+        meta = store.get_meta('alpha')
+        self.write_test('alpha', self.time, self.signal, self.points,
+                        extra={'torque': self.signal * 2})
+        meta['columns'].append('torque')
+        meta['derived_variables'] += [
+            {'name': 'torque base', 'expression': '{raw torque} * 3',
+             'dependencies': ['raw torque'], 'engine': 'safe-polars-v1'},
+            {'name': 'torque', 'expression': '{torque base} + 1',
+             'dependencies': ['torque base'], 'engine': 'safe-polars-v1'}]
+        store.write_json_atomic(self.tests / 'alpha/meta.json', meta)
+        payload = self.time_request(columns=['signal', 'torque'], sources=[{'test': 'alpha'}],
+                                    x_range=[float(self.time[40]), float(self.time[45])])
+        archive, document = self.unpack(self.client.post('/api/plot-export', json=payload))
+        plot = document['plots'][0]; record = plot['sources'][0]
+        rows = list(csv.DictReader(io.StringIO(archive.read(plot['file']).decode())))
+        self.assertEqual([int(row['sample_index']) for row in rows], list(range(40, 46)))
+        self.assertEqual(plot['request']['columns'], ['signal', 'torque'])
+        self.assertEqual([var['column'] for var in record['variables']], ['signal', 'torque'])
+        self.assertEqual([eq['name'] for eq in record['equations']],
+                         ['base', 'signal', 'torque base', 'torque'])
+        self.assertEqual(record['exported_rows'], 6)
+        self.assertEqual(record['scope']['i0'], 0)
+        self.assertEqual(record['scope']['i1'], 240)
+        self.assertIsNone(record['test_point_id'])
+        self.assertEqual([var['column'] for var in record['processing']['variables']],
+                         ['signal', 'torque'])
+        self.assertEqual(list(rows[0])[5:], ['signal [original]', 'signal [filtered]',
+                                           'torque [original]', 'torque [filtered]'])
+
     def test_bundle_manifest_has_ordered_slots_hashes_and_independent_settings(self):
         request = {'layout': '2x2', 'include_metadata': True, 'plots': [
             {'slot': 2, 'request': self.time_request(data='original')},

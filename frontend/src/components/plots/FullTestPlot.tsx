@@ -20,9 +20,9 @@ import { downloadPlotCsv, plotCsvRange, plotFilterDetails } from '../../utils/pl
 import { capturePlotPng, downloadPlotPng } from '../../utils/plotPngExport';
 import { usePlotExportRegistration, type RegisterPlotExport } from '../../utils/plotExportRegistry';
 import type { PlotExportData, PlotExportRequest } from '../../types';
-import { SearchableSelect } from '../controls/SearchableSelect';
+import { FullTestVariables } from './FullTestVariables';
+import { fullTestVariableColor } from '../../utils/fullTestVariables';
 import {
-  ACCENT,
   AXIS_STYLE,
   FULL_SYNC_KEY,
   TIME_AXIS_STYLE,
@@ -43,7 +43,7 @@ import { PlotActionMenu } from './PlotActionMenu';
 import { PlotHeader } from './PlotHeader';
 import styles from './TimePlot.module.css';
 
-const FILTER_COLOR = '#dcdcaa';
+const EMPTY_CONFIGS: TimePlotConfig[] = [];
 
 interface FullTestPlotProps {
   annotations: AnnotationManager;
@@ -53,6 +53,8 @@ interface FullTestPlotProps {
   selectedTPs: SelectedTestPoint[];
   hiddenTPs: Set<string>;
   cfg: TimePlotConfig;
+  additionalConfigs?: TimePlotConfig[];
+  onAdditionalColumnsChange?: (columns: string[]) => void;
   range: [number, number] | null;
   displayMode: WindowDisplayMode;
   onRangeChange: (range: [number, number]) => void;
@@ -89,7 +91,16 @@ const EMPTY_FILTER_RESULT: FilterResultState = {
 /** uPlot mode 1 shares one time array across every line and envelope edge.
  * Equal lengths alone cannot establish that independently fetched values
  * belong at those timestamps. Reject incompatible responses explicitly. */
-const windowsAlign = (original: DataWindow, filtered: DataWindow, key: string) => {
+const windowColumnsAlign = (window: DataWindow, keys: readonly string[]) => keys.every((key) => {
+  const values = window.series[key];
+  if (!values) return false;
+  if (window.mode === 'raw') return Array.isArray(values) && values.length === window.t.length;
+  const envelope = values as { min: (number | null)[]; max: (number | null)[] };
+  return Array.isArray(envelope.min) && Array.isArray(envelope.max) &&
+    envelope.min.length === window.t.length && envelope.max.length === window.t.length;
+});
+
+const windowsAlign = (original: DataWindow, filtered: DataWindow, keys: readonly string[]) => {
   if (
     original.mode !== filtered.mode ||
     original.level !== filtered.level ||
@@ -99,16 +110,7 @@ const windowsAlign = (original: DataWindow, filtered: DataWindow, key: string) =
     !original.t.every((time, index) => time === filtered.t[index])
   ) return false;
 
-  return [original, filtered].every((window) => {
-    const values = window.series[key];
-    if (!values) return false;
-    if (window.mode === 'raw') {
-      return Array.isArray(values) && values.length === window.t.length;
-    }
-    const envelope = values as { min: (number | null)[]; max: (number | null)[] };
-    return Array.isArray(envelope.min) && Array.isArray(envelope.max) &&
-      envelope.min.length === window.t.length && envelope.max.length === window.t.length;
-  });
+  return [original, filtered].every((window) => windowColumnsAlign(window, keys));
 };
 
 const hasPlottableSamples = (window: DataWindow | null, key: string) => {
@@ -122,7 +124,7 @@ const hasPlottableSamples = (window: DataWindow | null, key: string) => {
   return envelope.min.some(finiteAtTime) || envelope.max.some(finiteAtTime);
 };
 
-/** Full-test time plot: one column served by windowed reads. Auto switches
+/** Full-test time plot: selected columns served by one aligned windowed read. Auto switches
  *  between a line and a min/max band from sample density; displayMode can
  *  force either representation. Every zoom re-fetches the chosen form. */
 export const FullTestPlot: React.FC<FullTestPlotProps> = ({
@@ -131,6 +133,8 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
   selectedTPs,
   hiddenTPs,
   cfg,
+  additionalConfigs = EMPTY_CONFIGS,
+  onAdditionalColumnsChange,
   range,
   displayMode,
   onRangeChange,
@@ -144,10 +148,17 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
   isExpanded,
   onToggleExpand,
   isEditMode = false,
-  allConfigs = [],
+  allConfigs = EMPTY_CONFIGS,
   onConfigChange,
   registerExport,
 }) => {
+  const configs = [cfg, ...additionalConfigs].filter((config, index, entries) =>
+    entries.findIndex((candidate) => candidate.key === config.key) === index).slice(0, 6);
+  const columnsKey = JSON.stringify(configs.map((config) => config.key));
+  const columns = useMemo<string[]>(() => JSON.parse(columnsKey), [columnsKey]);
+  const colorsKey = JSON.stringify(columns.map((key) => fullTestVariableColor(key, allConfigs)));
+  const colors = useMemo<string[]>(() => JSON.parse(colorsKey), [colorsKey]);
+  const plotLabel = configs.map((config) => config.label).join(' + ');
   const chartRef = useRef<HTMLDivElement>(null);
   const exportActions = useRef<PlotExportActions>(null);
   const annotationActions = useRef<PlotAnnotationActions>(null);
@@ -161,15 +172,12 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [loadedWindow, setWin] = useState<DataWindow | null>(null);
   const [loadedContext, setLoadedContext] = useState('');
-  const contextKey = JSON.stringify([test, cfg.key]);
+  const contextKey = JSON.stringify([test, columns]);
   const windowRequestKey = JSON.stringify([contextKey, range, displayMode]);
   const [loadedQuery, setLoadedQuery] = useState<{
     key: string; t0: number | null; t1: number | null; px: number; display: WindowDisplayMode;
   } | null>(null);
   const win = loadedContext === contextKey ? loadedWindow : null;
-  const annotationSources = useMemo<AnnotationSource[]>(() => win ? [{ key: test, test,
-    label: test, origin: 0, bounds: null, color: '#d7ba7d', seriesIndices: [1, 2, 3, 4] }] : [], [test, win]);
-  const annotationItems = usePlotAnnotations(annotationSources, annotations, annotationsVisible, plotRef);
   const [loading, setLoading] = useState(Boolean(test && cfg.key));
   const [error, setError] = useState('');
   const [retryVersion, setRetryVersion] = useState(0);
@@ -201,7 +209,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     filterSpec && win
       ? JSON.stringify([
           test,
-          cfg.key,
+          columns,
           range,
           displayMode,
           win.i0,
@@ -250,7 +258,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     const timer = window.setTimeout(() => {
       fetchWindow(
         test,
-        [cfg.key],
+        columns,
         range?.[0] ?? null,
         range?.[1] ?? null,
         px,
@@ -259,6 +267,10 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
       )
         .then((w) => {
           if (!dead) {
+            if (!windowColumnsAlign(w, columns)) {
+              setWin(null);
+              throw new Error('The selected variables do not align with the time samples. Retry the time-series data.');
+            }
             setLoadedContext(contextKey);
             setWin(w);
             setLoadedQuery({ key: windowRequestKey, t0: range?.[0] ?? null,
@@ -276,7 +288,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [test, cfg.key, range, displayMode, retryVersion, contextKey, windowRequestKey]);
+  }, [test, cfg.key, columns, range, displayMode, retryVersion, contextKey, windowRequestKey]);
 
   // Fetch the filtered result; keyed on win so it reuses the same px + range.
   useEffect(() => {
@@ -289,7 +301,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     const controller = new AbortController();
     setFbusy(true);
     const timer = window.setTimeout(() => {
-      fetchFiltered(test, [cfg.key], filterSpec, range?.[0] ?? null, range?.[1] ?? null,
+      fetchFiltered(test, columns, filterSpec, range?.[0] ?? null, range?.[1] ?? null,
         pxRef.current, controller.signal, displayMode)
         .then((w) => {
           if (!dead) {
@@ -325,7 +337,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
   // empty result. The raw fallback and Retry remain available, and timestamps
   // are never silently borrowed from an incompatible original window.
   const alignmentError = fwin && win && !filterPending &&
-    !windowsAlign(win, fwin, cfg.key)
+    !windowsAlign(win, fwin, columns)
       ? 'The filtered result does not align with the original time samples. Showing original data; retry the filter.'
       : '';
   const ferror = requestFilterError || alignmentError;
@@ -344,6 +356,14 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     : !filterSpec || showingRawFallback
       ? win
       : null;
+  const renderedSeriesCount = displayedWindow
+    ? columns.length * (displayedWindow.mode === 'envelope' ? 2 : 1) * (showingOverlay ? 2 : 1)
+    : 0;
+  const annotationSources = useMemo<AnnotationSource[]>(() => win ? [{ key: test, test,
+    label: test, origin: 0, bounds: null, color: '#d7ba7d',
+    seriesIndices: Array.from({ length: renderedSeriesCount }, (_, index) => index + 1) }] : [],
+  [test, win, renderedSeriesCount]);
+  const annotationItems = usePlotAnnotations(annotationSources, annotations, annotationsVisible, plotRef);
 
   // Destroy the uPlot instance only on unmount; data/structure changes reuse or
   // rebuild it in place via syncPlot (perf 2.4), so there is no per-run cleanup.
@@ -351,8 +371,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
 
   useEffect(() => {
     const el = chartRef.current;
-    const base = displayedWindow?.series[cfg.key];
-    if (!el || !displayedWindow || !base || box.w < 40 || box.h < 40) {
+    if (!el || !displayedWindow || !windowColumnsAlign(displayedWindow, columns) || box.w < 40 || box.h < 40) {
       clearPlot(plotRef, structKeyRef);
       return;
     }
@@ -360,10 +379,9 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     const series: uPlot.Series[] = [{}];
     const bands: uPlot.Band[] = [];
     const data: (number | null)[][] = [displayedWindow.t];
-    const addWindow = (window: DataWindow, filtered: boolean, subdued: boolean) => {
-      const values = window.series[cfg.key];
-      const color = filtered ? FILTER_COLOR : ACCENT;
-      const label = `${cfg.key} ${filtered ? 'filtered' : 'original'}`;
+    const addVariable = (window: DataWindow, key: string, color: string, filtered: boolean, subdued: boolean) => {
+      const values = window.series[key];
+      const label = `${key} ${filtered ? 'filtered' : 'original'}`;
       const style: uPlot.Series = {
         stroke: subdued ? `${color}80` : color,
         width: subdued ? 1 : filtered ? 2 : window.mode === 'envelope' ? 1 : 1.5,
@@ -389,8 +407,10 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
         data.push(values as (number | null)[]);
       }
     };
-    if (showingOverlay && win) addWindow(win, false, true);
-    addWindow(displayedWindow, showingFiltered, false);
+    // Draw every original first so none of the subdued comparisons covers a
+    // filtered trace. Variable identity is its hue; processing is line style.
+    if (showingOverlay && win) columns.forEach((key, index) => addVariable(win, key, colors[index], false, true));
+    columns.forEach((key, index) => addVariable(displayedWindow, key, colors[index], showingFiltered, false));
 
     // A NaN in the time column serializes as null; uPlot's x array
     // must be ascending numbers, so a single null corrupts the whole window.
@@ -443,7 +463,8 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     const structKey = [
       displayedWindow.mode,
       showingOverlay ? 'overlay' : showingFiltered ? 'filtered' : 'raw',
-      cfg.key,
+      columnsKey,
+      colorsKey,
       box.w,
       box.h,
       isExpanded,
@@ -466,7 +487,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayedWindow, showingFiltered, showingOverlay, win, box, isExpanded]);
+  }, [displayedWindow, showingFiltered, showingOverlay, win, box, isExpanded, columns, colors]);
 
   // Selection changes do not alter the trace data or uPlot structure. Redraw
   // the reused canvas so newly selected (or revealed) test-point bars appear
@@ -479,16 +500,19 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     isExpanded ? styles.plotContainerExpanded : styles.plotContainerCollapsed
   }`;
 
-  const hasData =
-    hasPlottableSamples(displayedWindow, cfg.key) ||
-    (showingOverlay && hasPlottableSamples(win, cfg.key));
+  const hasData = columns.some((key) =>
+    hasPlottableSamples(displayedWindow, key) ||
+    (showingOverlay && hasPlottableSamples(win, key)));
   const visibleError = error || ferror;
   const retry = () => {
     if (error) setRetryVersion((version) => version + 1);
     else setFilterRetryVersion((version) => version + 1);
   };
-  const replacementCount = filteredWindow?.replacement_counts?.[cfg.key];
-  const spikeEventCount = filteredWindow?.spike_event_counts?.[cfg.key];
+  const sumVariableCounts = (counts: Record<string, number> | undefined) =>
+    counts && columns.every((key) => counts[key] !== undefined)
+      ? columns.reduce((sum, key) => sum + counts[key], 0) : undefined;
+  const replacementCount = sumVariableCounts(filteredWindow?.replacement_counts);
+  const spikeEventCount = sumVariableCounts(filteredWindow?.spike_event_counts);
   const filterSummary =
     filterSpec?.kind === 'despike' &&
     replacementCount !== undefined &&
@@ -499,7 +523,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
             spikeEventCount === 1 ? '' : 's'
           }, ${replacementCount} sample${
             replacementCount === 1 ? '' : 's'
-          } repaired`
+          } repaired${columns.length > 1 ? ` across ${columns.length} variables` : ''}`
       : filterSpec
         ? `${FILTER_LABELS[filterSpec.kind]} applied`
         : 'Filtered signal';
@@ -520,7 +544,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     if (!plotRef.current.series.slice(1).some((series) => series.show !== false)) {
       throw new Error('Show at least one trace before exporting.');
     }
-    return { column: cfg.key, data,
+    return { column: cfg.key, columns, data,
       sources: [{ test, t0: loadedQuery.t0, t1: loadedQuery.t1,
         px: loadedQuery.px, display: loadedQuery.display, expected_i0: win.i0, expected_i1: win.i1 }],
       filter: data === 'original' ? null : filterSpec, x_range: plotCsvRange(plotRef.current, range !== null) };
@@ -529,12 +553,13 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     if (pngExportReason) throw new Error(pngExportReason);
     const plot = plotRef.current;
     if (!plot || !win || !loadedQuery) throw new Error('Wait for the current plot.');
-    const edges = win.mode === 'envelope' ? 2 : 1;
+    const originalSeriesCount = columns.length * (win.mode === 'envelope' ? 2 : 1);
     const visibleIndices = plot.series.slice(1).flatMap((series, index) => series.show === false ? [] : [index]);
-    const hasFiltered = showingFiltered && visibleIndices.some((index) => !showingOverlay || index >= edges);
-    const hasOriginal = visibleIndices.some((index) => !showingFiltered || (showingOverlay && index < edges));
+    const hasFiltered = showingFiltered && visibleIndices.some((index) => !showingOverlay || index >= originalSeriesCount);
+    const hasOriginal = visibleIndices.some((index) => !showingFiltered || (showingOverlay && index < originalSeriesCount));
     return { plot, options: {
-      provenance: { kind: 'time', column: cfg.key, source_mode: 'full',
+      provenance: { kind: 'time', column: cfg.key, columns, source_mode: 'full',
+        variable_colors: Object.fromEntries(columns.map((key, index) => [key, colors[index]])),
         annotations: { visible: annotationsVisible, items: annotationItems.current(plot) },
         sources: [{ test, request: loadedQuery,
           original: hasOriginal ? loadedAnalysis(win) : null,
@@ -542,10 +567,11 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
           visible_series_indices: visibleIndices,
         }],
       },
-      filename: `${test}_${cfg.key}_full-test_${hasOriginal && hasFiltered ? 'both' : hasFiltered ? 'filtered' : 'original'}.png`,
-      title: `${cfg.label} · Full test`,
+      filename: `${test}_${columns.join('_')}_full-test_${hasOriginal && hasFiltered ? 'both' : hasFiltered ? 'filtered' : 'original'}.png`,
+      title: `${plotLabel} · Full test`,
       scope: [`Source test: ${test}. Time (s) uses stored timestamps; current X/Y view.`,
-        `Source rows [${win.i0}, ${win.i1}); shaded intervals identify selected TPs.`],
+        `Source rows [${win.i0}, ${win.i1}); shaded intervals identify selected TPs.`,
+        ...(columns.length > 1 ? ['Variables share one Y axis in their stored units; values are not normalized.'] : [])],
       details: [...plotFilterDetails(hasFiltered ? filterSpec : null),
         ...annotationImageDetails(annotationItems.current(plot), annotationsVisible),
         `Display: ${win.mode}, level ${win.level}. CSV exports full-resolution samples.`,
@@ -557,7 +583,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
   const exportScope = `Full test: ${range ? 'zoomed X range' : 'complete source rows'} in stored time (seconds). Filtering retains the displayed window's processing context before cropping. Selected-TP shading does not restrict CSV rows.`;
   const defaultExportData = showingFiltered ? showOriginal ? 'both' : 'filtered' : 'original';
   usePlotExportRegistration(registerExport, {
-    label: cfg.label, scope: exportScope, defaultData: defaultExportData,
+    label: plotLabel, scope: exportScope, defaultData: defaultExportData,
     originalReason: originalExportReason, filteredReason: filteredExportReason, pngReason: pngExportReason,
     buildCsvRequest, capturePng: () => {
       const { plot, options } = getPngSource();
@@ -570,13 +596,15 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
       className={containerClass}
       style={{ ...noSelect }}
       role="group"
-      aria-label={`${cfg.label} full test plot`}
+      aria-label={`${plotLabel} full test plot`}
       data-filter-display={displayedWindow
         ? showingOverlay ? 'overlay' : showingFiltered ? 'filtered' : 'original'
         : undefined}
     >
-      <PlotHeader label={cfg.label} isExpanded={isExpanded} onToggleExpand={onToggleExpand}
-
+      <PlotHeader label={plotLabel} isExpanded={isExpanded} onToggleExpand={onToggleExpand}
+        identityControl={<FullTestVariables configs={configs} allConfigs={allConfigs} isEditMode={isEditMode}
+          showingFiltered={showingFiltered} showingOverlay={showingOverlay}
+          onPrimaryChange={onConfigChange} onAdditionalColumnsChange={onAdditionalColumnsChange} />}
         summary={displayedWindow && <span title="Display resolution">
           {displayedWindow.mode === 'raw' ? displayedWindow.level === 1 ? 'raw' : `line 1:${displayedWindow.level}` : `env 1:${displayedWindow.level}`}
         </span>}
@@ -587,7 +615,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
           {(ferror || filterNeedsAttention) && <span title={ferror || 'Open Filter settings in the plot menu'} style={{ color: '#e7c16f' }}>Filter needs attention</span>}
         </>}
         actions={<>
-          <PlotActionMenu label={cfg.label} targetRef={chartRef} contextKey={JSON.stringify([contextKey, windowRequestKey, filterSpec, showOriginal])}
+          <PlotActionMenu label={plotLabel} targetRef={chartRef} contextKey={JSON.stringify([contextKey, windowRequestKey, filterSpec, showOriginal])}
             getPlot={() => plotRef.current} exportActions={exportActions} annotationActions={annotationActions}
             canAnnotate={!!annotationSources.length} resetLabel="Reset linked time zoom" onReset={() => onZoomReset?.()}
             onEditFilter={filterUi && onFilterUiChange ? () => setShowFilter(true) : undefined}
@@ -595,10 +623,10 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
             overlay={onShowOriginalChange ? { checked: showOriginal, enabled: !!filterSpec, onChange: onShowOriginalChange } : undefined}
             notes={{ visible: annotationsVisible, onChange: onAnnotationsVisibleChange }} />
 
-          <PlotAnnotations hideTrigger actionsRef={annotationActions} label={cfg.label} sources={annotationSources} manager={annotations}
+          <PlotAnnotations hideTrigger actionsRef={annotationActions} label={plotLabel} sources={annotationSources} manager={annotations}
             visible={annotationsVisible} onVisibleChange={onAnnotationsVisibleChange} getPlot={() => plotRef.current} />
-          <PlotExportControls hideTrigger actionsRef={exportActions} label={cfg.label}
-            contextKey={JSON.stringify([test, cfg.key, filterSpec, showOriginal, displayMode])}
+          <PlotExportControls hideTrigger actionsRef={exportActions} label={plotLabel}
+            contextKey={JSON.stringify([test, columns, filterSpec, showOriginal, displayMode])}
             scope={exportScope}
             defaultData={defaultExportData}
             originalReason={originalExportReason} filteredReason={filteredExportReason} pngReason={pngExportReason}
@@ -608,42 +636,16 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
               return downloadPlotPng(plot, { ...options, signal, includeMetadata });
             }} />
 
-        </>}>
-        {isEditMode && allConfigs.length > 0 && (
-          <SearchableSelect
-            value={cfg.key}
-            onChange={(nextKey) => onConfigChange?.(nextKey)}
-            options={allConfigs.map((config) => ({
-              value: config.key,
-              label: config.label,
-              keywords: [config.key],
-            }))}
-            ariaLabel="Plot variable"
-            title="Change the variable shown in this plot"
-            searchPlaceholder="Search plot variables..."
-            optionNoun="variable"
-            appearance="plot"
-            size="compact"
-            style={{
-              position: 'absolute',
-              left: 0,
-              top: -2,
-              width: 180,
-              maxWidth: 'calc(100% - 76px)',
-              zIndex: 5,
-            }}
-          />
-        )}
-      </PlotHeader>
+        </>} />
       {showFilter && filterUi && onFilterUiChange && (
-        <PlotFilterDialog label={cfg.label} onClose={() => setShowFilter(false)}>
+        <PlotFilterDialog label={plotLabel} onClose={() => setShowFilter(false)}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
           {filterUi && onFilterUiChange && (
             <FilterRow
               ui={filterUi}
               onChange={onFilterUiChange}
               fs={fs}
-              title="Filter this plot only"
+              title={columns.length > 1 ? 'Filter all variables in this plot' : 'Filter this plot only'}
             />
           )}
           {showingFiltered && <span className="badge">{filterSummary}</span>}
@@ -665,13 +667,13 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
           )}
           {ferror && <span style={{ color: '#f48771', fontSize: 10 }}>{ferror}</span>}
           {filterSpec && <span style={{ flexBasis: '100%', fontSize: 10, color: '#a5b0b8' }}>
-            Filters the viewed range at full resolution; zoom applies it again. Original is stored data before this filter, including prior edits.
+            Filters {columns.length > 1 ? 'all variables in ' : ''}the viewed range at full resolution; zoom applies it again. Original is stored data before this filter, including prior edits.
           </span>}
         </div>
         </PlotFilterDialog>
       )}
       <div className={styles.plotViewport} onDoubleClick={onZoomReset}>
-        <div ref={chartRef} tabIndex={0} aria-label={`Plot canvas for ${cfg.label}`} className={styles.plotCanvas} />
+        <div ref={chartRef} tabIndex={0} aria-label={`Plot canvas for ${plotLabel}`} className={styles.plotCanvas} />
         <PlotStateOverlay
           loading={loading || filterPending}
           hasData={hasData}
@@ -681,7 +683,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
             title: filterSpec ? 'No filtered samples' : 'No samples in this view',
             detail: range
               ? 'Reset the zoom or choose a wider time range.'
-              : `The ${cfg.label} ${
+              : `The ${plotLabel} ${
                   filterSpec ? 'filter result' : 'signal'
                 } has no plottable values.`,
           }}

@@ -128,6 +128,13 @@ export function parseSessionFile(text: string): SessionFile {
     )
       return fail(key);
   }
+  if (raw.fullPlotExtraColumns !== undefined) {
+    const slots = raw.fullPlotExtraColumns;
+    if (!Array.isArray(slots) || slots.length > 9 || slots.some((columns, index) =>
+      !Array.isArray(columns) || columns.length > 5 ||
+      JSON.stringify(columns) !== JSON.stringify(normalized.fullPlotExtraColumns[index])))
+      return fail('fullPlotExtraColumns');
+  }
   if ('expandedPlot' in raw && raw.expandedPlot !== null && normalized.expandedPlot === null)
     return fail('expandedPlot');
   if (

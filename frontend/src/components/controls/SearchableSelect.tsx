@@ -1,5 +1,6 @@
 import {
   CSSProperties,
+  ReactNode,
   KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
@@ -19,6 +20,7 @@ export interface SearchableSelectOption {
   keywords?: string[];
   group?: string;
   disabled?: boolean;
+  color?: string;
 }
 
 interface SearchableSelectProps {
@@ -39,6 +41,7 @@ interface SearchableSelectProps {
   searchable?: boolean;
   menuMinWidth?: number;
   menuMaxWidth?: number;
+  triggerContent?: ReactNode;
 }
 
 interface MenuPosition {
@@ -111,6 +114,7 @@ export const SearchableSelect = ({
   searchable = true,
   menuMinWidth = 286,
   menuMaxWidth = 440,
+  triggerContent,
 }: SearchableSelectProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -461,7 +465,7 @@ export const SearchableSelect = ({
                       }}
                       onClick={() => chooseOption(option)}
                     >
-                      <span className={styles.optionRail} aria-hidden="true" />
+                      <span className={styles.optionRail} style={option.color ? { background: option.color, opacity: 1 } : undefined} aria-hidden="true" />
                       <span className={styles.optionCopy}>
                         <strong>{option.label}</strong>
                         {option.description && <small>{option.description}</small>}
@@ -511,13 +515,15 @@ export const SearchableSelect = ({
         onClick={() => (isOpen ? closeMenu() : openMenu())}
         onKeyDown={handleTriggerKeyDown}
       >
-        <span className={styles.triggerRail} aria-hidden="true" />
+        {triggerContent ?? <>
+        <span className={styles.triggerRail} style={selectedOption?.color ? { background: selectedOption.color, opacity: 1 } : undefined} aria-hidden="true" />
         <span className={selectedOption ? styles.triggerValue : styles.triggerPlaceholder}>
           {selectedOption?.label ?? placeholder}
         </span>
         <span className={styles.chevron} aria-hidden="true">
           <ChevronIcon />
         </span>
+        </>}
       </button>
       {menu}
     </div>

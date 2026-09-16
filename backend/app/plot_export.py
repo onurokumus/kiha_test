@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import quote
 import zipfile
 
@@ -85,6 +85,10 @@ class PlotExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     column: str = Field(min_length=1, max_length=1024)
+    # Additive Full-test comparison contract. The primary identity remains
+    # available to legacy plot/export clients and names the attachment.
+    columns: list[Annotated[str, Field(min_length=1, max_length=1024)]] | None = Field(
+        default=None, min_length=1, max_length=6)
     data: Literal["original", "filtered", "both"]
     sources: list[ExportSource] = Field(min_length=1, max_length=MAX_EXPORT_SOURCES)
     filter: FilterParameters | None = None
@@ -93,6 +97,13 @@ class PlotExportRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_export(self):
+        if self.columns is not None:
+            if self.columns[0] != self.column:
+                raise ValueError("columns must begin with the primary column")
+            if len(set(self.columns)) != len(self.columns):
+                raise ValueError("duplicate export columns")
+            if len(self.columns) > 1 and any(s.tp_id is not None for s in self.sources):
+                raise ValueError("multiple variables require a full-test export")
         if self.data != "original" and self.filter is None:
             raise ValueError("filtered data requires the displayed filter settings")
         if self.x_range is not None and self.x_range[0] > self.x_range[1]:
@@ -187,6 +198,15 @@ def _add_rows(total: int, rows: int) -> int:
     return total
 
 
+def _resolve_export_source(source, request, resolve=None):
+    """Validate every selected signal under the same source lock/snapshot."""
+    meta, i0, i1 = (resolve or _resolve)(source, request.column)
+    for column in getattr(request, "columns", None) or []:
+        if column not in meta["columns"] or column == meta["time_column"]:
+            raise HTTPException(400, f"unknown signal column '{column}' in '{source.test}'")
+    return meta, i0, i1
+
+
 @dataclass
 class ExportRowBudget:
     """Actual work shared across bundled CSVs, counted before X cropping."""
@@ -203,10 +223,11 @@ def _filename(request: PlotExportRequest) -> str:
     mode = "test-points" if request.sources[0].tp_id is not None else "full-test"
     # Attachment names are descriptive, bounded, and independent of paths.
     column = re.sub(r'[^\w.()-]+', "_", request.column, flags=re.UNICODE).strip("._")
-    return f"{test_name[:80]}_{(column or 'signal')[:80]}_{mode}_{request.data}.csv"
+    comparison = f"_and-{len(request.columns) - 1}-more" if request.columns and len(request.columns) > 1 else ""
+    return f"{test_name[:80]}_{(column or 'signal')[:80]}{comparison}_{mode}_{request.data}.csv"
 
 
-def _write_source(output, source: ExportSource, column: str,
+def _write_source(output, source: ExportSource, columns: list[str],
                   data: str, filter_spec: FilterParameters | None,
                   x_range: tuple[float, float] | None,
                   meta: dict, i0: int, i1: int, *, header: bool, record=None) -> int:
@@ -217,7 +238,7 @@ def _write_source(output, source: ExportSource, column: str,
         progress.update('Filtering source')
         try:
             samples = dsp.filtered_samples(
-                source.test, [column], t0=source.t0, t1=source.t1,
+                source.test, columns, t0=source.t0, t1=source.t1,
                 px=source.px, display=source.display, tp_id=source.tp_id,
                 **filter_spec.model_dump())
         except ValueError as exc:
@@ -237,7 +258,7 @@ def _write_source(output, source: ExportSource, column: str,
     else:
         batches = store._iter_parquet_slice(
             store.TESTS_DIR / source.test / "data.parquet",
-            [time_column, column], i0, i1)
+            [time_column, *columns], i0, i1)
 
     if record is not None:
         record["processing"] = samples.analysis if samples else {"method_version": "kiha-time-original-v1", "filter": None}
@@ -280,19 +301,22 @@ def _write_source(output, source: ExportSource, column: str,
                 (pa.array(tp_time[keep]) if tp_time is not None
                  else pa.nulls(count, type=pa.float64())),
             ]
-            if data in {"original", "both"}:
-                names.append(f"{column} [original]")
-                arrays.append(batch.column(batch.schema.get_field_index(column)).filter(mask))
-            if data in {"filtered", "both"}:
-                names.append(f"{column} [filtered]")
-                offset = start - samples.s0
-                values = samples.filtered[column][offset:offset + batch.num_rows]
-                selected_values = values[keep]
-                # Computed nonfinite values are missing, as in /filter JSON.
-                # Preserve the original Arrow column above without changing
-                # its distinct null/NaN/infinite source representations.
-                arrays.append(pa.array(selected_values,
-                                       mask=~np.isfinite(selected_values)))
+            for column in columns:
+                # Suffix every source name, including reserved identifiers.
+                # Unique selections therefore cannot collide with identity
+                # fields or one another, even if a name contains a suffix.
+                if data in {"original", "both"}:
+                    names.append(f"{column} [original]")
+                    arrays.append(batch.column(batch.schema.get_field_index(column)).filter(mask))
+                if data in {"filtered", "both"}:
+                    names.append(f"{column} [filtered]")
+                    offset = start - samples.s0
+                    values = samples.filtered[column][offset:offset + batch.num_rows]
+                    selected_values = values[keep]
+                    # Computed nonfinite values are missing, as in /filter JSON.
+                    # Keep original Arrow null/NaN/infinite representations.
+                    arrays.append(pa.array(selected_values,
+                                           mask=~np.isfinite(selected_values)))
             pa_csv.write_csv(
                 pa.RecordBatch.from_arrays(arrays, names=names), output,
                 write_options=pa_csv.WriteOptions(include_header=header and written == 0))
@@ -316,7 +340,7 @@ def _preflight_export(request: PlotExportRequest, *, resolve=None):
         progress.update('Checking sources', source=name)
         with test_read(name, check=progress.checkpoint):
             for source in sources:
-                _, i0, i1 = (resolve or _resolve)(source, request.column)
+                _, i0, i1 = _resolve_export_source(source, request, resolve)
                 total = _add_rows(total, i1 - i0)
     return grouped, total
 
@@ -324,7 +348,7 @@ def _preflight_export(request: PlotExportRequest, *, resolve=None):
 def prepare_export(request: PlotExportRequest, *,
                    row_budget: ExportRowBudget | None = None, metadata=None):
     def write(output, source, meta, i0, i1, *, header, record=None):
-        return _write_source(output, source, request.column, request.data,
+        return _write_source(output, source, request.columns or [request.column], request.data,
                              request.filter, request.x_range, meta, i0, i1,
                              header=header, record=record)
     return stage_export(request, write, row_budget=row_budget, metadata=metadata)
@@ -351,14 +375,15 @@ def stage_export(request, write_source, *, row_budget=None, resolve=None, metada
             with data_read(name, check=progress.checkpoint):
                 for source in sources:
                     progress.update('Reading source', source=f'{name} · TP {source.tp_id}' if source.tp_id is not None else name)
-                    meta, i0, i1 = (resolve or _resolve)(source, request.column)
+                    meta, i0, i1 = _resolve_export_source(source, request, resolve)
                     total = _add_rows(total, i1 - i0)
                     if row_budget is not None:
                         row_budget.add(i1 - i0)
                     if metadata is None:
                         written += write_source(output, source, meta, i0, i1, header=written == 0)
                     else:
-                        columns = [getattr(request, 'x_column', request.column), request.column]
+                        columns = list(getattr(request, 'columns', None) or
+                                       [getattr(request, 'x_column', request.column), request.column])
                         if getattr(source, 'rpm_col', None):
                             columns.append(source.rpm_col)
                         record = analysis.source_context(source.test, meta, columns, i0, i1,

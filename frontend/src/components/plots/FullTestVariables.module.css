@@ -1,0 +1,24 @@
+.controls { display: flex; align-items: center; gap: 4px; min-width: 0; min-height: 26px; }
+.primary { flex: 1 1 140px; min-width: 40px; max-width: 230px; }
+.add { flex: 0 0 27px; width: 27px; }
+.controls .add button { padding: 0; justify-content: center; color: #9bd2f3; background: #293d49; border-color: #456c83; }
+.controls .add button:hover:not(:disabled) { background: #334e5f; border-color: #75bfff; }
+.legendButton { display: inline-flex; align-items: center; gap: 5px; min-width: 0; height: 26px; border: 1px solid #4d555a; border-radius: 3px; padding: 0 6px; font: inherit; font-size: 11px; color: #d5dadd; background: #303437; cursor: pointer; }
+.legendButton:hover { background: #3c454b; }
+.legendButton:focus-visible, .remove:focus-visible { outline: 2px solid #75bfff; outline-offset: 1px; }
+.titleButton { flex: 0 1 auto; max-width: 100%; }
+.name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dots { display: inline-flex; flex: 0 0 auto; gap: 2px; }
+.dot { height: 8px; width: 8px; border-radius: 50%; }
+.count { color: #b6c4cd; font-size: 10px; white-space: nowrap; }
+.legend { position: fixed; z-index: 13000; box-sizing: border-box; padding: 10px; color: #dce3e8; background: #292d30; border: 1px solid #58636c; border-radius: 5px; box-shadow: 0 8px 28px #0008; font: 11px 'Segoe UI', Tahoma, sans-serif; overflow-y: auto; }
+.heading { margin-bottom: 7px; font-size: 12px; font-weight: 600; }
+.row { display: flex; align-items: center; gap: 9px; padding: 7px 0; border-top: 1px solid #3f474d; }
+.variable { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.samples { display: flex; align-items: center; gap: 10px; margin-top: 4px; color: #aebbc3; font-size: 10px; }
+.sample { display: flex; align-items: center; gap: 5px; }
+.line { width: 21px; border-top: 2px solid; }
+.original { border-top-style: dashed; opacity: .6; }
+.remove { flex: 0 0 24px; height: 24px; padding: 0; border: 1px solid #56616a; border-radius: 3px; color: #c5cdd3; background: transparent; cursor: pointer; font-size: 16px; }
+.remove:hover { color: #ffb3b3; border-color: #c78080; }
+.hint { margin: 7px 0 0; color: #aebbc3; line-height: 1.5; }

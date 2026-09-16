@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import csv
 import hashlib
 import io
+import json
 from unittest.mock import patch
 from urllib.parse import unquote
 import zipfile
@@ -383,6 +384,158 @@ class PlotExportTests(PlotExportFixture):
         exposed = response.headers["access-control-expose-headers"].lower()
         self.assertIn("content-disposition", exposed)
         self.assertIn("x-export-rows", exposed)
+
+
+class MultiVariablePlotExportTests(PlotExportFixture):
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(self.client.close)
+        self.torque = np.sin(np.arange(240) * .08) + np.arange(240) / 30
+        self.torque[90:94] = [np.nan, np.inf, -np.inf, np.nan]
+        self.integers = np.arange(240, dtype=np.int64) + 2**60
+        self.extra = {"torque": self.torque, "source_test": self.integers,
+                      "test_point_id": self.integers + 1,
+                      "signal [original]": self.integers + 2,
+                      "signal [filtered]": self.integers + 3,
+                      "not selected": np.arange(240)}
+        self.write_test("alpha", self.time, self.signal, self.points, extra=self.extra)
+
+    def comparison(self, **overrides):
+        return self.payload(columns=["signal", "torque"],
+                            sources=[{"test": "alpha", "px": 200, "display": "line"}],
+                            **overrides)
+
+    def post(self, **overrides):
+        return self.client.post("/api/plot-export", json=self.comparison(**overrides))
+
+    def test_original_keeps_six_variable_identities_precision_and_unique_csv_headers(self):
+        columns = ["signal", *list(self.extra)[:5]]
+        payload = self.comparison(data="original", filter=None)
+        payload["columns"] = columns
+        with patch.object(plot_export, "_BATCH_SIZE", 31), \
+                patch.object(dsp, "filtered_samples") as process:
+            response = self.client.post("/api/plot-export", json=payload)
+        rows = self.rows(response)
+        process.assert_not_called()
+        self.assertEqual(len(rows), 240)
+        self.assertEqual(len(rows[0]), 5 + len(columns))
+        self.assertEqual(list(rows[0])[5:], [f"{col} [original]" for col in columns])
+        self.assertNotIn("not selected [original]", rows[0])
+        self.assertEqual([int(row["sample_index"]) for row in rows], list(range(240)))
+        self.assertEqual([float(row["time_s"]) for row in rows], self.time.tolist())
+        self.assertTrue(all(row["source_test"] == "alpha" for row in rows))
+        self.assertTrue(all(row["test_point_id"] == row["tp_time_s"] == "" for row in rows))
+        for col in columns[2:]:
+            self.assertEqual([int(row[f"{col} [original]"]) for row in rows],
+                             self.extra[col].tolist())
+        self.assertEqual(sum(line.startswith('"source_test"') for line in response.text.splitlines()), 1)
+        self.assertIn("signal_and-5-more_full-test_original.csv",
+                      unquote(response.headers["content-disposition"]))
+
+    def test_all_filters_match_independent_full_resolution_results_before_crop(self):
+        t0, t1 = float(self.time[37]), float(self.time[186])
+        crop = [float(self.time[42]), float(self.time[180])]
+        columns = ["signal", "torque"]
+        for display in ("auto", "line", "envelope"):
+            for kind in ("despike", "moving_avg", "detrend", "lowpass", "highpass", "bandpass", "bandstop"):
+                with self.subTest(display=display, kind=kind):
+                    spec = {"kind": kind, "window_s": .025, "f1": 10, "f2": 100}
+                    source = {"test": "alpha", "t0": t0, "t1": t1,
+                              "px": 200, "display": display}
+                    expected = {col: dsp.filtered_samples("alpha", [col], t0=t0, t1=t1,
+                                px=200, display=display, **spec) for col in columns}
+                    payload = self.comparison(filter=spec, x_range=crop)
+                    payload["sources"] = [source]
+                    with patch.object(dsp, "filtered_samples", wraps=dsp.filtered_samples) as process, \
+                            patch.object(plot_export, "_BATCH_SIZE", 31):
+                        rows = self.rows(self.client.post("/api/plot-export", json=payload))
+                    self.assertEqual(process.call_count, 1)
+                    self.assertEqual(process.call_args.args[:2], ("alpha", columns))
+                    indices = np.array([int(row["sample_index"]) for row in rows])
+                    np.testing.assert_array_equal(indices, np.arange(42, 181))
+                    self.assertEqual(list(rows[0])[5:], [f"{col} [{data}]" for col in columns
+                                                       for data in ("original", "filtered")])
+                    for col in columns:
+                        sample = expected[col]
+                        np.testing.assert_allclose(
+                            [float(row[f"{col} [filtered]"] or "nan") for row in rows],
+                            sample.filtered[col][indices - sample.s0], equal_nan=True, rtol=1e-14)
+                        original = self.signal if col == "signal" else self.torque
+                        np.testing.assert_array_equal(
+                            [float(row[f"{col} [original]"] or "nan") for row in rows], original[indices])
+
+    def test_bundle_csvs_and_sidecar_match_each_selected_variable_and_filter(self):
+        payloads = [self.comparison(data="original", filter=None),
+                    self.comparison(data="filtered", filter={"kind": "detrend"}),
+                    self.comparison(data="both", filter={"kind": "moving_avg", "window_s": .009})]
+        expected = [self.client.post("/api/plot-export", json=payload).content for payload in payloads]
+        response = self.client.post("/api/plot-export/bundle", json={
+            "layout": "2x2", "include_metadata": True,
+            "plots": [{"slot": index + 1, "request": payload} for index, payload in enumerate(payloads)]})
+        self.assertEqual(response.status_code, 200, response.text[:100] if response.status_code != 200 else "")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            document = json.loads(archive.read("analysis.json"))
+            self.assertEqual(len(document["plots"]), 3)
+            for index, plot in enumerate(document["plots"]):
+                csv_bytes = archive.read(plot["file"])
+                self.assertEqual(csv_bytes, expected[index])
+                self.assertEqual(plot["sha256"], hashlib.sha256(csv_bytes).hexdigest())
+                self.assertEqual(plot["request"]["columns"], ["signal", "torque"])
+                record = plot["sources"][0]
+                self.assertEqual([var["column"] for var in record["variables"]], ["signal", "torque"])
+                self.assertEqual(record["exported_rows"], 240)
+                if index:
+                    self.assertEqual([var["column"] for var in record["processing"]["variables"]],
+                                     ["signal", "torque"])
+                else:
+                    self.assertIsNone(record["processing"]["filter"])
+
+    def test_bad_column_lists_and_tp_comparisons_are_rejected(self):
+        for columns in ([], ["torque", "signal"], ["signal", "signal"],
+                        ["signal", ""], ["signal", "x" * 1025], ["signal", 3],
+                        ["signal", *list(self.extra)]):
+            with self.subTest(columns=columns):
+                payload = self.comparison(); payload["columns"] = columns
+                response = self.client.post("/api/plot-export", json=payload)
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertNotIn("content-disposition", response.headers)
+        response = self.export(columns=["signal", "torque"])
+        self.assertEqual(response.status_code, 422)
+        # A one-column request remains usable with existing TP callers.
+        self.assertEqual(self.export(columns=["signal"]).content, self.export().content)
+
+    def test_missing_secondary_variables_fail_preflight_before_native_work_or_staging(self):
+        for column in ("missing", "clock"):
+            payload = self.comparison(); payload["columns"][1] = column
+            for bundle in (False, True):
+                with self.subTest(column=column, bundle=bundle), \
+                        patch.object(dsp, "filtered_samples") as process, \
+                        patch.object(plot_export.tempfile, "SpooledTemporaryFile") as temporary:
+                    path = "/api/plot-export/bundle" if bundle else "/api/plot-export"
+                    body = {"layout": "2x2", "plots": [{"slot": 1, "request": self.payload()},
+                                                         {"slot": 4, "request": payload}]} if bundle else payload
+                    response = self.client.post(path, json=body)
+                    self.assertEqual(response.status_code, 400, response.text)
+                    self.assertIn(column, response.json()["detail"])
+                    self.assertNotIn("content-disposition", response.headers)
+                    process.assert_not_called()
+                    temporary.assert_not_called()
+
+    def test_secondary_column_is_revalidated_after_preflight(self):
+        @contextmanager
+        def changed_read(name, **kwargs):
+            meta = store.get_meta(name)
+            meta["columns"].remove("torque")
+            store.write_json_atomic(self.tests / name / "meta.json", meta)
+            with locks.data_read(name, **kwargs):
+                yield
+
+        with patch.object(plot_export, "data_read", changed_read), \
+                patch.object(dsp, "filtered_samples") as process:
+            response = self.post()
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("content-disposition", response.headers)
+        process.assert_not_called()
 
 
 class PlotExportBundleTests(PlotExportFixture):

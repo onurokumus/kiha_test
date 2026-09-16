@@ -111,7 +111,7 @@ export function MultiPlotExportControls({ registry, contextKey, defaultColumns, 
         <strong>Export selected plots</strong>
         <button type="button" onClick={close}>Close</button>
       </div>
-      <p id={`${id}-scope`}>Choose visible grid slots. Each CSV keeps its own variable, sources and analysis settings.
+      <p id={`${id}-scope`}>Choose visible grid slots. Each CSV keeps its selected variables, sources and analysis settings.
         Plots are packed in grid order, with their original slot numbers.</p>
       <label><input type="checkbox" checked={includeMetadata} disabled={!!busy}
         onChange={(event) => setIncludeMetadata(event.target.checked)} /> Include analysis metadata (ZIP)</label>

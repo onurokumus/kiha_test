@@ -85,6 +85,8 @@ interface TimeSeriesGridProps {
   columnsByTest: Record<string, string[]>;
   isEditMode?: boolean;
   plotConfigs: string[];
+  fullPlotExtraColumns: string[][];
+  onFullPlotExtraColumnsChange: (index: number, columns: string[]) => void;
   onPlotConfigChange?: (configs: string[]) => void;
 }
 
@@ -134,6 +136,8 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   columnsByTest,
   isEditMode = false,
   plotConfigs,
+  fullPlotExtraColumns,
+  onFullPlotExtraColumnsChange,
   onPlotConfigChange,
 }) => {
   const exportRegistry = useMemo(createPlotExportRegistry, []);
@@ -242,7 +246,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
           </svg>
         </button>}
         <MultiPlotExportControls registry={exportRegistry}
-          contextKey={JSON.stringify([viewMode, test, density, expandedPlot, visibleSelectionFingerprint, plotConfigs, plotFilterSpecs, plotShowOriginal, fullPlotMode, timeZoom, waterfallWindow, waterfallOverlap, waterfallResolution, waterfallBand, waterfallColorRanges, specSource, specMode, specXAxis, specRpmCol, specLogY, xySource, xyXCols, xyYCols])}
+          contextKey={JSON.stringify([viewMode, test, density, expandedPlot, visibleSelectionFingerprint, plotConfigs, fullPlotExtraColumns, plotFilterSpecs, plotShowOriginal, fullPlotMode, timeZoom, waterfallWindow, waterfallOverlap, waterfallResolution, waterfallBand, waterfallColorRanges, specSource, specMode, specXAxis, specRpmCol, specLogY, xySource, xyXCols, xyYCols])}
           kind={viewMode === 'spectrum' && specMode === 'waterfall' ? 'waterfall' : viewMode === 'spectrum' || viewMode === 'xy' ? viewMode : 'time'}
           defaultColumns={density === 'nine' ? 3 : 2}
           disabledReason={expandedPlot !== null ? 'Restore the grid to export multiple plots.' : null}
@@ -338,6 +342,9 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
                 <FullTestPlot
                   key={`full:${test}:${cfg.key}`}
                   {...shared}
+                  additionalConfigs={(fullPlotExtraColumns[idx] ?? []).filter(column => columns.includes(column) && column !== cfg.key)
+                    .map(column => ({ key: column, label: column }))}
+                  onAdditionalColumnsChange={columns => onFullPlotExtraColumnsChange(idx, columns)}
                   {...filterProps}
                   {...annotationProps}
                   registerExport={exportRegistry.registrations[idx]}

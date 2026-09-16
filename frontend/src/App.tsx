@@ -45,6 +45,7 @@ import { isBusyStatus } from './constants/status';
 import {
   hasSavedAnalysisSession,
   loadAnalysisSession,
+  normalizeFullPlotExtraColumns,
   PlotDensity,
   saveAnalysisSession,
 } from './services/analysisSession';
@@ -183,6 +184,9 @@ function App() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [plotConfigs, setPlotConfigs] = useState<string[]>(
     hasRestoredSession ? restoredSession.plotConfigs : []
+  );
+  const [fullPlotExtraColumns, setFullPlotExtraColumns] = useState<string[][]>(
+    () => restoredSession.fullPlotExtraColumns
   );
   // True once the user picks columns via Edit Plots. While false, the grid
   // auto-(re)seeds from the selected test points (first-selected prioritized);
@@ -792,6 +796,18 @@ function App() {
     );
   }, [gridColumns, xyGridColumns, plotsUserEdited, settings.gridColumns, settings.xyYCols, settings.xyXCols,
     loading, sessionRecoveryReady, tests, currentTest, metaByTest, selectionDriven, selectedTPs, pendingRestoredSelections]);
+
+  // Full-test extras follow their grid slot. Keep unavailable columns dormant
+  // when browsing another test; the grid only renders its active schema. Wait
+  // for verified metadata so partial recovery cannot erase saved comparisons.
+  useEffect(() => {
+    if (viewMode !== 'full' || loading || !sessionRecoveryReady || !meta ||
+      !tests.some(test => test.name === currentTest && test.status === 'ready')) return;
+    setFullPlotExtraColumns(previous => {
+      const next = normalizeFullPlotExtraColumns(previous, plotConfigs);
+      return JSON.stringify(previous) === JSON.stringify(next) ? previous : next;
+    });
+  }, [viewMode, loading, sessionRecoveryReady, meta, tests, currentTest, plotConfigs]);
 
   // Keep an explicit RPM reference for per-revolution spectra. Exact/case-only
   // matches survive test switches; otherwise choose the strongest RPM-like
@@ -1598,6 +1614,7 @@ function App() {
     setPlotsUserEdited(session.plotsUserEdited);
     setAxesUserSet(session.axesUserSet);
     setPlotConfigs(session.plotConfigs);
+    setFullPlotExtraColumns(session.fullPlotExtraColumns);
     setPlotFilters(session.plotFilters);
     setPlotShowOriginal(session.plotShowOriginal);
     setAnnotationsVisible(session.annotationsVisible);
@@ -1743,6 +1760,7 @@ function App() {
       specSource,
       xySource,
       plotConfigs: plotConfigs.slice(0, 9),
+      fullPlotExtraColumns,
       plotsUserEdited,
       plotFilters,
       plotShowOriginal,
@@ -2429,8 +2447,15 @@ function App() {
               }}
               isEditMode={isEditMode}
               plotConfigs={plotConfigs}
+              fullPlotExtraColumns={fullPlotExtraColumns}
+              onFullPlotExtraColumnsChange={(index, columns) => {
+                setFullPlotExtraColumns(previous => normalizeFullPlotExtraColumns(
+                  previous.map((saved, slot) => slot === index ? columns : saved), plotConfigs));
+                setPlotsUserEdited(true);
+              }}
               onPlotConfigChange={(configs) => {
                 setPlotConfigs(configs);
+                setFullPlotExtraColumns(previous => normalizeFullPlotExtraColumns(previous, configs));
                 setPlotsUserEdited(true);
               }}
             />

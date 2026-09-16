@@ -3,6 +3,7 @@ import styles from './PlotHeader.module.css';
 
 interface Props {
   label: string;
+  identityControl?: ReactNode;
   summary?: ReactNode;
   status?: ReactNode;
   isExpanded: boolean;
@@ -14,11 +15,11 @@ interface Props {
 
 /** Keep every grid mode's controls in a fixed-width pair, leaving the rest of
  * the header for source labels (including any units) and scientific context. */
-export function PlotHeader({ label, summary, status, isExpanded, onToggleExpand,
+export function PlotHeader({ label, identityControl, summary, status, isExpanded, onToggleExpand,
   expandLabel = label, actions, children }: Props) {
   return <div className={styles.header} data-plot-header>
     <div className={styles.identity}>
-      <div className={styles.title} title={label}>{label}</div>
+      {identityControl ?? <div className={styles.title} title={label}>{label}</div>}
       {summary && <div className={styles.summary}>{summary}</div>}
       {status && <div className={styles.status}>{status}</div>}
     </div>

@@ -2,6 +2,19 @@
 
 Open items below are listed in recommended implementation order. Complete each phase before moving to the next, except for independent small fixes.
 
+## Requested full-test variable comparison (2026-09-16)
+
+- [x] Compare multiple variables in one Full test plot, add variables with a styled + beside the Edit plots dropdown, keep variable and filtered colors in a compact dropdown legend, and fix the display-resolution label placement.
+
+Completed ahead of independent Phase 11b. Up to six variables share native
+timestamps and one Y axis in original units; colors follow source variables and
+filtered traces use solid lines with lighter dashed originals. Dropdown add/remove,
+session Save/Open, temporary source switching, native CSV/PNG and selected-plot
+exports, errors/Retry and desktop keyboard/resize/maximize/125%/150% zoom pass.
+Frontend build/lint, 32 helper tests, 497 backend tests/477 subtests, nine new
+browser groups and ten existing overlay groups pass. See
+[comparison verification](docs/FULL_TEST_VARIABLES_VERIFICATION.md).
+
 ## Requested CSV test-point ID formatting (2026-09-14)
 
 - [x] Remove surrounding quotes from exported test-point ID values.
