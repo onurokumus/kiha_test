@@ -2,6 +2,19 @@
 
 Open items below are listed in recommended implementation order. Complete each phase before moving to the next, except for independent small fixes.
 
+## Requested scatter filter debugging (2026-09-28)
+
+- [x] Fix parameter dropdown mouse selection and audit all scatter filter controls.
+
+Completed ahead of independent Phase 11b. Portal-aware dismissal preserves mouse
+selection/search; searched parent checkboxes toggle their visible subset; Add/Clear,
+immediate bounds, reversed ranges, nested keyboard dismissal and unavailable saved
+columns behave consistently. Range overlap accurately labels legacy `any` semantics.
+Build/lint, 40 frontend tests, 497 backend tests/477 subtests, six new browser groups
+and the existing scatter-menu regression pass. Mouse/keyboard, autosave/reload,
+1100px and actual 125%/150% zoom verified with isolated fixtures. See
+[scatter filter verification](docs/SCATTER_FILTERS_VERIFICATION.md).
+
 ## Requested full-test variable comparison (2026-09-16)
 
 - [x] Compare multiple variables in one Full test plot, add variables with a styled + beside the Edit plots dropdown, keep variable and filtered colors in a compact dropdown legend, and fix the display-resolution label placement.

@@ -2252,12 +2252,14 @@ function App() {
                   emptyState={scatterEmptyState}
                   onRetry={retryScatterStats}
                   loadingLabel="Loading test-point statistics"
-                  updatingLabel="Updating comparison"
+                  updatingLabel={filterColumns.length > 0
+                    ? 'Updating comparison and parameter filters'
+                    : 'Updating comparison'}
                   partialMessage={
                     scatterData.length > 0 && scatterErrorText
                       ? `${visibleStatsErrors.length} data source${
                           visibleStatsErrors.length === 1 ? '' : 's'
-                        } could not update`
+                        } could not update${filterColumns.length > 0 ? '. Parameter filters may be incomplete.' : ''}`
                       : null
                   }
                 />

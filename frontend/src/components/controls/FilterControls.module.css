@@ -414,6 +414,17 @@
   border-radius: 4px;
 }
 
+.rangeError {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #f2b6a9;
+  font-size: 11px;
+}
+
+.rangeField input[aria-invalid='true'] {
+  border-color: #d78c7d;
+}
+
 .parameterIndex {
   align-self: center;
   color: #65727b;

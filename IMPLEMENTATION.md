@@ -1,75 +1,60 @@
 # Implementation handoff
 
-Updated: 2026-09-16. Branch `feature/resumable-multipart-upload`.
+Updated: 2026-09-28. Branch `feature/resumable-multipart-upload`.
 
 ## Current milestone / acceptance
 
-**Requested Full test multi-variable comparison and resolution-label fix are
-complete and verified.** This user-requested feature takes priority over the
-independent Phase 11b side panel. Up to six variables share a plot; Edit plots
-has searchable + addition and a compact color/count legend with removal.
-Filters, saved sessions, exports and desktop interactions retain all variables.
+**User-requested scatter filter debugging is complete and verified.** Parameter
+columns select by mouse without dismissing the drawer; test/TP, label and range
+filters combine correctly, preserve edits and remain usable with keyboard,
+desktop resize and browser zoom. This request takes priority over independent
+Phase 11b. Prior Full test comparison remains complete; its evidence is retained
+in `docs/FULL_TEST_VARIABLES_VERIFICATION.md`.
 
 ## Implementation and decisions
 
-- `FullTestVariables.tsx`/CSS adds the styled +, source-colored selectors and
-  dropdown legend. Original overlays use lighter dashed strokes of each
-  variable's hue; filtered traces are solid. Keyboard boundaries and last-add
-  focus are preserved. Expanded plots retain the live numeric value legend.
-- `PlotHeader.identityControl` places the Full test selector in normal flow.
-  The raw/line/env resolution text sits underneath without absolute overlap.
-  Other plot headers keep their existing behavior.
-- `FullTestPlot.tsx` batches all columns in existing window/filter requests,
-  checks every array and shared time/row/mode/level alignment, and uses ordered
-  variables in request/export context guards. One shared Y axis retains native
-  units, with no normalization or changed DSP. Filter settings apply to all
-  variables. Errors fall back explicitly to originals with Retry.
-- `App.tsx`, `TimeSeriesGrid.tsx`, `analysisSession.ts` and `sessionFiles.ts`
-  persist nine independent `fullPlotExtraColumns` lists (max five extras).
-  Legacy sessions default empty; browser recovery sanitizes, explicit files
-  reject invalid entries. Temporarily missing variables remain dormant across
-  source switches; other modes keep their existing single primary variable.
-- `backend/app/plot_export.py` adds optional `columns` to legacy `column`:
-  unique, primary first, max six, Full-test-only when multiple. Shared staged
-  export reads original native values and filters all signals together before
-  the existing crop. CSV and metadata include every variable. CSV/PNG and
-  selected-plot bundles share mounted plot handlers; PNG records colors/styles.
+- `FilterControls.tsx` records owning React pointer events across the column-menu
+  portal before document outside dismissal. It respects handled Escape events.
+  Search-parent state matches the visible child action; Add expands Parameters;
+  draft rows can be cleared; missing saved columns remain explicitly named.
+- Valid numeric bounds commit immediately, preserving close/collapse edits and
+  eliminating stale debounce work. Incomplete exponent input remains editable.
+  Reversed bounds have an accessible warning and hook-level rejection.
+- `useScatterFilter.ts` rejects invalid intervals before provisional unloaded
+  statistics. Other combination, missing-column and pending-data behavior stays
+  compatible. Backend calculations and aggregate precision are unchanged.
+- Legacy `any` means min/max interval overlap, not exact individual-sample
+  membership. UI now says Range overlap; serialized values remain compatible.
+  `docs/MVP.md` and type/method comments match actual semantics.
+- `App.tsx` clarifies that pending/failed statistics can leave parameter filters
+  incomplete, retaining existing loading, error and Retry behavior.
 
 ## Verification
 
-- Full backend: `backend/.venv/Scripts/python.exe -m pytest backend/tests
-  -p no:cacheprovider -q`: **497 tests / 477 subtests pass**, 50.69 s, native
-  Python 3.13.14. Two existing dependency deprecations.
-- Frontend `npm.cmd run build`, `npm.cmd run lint`: pass (existing Vite
-  bundle-size notice). `node --test tests/*.test.mjs`: **32 pass**, including
-  six new session persistence/recovery cases.
-- `python scripts/verify_full_test_variables.py`: **nine groups pass** on
-  isolated 3353/8353. Real additions/removals, capacity and keyboard focus,
-  missing-schema source switch/return, raw/envelope/filtered alignment/colors,
-  native CSV/PNG/bundle downloads, actual session Save/Open/reload, mode switch,
-  live expanded values, crosshair/drag/wheel/reset, filter failure/Retry,
-  1100px and actual 125%/150% zoom. **13 source files unchanged**, zero page errors.
-- Existing `python scripts/verify_filter_overlay.py --frontend-port 3354
-  --backend-port 8354`: **ten groups pass unmodified**, seven sources unchanged,
-  TP/Full legacy overlays, stale/failure/misalignment handling, nine-slot and
-  desktop gesture/resize/maximize/zoom regression.
-- Edit/legend/150% desktop/exported PNG images reviewed; independent code
-  reviews and whitespace checks pass. See
-  [full verification](docs/FULL_TEST_VARIABLES_VERIFICATION.md). Browser evidence
-  is ignored under `data/verification/full-test-variables/` and
-  `data/verification/filter-overlay/`. Early test harness selectors were
-  corrected; no outstanding failure or verification blocker.
+- Frontend build and lint pass; existing Vite bundle-size notice only.
+- `node --test frontend/tests/*.test.mjs`: **40 pass**, including eight new hook tests.
+- Native Python 3.13 backend suite: **497 tests / 477 subtests pass**, 49.27 seconds;
+  two existing dependency deprecations.
+- New `scripts/verify_scatter_filters.py`: **six groups pass**, zero browser errors:
+  real mouse selection/search, test/label combinations, all modes, invalid bounds,
+  numeric close paths, keyboard, persistence/missing columns and resize/125%/150% zoom.
+- Existing `scripts/verify_scatter_point_menu.py` passes, including first outside
+  click, keyboard, maximize/restore, resize and browser zoom.
+- Independent source review, 150% screenshot inspection and whitespace checks pass.
+  See `docs/SCATTER_FILTERS_VERIFICATION.md` for exact commands and limits. Browser
+  tests use isolated GET-only API mocks and profiles; no user datasets are modified.
 
 ## Git checkpoint / next steps
 
-The user requested a GitHub commit and push after verification. This checkpoint
-contains the feature's frontend controls/rendering/state/session plumbing, time
-CSV backend/type/tests, helper and browser tests, and TODO/handoff/verification
-docs on `feature/resumable-multipart-upload`. Existing datasets and dependencies
-are preserved. No deployment was requested. An inaccessible ignored pytest
-cache can produce a harmless Git status warning.
+This checkpoint includes all pending filter controls/CSS, scatter hook, App status
+wording, type comment, eight hook tests, six-group browser script, MVP/TODO/handoff
+and verification report at the user's request. Publication target is the existing
+feature/resumable-multipart-upload branch of onurokumus/kiha_test. No deployment
+is part of this request.
+No outstanding verification blocker. Build output uses the repository's normal
+ignored dist directory; browser evidence is under ignored data/verification.
 
-Stop at this completed milestone. Next backlog remains **Phase 11b
-(collapsible variable/filter side panel)**. Earlier CSV quoting, waterfall color,
-detail and auto-split milestones remain complete; their evidence is linked from
-TODO.md and the corresponding verification documents.
+Stop at this completed user-requested milestone. Next backlog remains **Phase 11b
+(collapsible variable/filter side panel)**. Exact per-sample range membership would
+require a separate backend capability; Range overlap intentionally preserves the
+existing aggregate semantics.

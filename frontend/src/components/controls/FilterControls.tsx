@@ -16,7 +16,7 @@ const AGG_MODES: { value: AggMode; label: string }[] = [
   { value: 'mean', label: 'Mean' },
   { value: 'min', label: 'Minimum' },
   { value: 'max', label: 'Maximum' },
-  { value: 'any', label: 'Any sample' },
+  { value: 'any', label: 'Range overlap' },
 ];
 
 interface FilterControlsProps {
@@ -76,9 +76,10 @@ const NumericInput: React.FC<{
   placeholder: string;
   value: number | null;
   onCommit: (value: number | null) => void;
-}> = ({ label, placeholder, value, onCommit }) => {
+  invalid: boolean;
+  errorId: string;
+}> = ({ label, placeholder, value, onCommit, invalid, errorId }) => {
   const [text, setText] = useState(value === null ? '' : String(value));
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const commit = useCallback(
     (raw: string) => {
@@ -92,13 +93,6 @@ const NumericInput: React.FC<{
     setText(value === null ? '' : String(value));
   }, [value]);
 
-  useEffect(
-    () => () => {
-      if (timer.current) clearTimeout(timer.current);
-    },
-    []
-  );
-
   return (
     <label className={styles.rangeField}>
       <span>{label}</span>
@@ -107,17 +101,17 @@ const NumericInput: React.FC<{
         inputMode="decimal"
         placeholder={placeholder}
         value={text}
-        step="0.01"
+        step="any"
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? errorId : undefined}
         onChange={(event) => {
           const raw = event.target.value;
           setText(raw);
-          if (timer.current) clearTimeout(timer.current);
-          timer.current = setTimeout(() => commit(raw), 600);
+          // Commit while mounted: closing/collapsing the drawer must not
+          // discard a recently edited bound or leave a stale timer after Clear.
+          if (!event.target.validity.badInput) commit(raw);
         }}
-        onBlur={() => {
-          if (timer.current) clearTimeout(timer.current);
-          commit(text);
-        }}
+        onBlur={() => commit(text)}
       />
     </label>
   );
@@ -148,6 +142,7 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
   }));
   const [drawerMaxHeight, setDrawerMaxHeight] = useState(420);
   const rootRef = useRef<HTMLDivElement>(null);
+  const insidePointerDown = useRef<PointerEvent | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const drawerId = useId();
 
@@ -201,16 +196,15 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
   }, [filterOptions.labels, labelSearch]);
 
   const getTestCheckState = useCallback(
-    (test: string) => {
-      const node = filterOptions.testTree.find((entry) => entry.test === test);
-      const total = node?.tps.length ?? 0;
-      const selected = node?.tps.filter((tp) => selectedKeys.has(tp.key)).length ?? 0;
+    (keys: string[]) => {
+      const total = keys.length;
+      const selected = keys.filter((key) => selectedKeys.has(key)).length;
       return {
         checked: total > 0 && selected === total,
         indeterminate: selected > 0 && selected < total,
       };
     },
-    [filterOptions.testTree, selectedKeys]
+    [selectedKeys]
   );
 
   const closeDrawer = useCallback((returnFocus = false) => {
@@ -222,10 +216,14 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
     if (!isOpen) return;
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) closeDrawer();
+      // React capture includes this drawer's portaled column menu, unlike
+      // DOM contains(). Keep the option mounted until its click selects it.
+      const isInside = insidePointerDown.current === event;
+      insidePointerDown.current = null;
+      if (!isInside && !rootRef.current?.contains(event.target as Node)) closeDrawer();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
       event.preventDefault();
       closeDrawer(true);
     };
@@ -295,7 +293,11 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
   );
 
   return (
-    <div ref={rootRef} className={`${styles.root} ${isOpen ? styles.rootOpen : ''}`}>
+    <div
+      ref={rootRef}
+      className={`${styles.root} ${isOpen ? styles.rootOpen : ''}`}
+      onPointerDownCapture={(event) => { insidePointerDown.current = event.nativeEvent; }}
+    >
       <div className={styles.summaryBar}>
         <button
           ref={triggerRef}
@@ -322,8 +324,8 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
 
         {activeChips.length > 0 && (
           <div className={styles.activeChips} aria-label="Active filter summary">
-            {activeChips.slice(0, 2).map((chip) => (
-              <span key={chip} className={styles.activeChip} title={chip}>
+            {activeChips.slice(0, 2).map((chip, index) => (
+              <span key={`${index}:${chip}`} className={styles.activeChip} title={chip}>
                 {chip}
               </span>
             ))}
@@ -333,7 +335,7 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
           </div>
         )}
 
-        {hasActiveFilters && (
+        {(hasActiveFilters || filterState.parameterFilters.length > 0) && (
           <button
             type="button"
             className={styles.clearButton}
@@ -398,7 +400,7 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
                 </label>
                 <div className={styles.optionList}>
                   {visibleTree.map((node) => {
-                    const checkState = getTestCheckState(node.test);
+                    const checkState = getTestCheckState(node.tps.map((tp) => tp.key));
                     const testExpanded = expandedTests.has(node.test);
                     return (
                       <div key={node.test} className={styles.testGroup}>
@@ -489,7 +491,10 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
               <button
                 type="button"
                 className={styles.addButton}
-                onClick={onAddParameterFilter}
+                onClick={() => {
+                  setOpenSections((current) => ({ ...current, parameters: true }));
+                  onAddParameterFilter();
+                }}
                 disabled={columns.length === 0}
               >
                 + Add
@@ -503,66 +508,84 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
                   </p>
                 ) : (
                   <div className={styles.parameterList}>
-                    {filterState.parameterFilters.map((filter, index) => (
-                      <div key={filter.id} className={styles.parameterRow}>
-                        <span className={styles.parameterIndex} aria-hidden="true">
-                          {index + 1}
-                        </span>
-                        <div className={styles.parameterField}>
-                          <span>Column</span>
-                          <SearchableSelect
-                            className={styles.parameterSelect}
-                            value={filter.column}
-                            onChange={(column) =>
-                              onUpdateParameterFilter(filter.id, 'column', column)
-                            }
-                            options={columns.map((column) => ({
-                              value: column,
-                              label: column,
-                            }))}
-                            ariaLabel={`Column for parameter filter ${index + 1}`}
-                            searchPlaceholder="Search filter columns..."
-                            optionNoun="signal"
+                    {filterState.parameterFilters.map((filter, index) => {
+                      const invalidRange = filter.min !== null && filter.max !== null && filter.min > filter.max;
+                      const errorId = `${drawerId}-range-error-${index}`;
+                      return (
+                        <div key={filter.id} className={styles.parameterRow}>
+                          <span className={styles.parameterIndex} aria-hidden="true">
+                            {index + 1}
+                          </span>
+                          <div className={styles.parameterField}>
+                            <span>Column</span>
+                            <SearchableSelect
+                              className={styles.parameterSelect}
+                              value={filter.column}
+                              onChange={(column) =>
+                                onUpdateParameterFilter(filter.id, 'column', column)
+                              }
+                              options={[
+                                ...(filter.column && !columns.includes(filter.column)
+                                  ? [{ value: filter.column, label: `${filter.column} (unavailable)`, disabled: true }]
+                                  : []),
+                                ...columns.map((column) => ({ value: column, label: column })),
+                              ]}
+                              ariaLabel={`Column for parameter filter ${index + 1}`}
+                              searchPlaceholder="Search filter columns..."
+                              optionNoun="signal"
+                            />
+                          </div>
+                          <label className={styles.parameterField}>
+                            <span>Aggregation</span>
+                            <select
+                              value={filter.mode}
+                              title={filter.mode === 'any'
+                                ? 'Matches when the test-point minimum-to-maximum interval overlaps these bounds; individual samples may fall outside them.'
+                                : undefined}
+                              onChange={(event) =>
+                                onUpdateParameterFilter(filter.id, 'mode', event.target.value)
+                              }
+                            >
+                              {AGG_MODES.map((mode) => (
+                                <option key={mode.value} value={mode.value}>
+                                  {mode.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <NumericInput
+                            label="Minimum"
+                            placeholder="Min"
+                            value={filter.min}
+                            invalid={invalidRange}
+                            errorId={errorId}
+                            onCommit={(value) => onUpdateParameterFilter(filter.id, 'min', value)}
                           />
-                        </div>
-                        <label className={styles.parameterField}>
-                          <span>Aggregation</span>
-                          <select
-                            value={filter.mode}
-                            onChange={(event) =>
-                              onUpdateParameterFilter(filter.id, 'mode', event.target.value)
-                            }
+                          <NumericInput
+                            label="Maximum"
+                            placeholder="Max"
+                            value={filter.max}
+                            invalid={invalidRange}
+                            errorId={errorId}
+                            onCommit={(value) => onUpdateParameterFilter(filter.id, 'max', value)}
+                          />
+                          <button
+                            type="button"
+                            className={styles.removeButton}
+                            onClick={() => onRemoveParameterFilter(filter.id)}
+                            aria-label={`Remove parameter filter ${index + 1}`}
+                            title="Remove filter"
                           >
-                            {AGG_MODES.map((mode) => (
-                              <option key={mode.value} value={mode.value}>
-                                {mode.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <NumericInput
-                          label="Minimum"
-                          placeholder="Min"
-                          value={filter.min}
-                          onCommit={(value) => onUpdateParameterFilter(filter.id, 'min', value)}
-                        />
-                        <NumericInput
-                          label="Maximum"
-                          placeholder="Max"
-                          value={filter.max}
-                          onCommit={(value) => onUpdateParameterFilter(filter.id, 'max', value)}
-                        />
-                        <button
-                          type="button"
-                          className={styles.removeButton}
-                          onClick={() => onRemoveParameterFilter(filter.id)}
-                          aria-label={`Remove parameter filter ${index + 1}`}
-                          title="Remove filter"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
+                            ×
+                          </button>
+                          {invalidRange && (
+                            <p id={errorId} className={styles.rangeError} role="status">
+                              Minimum must not exceed maximum.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

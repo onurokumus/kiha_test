@@ -17,7 +17,7 @@ const INITIAL_FILTER_STATE: ScatterFilterState = {
 
 /** Multi-test TP filtering, FMS-style: a tests→test-points tree (selection
  *  stored per TP key; a test's checkbox is derived all/some/none), label
- *  multi-select, and per-column aggregate ranges (mean/min/max/any-sample)
+ *  multi-select, and per-column aggregate ranges (mean/min/max/range-overlap)
  *  computed from the tp_stats cache. A parameter filter drops points whose
  *  test lacks the column; stats merely not loaded yet pass (no blanking). */
 export const useScatterFilter = (
@@ -135,6 +135,7 @@ export const useScatterFilter = (
 
   const passesParameterFilter = useCallback(
     (point: ScatterDataPoint, filter: ParameterFilter): boolean => {
+      if (filter.min !== null && filter.max !== null && filter.min > filter.max) return false;
       const testCols = columnsByTest[point.test];
       if (testCols && !testCols.includes(filter.column)) {
         return false; // this test has no such variable at all
@@ -145,7 +146,7 @@ export const useScatterFilter = (
       if (!stat) return false;
 
       if (filter.mode === 'any') {
-        // Any sample in [min, max] <=> the TP's [min, max] overlaps the range
+        // Legacy 'any' mode checks interval overlap, not individual samples.
         if (stat.min === null || stat.max === null) return false;
         const minPass = filter.min === null || stat.max >= filter.min;
         const maxPass = filter.max === null || stat.min <= filter.max;

@@ -492,7 +492,7 @@ export interface DatasheetDataPoint {
 }
 
 /** Aggregation mode for test-point range filters.
- *  'any' = keep the TP if any sample can fall in range (min/max overlap). */
+ *  'any' is the legacy saved value for min/max interval overlap (Range overlap). */
 export type AggMode = 'mean' | 'min' | 'max' | 'any';
 
 export interface ParameterFilter {

@@ -75,8 +75,10 @@ Target: 1-hour CSV ingested in ≲ 2 minutes, server RAM stays < ~2 GB throughou
 
 - Choose test → choose test point(s).
 - Filter test points by variable range: user picks variable, range [x, y], and an
-  aggregation mode — **mean / min / max / any-sample** (any-sample = keep TP if any
-  sample falls in range). All four available. Per-TP aggregates are computed **exactly**
+  aggregation mode — **mean / min / max / range overlap** (range overlap = keep a TP when its
+  minimum-to-maximum interval overlaps the requested bounds; this does not prove
+  an individual sample falls inside). All four available; saved sessions retain
+  the legacy `any` value for range overlap. Per-TP aggregates are computed **exactly**
   from the full-resolution column (accuracy over speed — not approximated from the
   pyramid) and cached in a `tp_stats.json` sidecar (invalidated on any test-point or data
   change), so repeat use is instant.
@@ -207,7 +209,7 @@ python generate_dummy_data.py --duration 3600 --name perf_1h
 
 - Units: encoded in column names (`thrust_kg`); axis title = column name, no unit logic.
 - Time: relative seconds, no absolute timestamps.
-- TP range filter: all aggregation modes offered (mean / min / max / any-sample).
+- TP range filter: all aggregation modes offered (mean / min / max / range overlap).
 
 ## 12. Open Problems / Known Risks
 
