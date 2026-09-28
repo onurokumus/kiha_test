@@ -579,7 +579,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
         }],
       },
       filename: `${test}_${columns.join('_')}_full-test_${hasOriginal && hasFiltered ? 'both' : hasFiltered ? 'filtered' : 'original'}.png`,
-      title: `${plotLabel} · Full test`,
+      title: `${plotLabel} · ${test}`,
       scope: [`Source test: ${test}. Time (s) uses stored timestamps; current X/Y view.`,
         `Source rows [${win.i0}, ${win.i1}); shaded intervals identify selected TPs.`,
         ...(columns.length > 1 ? ['Variables share one Y axis in their stored units; values are not normalized.'] : [])],

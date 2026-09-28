@@ -141,9 +141,17 @@ def run_checks(web, api, dataset, temporary, output):
         texts = []
         for card in cards:
             content = ' '.join(row['text'] for row in card['texts'])
-            assert 'kiha-spectrum-v2' in content and 'rows [' in content and 'prefilter=none' in content, content
-            assert 'native bins' in content and 'X (' in content and 'Y (' in content, content
-            texts.append(content)
+            chart = card.get('chart'); assert chart and chart['labels'], card
+            compact = ''.join(content.split())
+            assert '·FFT' in compact or '·WELCH' in compact, content
+            assert all(''.join(name.split()) in compact for name in chart['labels']), (content, chart)
+            x_axis, y_axis = chart['axes']
+            assert x_axis in ('Frequency (Hz)', 'Order (cycles/rev)'), chart
+            assert y_axis in ('Magnitude (U)', 'Magnitude (U) · log10',
+                              'PSD (U²/Hz)', 'PSD (U²/Hz) · log10'), chart
+            assert not any(token in content for token in ('kiha-spectrum-v2', 'rows [',
+                'prefilter=none', 'native bins', 'Displayed axes', 'Visible traces')), content
+            texts.append(' '.join([content, x_axis, y_axis]))
         result['annotation_text'] = texts; images.append(result)
         return texts
 
@@ -234,7 +242,7 @@ def run_checks(web, api, dataset, temporary, output):
             page.get_by_role('button',name='Log scale',exact=True).click();settled(page)
             modal=panel(page);logged,_=csv_file(page,modal,'welch-order-log')
             assert logged==linear and (output/'welch-order-linear.csv').read_bytes()==(output/'welch-order-log.csv').read_bytes()
-            texts=png_file(page,modal,'welch-order-log');assert 'log10' in texts[0] and 'units=U²/Hz' in texts[0];close(page,modal)
+            texts=png_file(page,modal,'welch-order-log');assert 'PSD (U²/Hz) · log10' in texts[0] and 'Order (cycles/rev)' in texts[0];close(page,modal)
             plot(page).locator('.u-over').hover();page.mouse.wheel(0,-300);page.wait_for_timeout(200)
             modal=panel(page);cropped,_=csv_file(page,modal,'welch-order-zoom');assert cropped['x_range'];close(page,modal)
             print('PASS: native default/end bins, exact saved rows, cross-test rates, missing values, FFT/PSD reference arrays, frequency crop/reset and order/log semantics',flush=True)

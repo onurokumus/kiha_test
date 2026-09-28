@@ -175,9 +175,15 @@ def run_checks(web,api,dataset,temporary,output):
         texts=[]
         for card in cards:
             text=' '.join(row['text'] for row in card['texts'])
-            assert 'kiha-xy-v2' in text and 'rows [' in text and 'prefilter=none' in text,text
-            assert 'finite pairs' in text and 'X (' in text and 'Y (' in text,text
-            texts.append(text)
+            chart=card.get('chart');assert chart and chart['labels'],card
+            x_axis,y_axis=chart['axes'];assert x_axis and y_axis,chart
+            compact=''.join(text.split())
+            title=f'{y_axis} (Y) vs {x_axis} (X)'
+            assert ''.join(title.split()) in compact,(title,text)
+            assert all(''.join(name.split()) in compact for name in chart['labels']),(text,chart)
+            assert not any(token in text for token in ('kiha-xy-v2', 'rows [',
+                'prefilter=none', 'finite pairs', 'Displayed axes', 'Visible traces')),text
+            texts.append(' '.join([text,x_axis,y_axis]))
         result['annotation_text']=texts;images.append(result);return texts
 
     def verify_display(page,slot=1,full=False):

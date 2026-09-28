@@ -1,5 +1,18 @@
 # TODO
 
+## Requested scatter CSV and PNG export (2026-09-28)
+
+- [x] Add discoverable CSV and PNG export to the scatter plot. Export all filtered test-point means and source bounds before visual grouping/zoom, plus enabled datasheet rows. Save the current chart as a clean 2x PNG. Build/lint, 52 frontend tests, 492 backend tests/456 subtests, 13 browser downloads and four additional downloads at actual 125%/150% browser zoom pass. See IMPLEMENTATION.md.
+
+
+## Requested section scrolling repair (2026-09-28)
+
+- [x] Restore wheel scrolling from expanded Edit sections, page padding and gaps; allow ordinary wheel scrolling over Split plots, retaining Shift+wheel time zoom and Alt+wheel Y zoom. Build/lint, 44 frontend helpers, 11 existing Edit/Settings browser groups and 50 focused wheel checks pass, including short desktop viewports and actual 125%/150% browser zoom. See IMPLEMENTATION.md.
+
+## Requested compact PNG exports (2026-09-28)
+
+- [x] Keep exported PNGs compact and free of report prose. Retain short source-aware titles, native axes and a wrapping legend; keep source/settings/precision in optional analysis.json. Remove layout captions, merge envelope legend edges and label Waterfall color units. Build/lint, 44 frontend tests and nine real PNG/metadata download checks pass; see IMPLEMENTATION.md.
+
 ## Requested scatter reload fix (2026-09-28)
 
 - [x] Keep scatter variables and test-point selections when More > Reload data refreshes tests in a different order. Reuse live session recovery, retain the complete source catalog before cache reload, and ignore obsolete request cleanup. Build/lint, 44 frontend tests and delayed/overlapping browser reload checks pass; see IMPLEMENTATION.md.

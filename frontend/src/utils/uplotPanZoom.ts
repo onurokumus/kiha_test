@@ -31,7 +31,9 @@ export function xPanZoomPlugin(
   /** TP plots opt in to left-drag box zoom and independent Alt+wheel/drag Y. */
   commitY?: (range: AxisRange) => void,
   control?: { current: PanZoomControl | null },
-  boxOnly = false
+  boxOnly = false,
+  /** Scrollable pages reserve plain wheel for scrolling; Shift/Alt opt into zoom. */
+  wheelMode: 'zoom' | 'scroll' = 'zoom'
 ): uPlot.Plugin {
   let destroyed = false;
   let wheelTimer = 0;
@@ -67,6 +69,7 @@ export function xPanZoomPlugin(
         const onWheel = (e: WheelEvent) => {
           // Ctrl+wheel belongs to desktop browser zoom, including trackpad pinch.
           if (commitY && e.ctrlKey) return;
+          if (wheelMode === 'scroll' && !e.shiftKey && !e.altKey) return;
           const axis = commitY && e.altKey ? 'y' : 'x';
           const min = u.scales[axis].min;
           const max = u.scales[axis].max;

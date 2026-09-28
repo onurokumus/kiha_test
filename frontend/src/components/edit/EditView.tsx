@@ -1165,22 +1165,11 @@ export default function EditView({
   const nanTotal = Object.values(meta.nan_counts ?? {}).reduce((a, b) => a + b, 0);
 
   return (
+    <div className={`edit-view feature-edit ${styles.workspace}`}>
     <fieldset
-      className={`edit-view feature-edit ${styles.workspace}`}
+      className={styles.editor}
       disabled={Boolean(pendingAction)}
       aria-busy={Boolean(pendingAction)}
-      style={{
-        flex: 1,
-        minWidth: 0,
-        minInlineSize: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        overflowY: 'auto',
-        margin: 0,
-        padding: 12,
-        border: 0,
-      }}
     >
       <header className={styles.toolbar}>
         <h1>Edit test</h1>
@@ -1886,6 +1875,7 @@ export default function EditView({
       </div>
       </details>
     </fieldset>
+    </div>
   );
 }
 

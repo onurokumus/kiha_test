@@ -6,10 +6,12 @@ import { checkExport, reportExport, yieldExport } from '../services/exportProgre
 export interface PlotPngContent {
   provenance?: Record<string, unknown>;
   title: string;
-  /** Source test / TP identifiers and the meaning of the time axis. */
+  /** Context retained in analysis.json, not painted over the plot. */
   scope: string[];
   /** Actual display/filter settings, reduction and relevant warnings. */
   details?: string[];
+  /** Heatmaps already identify their source in the title and use a color scale. */
+  showLegend?: boolean;
 }
 
 export interface PlotPngOptions extends PlotPngContent {
@@ -45,8 +47,7 @@ export interface PlotLayoutPngOptions {
 const MAX_EDGE = 8192;
 const MAX_PIXELS = 16_000_000;
 const MAX_TEXT_CHARACTERS = 64_000;
-const MIN_CSS_WIDTH = 640;
-const PADDING = 24;
+const PADDING = 8;
 const BACKGROUND = '#ffffff';
 const FONT_FAMILY = 'Manrope, "Segoe UI", Arial, sans-serif';
 
@@ -59,6 +60,7 @@ interface TextRow {
 }
 
 interface LegendEntry {
+  seriesIndex: number;
   label: string;
   stroke: CanvasRenderingContext2D['strokeStyle'];
   width: number;
@@ -116,6 +118,7 @@ function legendSnapshot(plot: uPlot): LegendEntry[] {
       ? series.stroke(plot, offset + 1)
       : series.stroke;
     return [{
+      seriesIndex: offset + 1,
       label: typeof series.label === 'string'
         ? series.label
         : series.label?.textContent || `Series ${offset + 1}`,
@@ -125,6 +128,31 @@ function legendSnapshot(plot: uPlot): LegendEntry[] {
       alpha: Number.isFinite(series.alpha) ? Math.max(0, Math.min(1, series.alpha!)) : 1,
     }];
   });
+}
+
+/** Merge only the two visible, identically styled edges of a real envelope band.
+ * Raw series labels stay untouched in metadata and on the live plot.
+ */
+function compactLegend(plot: uPlot, entries: LegendEntry[]): LegendEntry[] {
+  const merged = new Map<number, string>();
+  const omitted = new Set<number>();
+  // uPlot exposes bands at runtime but omits them from its instance type.
+  const bands = (plot as uPlot & { bands?: uPlot.Band[] }).bands;
+  for (const band of bands ?? []) {
+    const first = entries.find(entry => entry.seriesIndex === band.series[0]);
+    const second = entries.find(entry => entry.seriesIndex === band.series[1]);
+    if (!first || !second) continue;
+    const a = /^(.*) (min|max)$/.exec(first.label);
+    const b = /^(.*) (min|max)$/.exec(second.label);
+    if (!a || !b || a[1] !== b[1] || a[2] === b[2] ||
+        first.stroke !== second.stroke || first.width !== second.width ||
+        first.alpha !== second.alpha || first.dash.join(',') !== second.dash.join(',')) continue;
+    const kept = Math.min(first.seriesIndex, second.seriesIndex);
+    merged.set(kept, `${a[1]} (min–max)`);
+    omitted.add(Math.max(first.seriesIndex, second.seriesIndex));
+  }
+  return entries.filter(entry => !omitted.has(entry.seriesIndex))
+    .map(entry => ({ ...entry, label: merged.get(entry.seriesIndex) ?? entry.label }));
 }
 
 function axisSnapshot(plot: uPlot): string {
@@ -182,7 +210,8 @@ function downloadBlob(blob: Blob, requestedName: string, extension: 'png' | 'zip
 }
 
 /**
- * Capture the current uPlot canvas with durable, fully wrapped context and legend.
+ * Capture the current uPlot canvas with a compact title and wrapping legend.
+ * Detailed context is retained in metadata rather than painted into the image.
  * The caller gates incomplete/error views and supplies their actual scope and
  * settings. No fetch, live-plot mutation, DOM screenshot or hidden-series data
  * is involved. This function is entirely synchronous so callers can capture
@@ -208,7 +237,7 @@ export function capturePlotPng(plot: uPlot, options: PlotPngContent): PlotPngCap
   // Derive density from this canvas, not window.devicePixelRatio: uPlot can
   // still have the previous density while a browser-zoom resize is settling.
   const pixelRatio = source.width / plot.width;
-  const cssWidth = Math.max(MIN_CSS_WIDTH, plot.width + 2 * PADDING);
+  const cssWidth = plot.width + 2 * PADDING;
   const pixelWidth = Math.ceil(cssWidth * pixelRatio);
   const chartHeight = source.height / pixelRatio;
   checkSize(pixelWidth, source.height);
@@ -216,7 +245,7 @@ export function capturePlotPng(plot: uPlot, options: PlotPngContent): PlotPngCap
   const context = canvas.getContext('2d');
   if (!context) throw new Error('The browser could not create the PNG drawing surface.');
   const textRows: TextRow[] = [];
-  const legendRows: { entry: LegendEntry; y: number }[] = [];
+  const legendRows: { entry: LegendEntry; x: number; y: number }[] = [];
   let y = PADDING;
 
   const addText = (text: string, font: string, color: string, lineHeight: number, x = PADDING) => {
@@ -228,19 +257,38 @@ export function capturePlotPng(plot: uPlot, options: PlotPngContent): PlotPngCap
     }
   };
 
-  addText(title, `600 18px ${FONT_FAMILY}`, '#202c42', 25);
-  y += 7;
-  scope.forEach((line) => addText(line, `12px ${FONT_FAMILY}`, '#41516b', 18));
-  if (scope.length > 0) y += 6;
-  details.forEach((line) => addText(line, `11px ${FONT_FAMILY}`, '#626f83', 17));
-  const chartTop = Math.ceil((y + 12) * pixelRatio) / pixelRatio;
-  y = chartTop + chartHeight + 16;
-  addText('Visible traces', `600 12px ${FONT_FAMILY}`, '#41516b', 21);
-  legend.forEach((entry) => {
-    legendRows.push({ entry, y });
-    addText(entry.label, `12px ${FONT_FAMILY}`, '#41516b', 18, PADDING + 42);
-    y += 5;
-  });
+  addText(title, `600 14px ${FONT_FAMILY}`, '#202c42', 19);
+  const chartTop = Math.ceil((y + 6) * pixelRatio) / pixelRatio;
+  y = chartTop + chartHeight;
+  const visibleLegend = options.showLegend === false ? [] : compactLegend(plot, legend);
+  if (visibleLegend.length) {
+    y += 6;
+    const font = `11px ${FONT_FAMILY}`;
+    const lineHeight = 16;
+    const swatchSpace = 26;
+    const available = cssWidth - 2 * PADDING;
+    let x = PADDING;
+    let rowHeight = 0;
+    context.font = font;
+    for (const entry of visibleLegend) {
+      const lines = wrapText(context, entry.label, Math.max(1, available - swatchSpace));
+      const entryWidth = Math.min(available,
+        swatchSpace + Math.max(...lines.map(line => context.measureText(line).width)));
+      if (x > PADDING && x + entryWidth > cssWidth - PADDING) {
+        y += rowHeight + 4;
+        x = PADDING;
+        rowHeight = 0;
+      }
+      legendRows.push({ entry, x, y });
+      lines.forEach((text, index) => textRows.push({
+        text, x: x + swatchSpace, y: y + index * lineHeight, font, color: '#41516b',
+      }));
+      rowHeight = Math.max(rowHeight, lines.length * lineHeight);
+      x += entryWidth + 16;
+      checkSize(pixelWidth, Math.ceil((y + rowHeight + PADDING) * pixelRatio));
+    }
+    y += rowHeight;
+  }
   const pixelHeight = Math.ceil((y + PADDING) * pixelRatio);
   checkSize(pixelWidth, pixelHeight);
   try {
@@ -258,15 +306,15 @@ export function capturePlotPng(plot: uPlot, options: PlotPngContent): PlotPngCap
     const chartLeft = Math.round((cssWidth - plot.width) * pixelRatio / 2) / pixelRatio;
     // Native source pixels are copied without stretching the compact chart.
     context.drawImage(source, chartLeft, chartTop, plot.width, chartHeight);
-    legendRows.forEach(({ entry, y: rowY }) => {
+    legendRows.forEach(({ entry, x: rowX, y: rowY }) => {
       context.save();
       context.strokeStyle = entry.stroke;
       context.lineWidth = entry.width;
       context.setLineDash(entry.dash);
       context.globalAlpha = entry.alpha;
       context.beginPath();
-      context.moveTo(PADDING, rowY + 8);
-      context.lineTo(PADDING + 30, rowY + 8);
+      context.moveTo(rowX, rowY + 7);
+      context.lineTo(rowX + 20, rowY + 7);
       context.stroke();
       context.restore();
     });
@@ -366,55 +414,27 @@ export async function downloadPlotLayoutPng(options: PlotLayoutPngOptions): Prom
     if (captures.some(({ image }) => Math.abs(image.pixelRatio / pixelRatio - 1) > 0.01)) {
       throw new Error('The plot resolutions are still changing. Wait for resizing or browser zoom to finish and try again.');
     }
-    const padding = Math.ceil(20 * pixelRatio);
-    const gap = Math.ceil(16 * pixelRatio);
-    const slotHeight = Math.ceil(32 * pixelRatio);
+    const padding = Math.ceil(8 * pixelRatio);
+    const gap = Math.ceil(8 * pixelRatio);
     const cellWidth = Math.max(...captures.map(({ image }) => image.canvas.width));
-    const cellHeight = slotHeight + Math.max(...captures.map(({ image }) => image.canvas.height));
+    const cellHeight = Math.max(...captures.map(({ image }) => image.canvas.height));
     const width = 2 * padding + columns * cellWidth + (columns - 1) * gap;
-    checkSize(width, columns * cellHeight);
+    const height = 2 * padding + columns * cellHeight + (columns - 1) * gap;
+    checkSize(width, height);
     output = document.createElement('canvas');
     const context = output.getContext('2d');
     if (!context) throw new Error('The browser could not create the PNG layout drawing surface.');
-    const headingRows: TextRow[] = [];
-    let y = padding;
-    const heading = (text: string, size: number, weight: number, color: string, lineHeight: number) => {
-      const font = `${weight} ${size * pixelRatio}px ${FONT_FAMILY}`;
-      context.font = font;
-      for (const line of wrapText(context, text, width - 2 * padding)) {
-        headingRows.push({ text: line, x: padding, y, font, color });
-        y += Math.ceil(lineHeight * pixelRatio);
-        checkSize(width, y + columns * cellHeight);
-      }
-    };
-    heading(title || 'Time plot layout', 20, 600, '#202c42', 28);
-    heading(`${columns}×${columns} layout · ${captures.length} selected plot${captures.length === 1 ? '' : 's'} · Original grid slot numbers`,
-      12, 400, '#626f83', 20);
-    const gridTop = y + padding;
-    const height = gridTop + columns * cellHeight + (columns - 1) * gap + padding;
-    checkSize(width, height);
     output.width = width;
     output.height = height;
-    context.fillStyle = '#f7f8fa';
+    context.fillStyle = BACKGROUND;
     context.fillRect(0, 0, width, height);
-    context.textBaseline = 'top';
-    headingRows.forEach((row) => {
-      context.font = row.font;
-      context.fillStyle = row.color;
-      context.fillText(row.text, row.x, row.y);
-    });
     for (let index = 0; index < columns * columns; index += 1) {
       const left = padding + (index % columns) * (cellWidth + gap);
-      const top = gridTop + Math.floor(index / columns) * (cellHeight + gap);
-      context.fillStyle = BACKGROUND;
-      context.fillRect(left, top, cellWidth, cellHeight);
+      const top = padding + Math.floor(index / columns) * (cellHeight + gap);
       const capture = captures[index];
-      if (!capture) continue; // Intentionally blank unused cells.
-      context.font = `600 ${12 * pixelRatio}px ${FONT_FAMILY}`;
-      context.fillStyle = '#41516b';
-      context.fillText(`Plot ${capture.slot}`, left + padding, top + Math.ceil(10 * pixelRatio));
+      if (!capture) continue; // Intentionally blank unused cells in the requested grid.
       context.drawImage(capture.image.canvas,
-        left + Math.floor((cellWidth - capture.image.canvas.width) / 2), top + slotHeight);
+        left + Math.floor((cellWidth - capture.image.canvas.width) / 2), top);
       reportExport(signal, { stage: 'Composing image', completed: index + 1, total: captures.length, unit: 'plots' });
       await yieldExport(signal);
     }

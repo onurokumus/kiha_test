@@ -112,7 +112,7 @@ export function MultiPlotExportControls({ registry, contextKey, defaultColumns, 
         <button type="button" onClick={close}>Close</button>
       </div>
       <p id={`${id}-scope`}>Choose visible grid slots. Each CSV keeps its selected variables, sources and analysis settings.
-        Plots are packed in grid order, with their original slot numbers.</p>
+        Plots are packed in grid order. Original slot numbers are retained in metadata.</p>
       <label><input type="checkbox" checked={includeMetadata} disabled={!!busy}
         onChange={(event) => setIncludeMetadata(event.target.checked)} /> Include analysis metadata (ZIP)</label>
       <p className={base.hint}>Includes analysis.json for the selected plots. PNG and metadata download together in one ZIP.</p>
@@ -169,7 +169,7 @@ export function MultiPlotExportControls({ registry, contextKey, defaultColumns, 
       {csvBlocked && <p className={base.hint}>{csvBlocked}</p>}
       <div className={base.imageSection}>
         <strong>Combined PNG</strong>
-        <p>Captures current traces and X/Y ranges, with source labels, settings and legends for every plot.
+        <p>Captures current plots, axes and legends. Analysis settings are saved in the optional metadata.
           CSV data choices above do not change the image. Unused cells remain empty.</p>
         <button type="button" className={base.action} disabled={!!busy || !!pngBlocked}
           title={pngBlocked ?? undefined} onClick={() => void run('PNG')}>Download combined PNG</button>

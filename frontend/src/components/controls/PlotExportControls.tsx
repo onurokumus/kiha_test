@@ -18,6 +18,9 @@ interface Props {
   /** Spectrum/XY have one numerical result, without time-domain filter choices. */
   csvLabel?: string;
   csvDescription?: string;
+  pngDescription?: string;
+  /** Client-only exports have no analysis package endpoint. */
+  supportsMetadata?: boolean;
   onCsv: (data: PlotExportData, signal: AbortSignal, includeMetadata: boolean) => Promise<void>;
   onPng: (signal: AbortSignal, includeMetadata: boolean) => Promise<void>;
 }
@@ -26,7 +29,7 @@ export interface PlotExportActions { open: () => void }
 /** Native modal sits outside grid clipping, traps keyboard focus and leaves
  * plot state untouched. Each action captures its own current export context. */
 export function PlotExportControls({ label, contextKey, scope, defaultData,
-  originalReason, filteredReason, pngReason, csvLabel, csvDescription, onCsv, onPng, actionsRef, hideTrigger = false }: Props) {
+  originalReason, filteredReason, pngReason, csvLabel, csvDescription, pngDescription, supportsMetadata = true, onCsv, onPng, actionsRef, hideTrigger = false }: Props) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLElement | null>(null);
@@ -36,7 +39,7 @@ export function PlotExportControls({ label, contextKey, scope, defaultData,
   const busy = task.busy;
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<PlotExportData>(defaultData);
-  const [includeMetadata, setIncludeMetadata] = useState(true);
+  const [includeMetadata, setIncludeMetadata] = useState(supportsMetadata);
   const context = useRef(contextKey);
   const openDialog = () => {
     opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : trigger.current;
@@ -82,9 +85,9 @@ export function PlotExportControls({ label, contextKey, scope, defaultData,
         <button type="button" aria-label="Close export" onClick={close}>×</button>
       </div>
       <p id={`${id}-scope`}>{scope}</p>
-      <label><input type="checkbox" checked={includeMetadata} disabled={!!busy}
+      {supportsMetadata && <><label><input type="checkbox" checked={includeMetadata} disabled={!!busy}
         onChange={(event) => setIncludeMetadata(event.target.checked)} /> Include analysis metadata (ZIP)</label>
-      <p className={styles.hint}>Includes analysis.json with sources, equations and the settings used. Uncheck for the file alone.</p>
+      <p className={styles.hint}>Includes analysis.json with sources, equations and the settings used. Uncheck for the file alone.</p></>}
       {csvLabel ? <p><strong>CSV data · {csvLabel}</strong></p> : <fieldset disabled={!!busy}>
         <legend>CSV data</legend>
         {([
@@ -104,8 +107,7 @@ export function PlotExportControls({ label, contextKey, scope, defaultData,
       {csvReason && csvReason !== filteredReason && <p className={styles.hint}>{csvReason}</p>}
       <div className={styles.imageSection}>
         <strong>PNG image</strong>
-        <p>Current traces, axis ranges, labels and analysis settings. Uses the current display,
-          independently of the CSV choice above.</p>
+        <p>{pngDescription ?? 'Current plot, axes and legend. Analysis settings are saved in the optional metadata. The image uses the current display, independently of the CSV choice above.'}</p>
         <button type="button" className={styles.action} disabled={!!busy || !!pngReason}
           title={pngReason ?? undefined} onClick={() => void run('PNG')}>Download PNG</button>
         {pngReason && <p className={styles.hint}>{pngReason}</p>}

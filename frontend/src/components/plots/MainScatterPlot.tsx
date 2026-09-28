@@ -21,13 +21,18 @@ import { ScatterRangeBars } from './ScatterRangeBars';
 import { clusterPoints, shouldEnableClustering } from '../../utils/pointClustering';
 import { scatterExtents } from '../../utils/scatterRanges';
 import { PlotActionMenu } from './PlotActionMenu';
+import { PlotExportControls, type PlotExportActions } from '../controls/PlotExportControls';
+import { downloadScatterCsv, downloadScatterPng } from '../../utils/scatterExport';
 
 interface MainScatterPlotProps {
   scatterData: ScatterDataPoint[];
   datasheetData: DatasheetDataPoint[];
   rawDataCount: number;
+  exportDisabledReason: string | null;
   xLabel: string;
   yLabel: string;
+  xVariable: string;
+  yVariable: string;
   mainZoom: [number, number, number, number] | null;
   onResetZoom: () => void;
   onToggleTestPoint: (point: ScatterDataPoint) => void;
@@ -47,8 +52,11 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   scatterData,
   datasheetData,
   rawDataCount,
+  exportDisabledReason,
   xLabel,
   yLabel,
+  xVariable,
+  yVariable,
   mainZoom,
   onResetZoom,
   onToggleTestPoint,
@@ -62,6 +70,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   const [highlightedPointId, setHighlightedPointId] = useState<string | null>(null);
   const [chartDimensions, setChartDimensions] = useState({ width: 0, height: 0 });
   const chartRef = useRef<HTMLDivElement>(null);
+  const exportActions = useRef<PlotExportActions>(null);
   const pointPositions = useRef<Map<string, { cx: number; cy: number }>>(new Map());
   const hoverTargetRef = useRef<Element | null>(null);
   const [hasPointHover, setHasPointHover] = useState(false);
@@ -693,6 +702,21 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
     }
   }, [menuState, onWheel, dismissHover]);
 
+  const exportReason = exportDisabledReason ||
+    (scatterData.length + datasheetData.length === 0 ? 'No points to export. Adjust the axes or filters.' : null);
+  const exportContext = JSON.stringify([xLabel, yLabel, mainZoom]);
+  const exportFilename = `scatter_${yVariable}_vs_${xVariable}`;
+  const exportCsv = async (_data: unknown, signal: AbortSignal) => {
+    if (exportReason) throw new Error(exportReason);
+    await downloadScatterCsv(scatterData, datasheetData, xVariable, yVariable, exportFilename, signal);
+  };
+  const exportPng = async (signal: AbortSignal) => {
+    if (exportReason) throw new Error(exportReason);
+    const svg = chartRef.current?.querySelector<SVGSVGElement>('svg.recharts-surface');
+    if (!svg) throw new Error('Wait for the scatter plot to finish rendering.');
+    await downloadScatterPng(svg, exportFilename, signal);
+  };
+
   return (
     <div
       ref={chartRef}
@@ -707,10 +731,18 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       onPointerCancel={handleMouseLeave}
       onMouseDownCapture={dismissHover}
     >
-      <div style={{ position: 'absolute', right: 8, top: 2, zIndex: 2 }}
+      <div style={{ position: 'absolute', right: 8, top: 2, zIndex: 2, display: 'flex', alignItems: 'center', gap: 6 }}
         onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
-        <PlotActionMenu label="test-point overview" targetRef={chartRef}
-          contextKey={JSON.stringify([xLabel, yLabel, mainZoom])} onReset={onResetZoom} />
+        <PlotExportControls label="scatter" contextKey={exportContext}
+          actionsRef={exportActions} supportsMetadata={false}
+          scope={`${xLabel} / ${yLabel}`}
+          defaultData="original" originalReason={exportReason} filteredReason={null} pngReason={exportReason}
+          csvLabel="Test-point means"
+          csvDescription="One row per filtered test point, with X/Y means, min/max values and source identifiers. Includes the enabled datasheet line as separate reference rows. Zoom and overlap grouping do not remove CSV rows."
+          pngDescription="Current scatter view with axes, point colors, overlap groups, enabled range bars and the datasheet line. Saves a clean PNG at twice the displayed size."
+          onCsv={exportCsv} onPng={exportPng} />
+        <PlotActionMenu label="test-point overview" targetRef={chartRef} exportActions={exportActions}
+          contextKey={exportContext} onReset={onResetZoom} />
       </div>
       <ResponsiveContainer width="100%" height="100%">
         <ScatterChart margin={SCATTER_MARGIN}>

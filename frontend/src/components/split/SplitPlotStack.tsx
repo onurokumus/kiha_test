@@ -66,7 +66,8 @@ export default function SplitPlotStack({ columns, ...shared }: Props) {
         </span>
         <details className={styles.help}>
           <summary>Details</summary>
-          <p>Time range and test-point boundaries are linked across plots. Drag to zoom X, Y or both;
+          <p>Time range and test-point boundaries are linked across plots. Wheel to scroll the page;
+            Shift + wheel to zoom time, Alt + wheel to zoom Y. Drag to zoom X, Y or both;
             double-click to reset. Select a test-point label, then drag its handles to adjust the interval.</p>
         </details>
         <button ref={addRef} className="btn" aria-label="Add line plot" onClick={addPlot}

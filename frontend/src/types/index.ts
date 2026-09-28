@@ -466,6 +466,11 @@ export interface SelectedTestPoint {
 export interface ScatterDataPoint {
   x: number;
   y: number;
+  /** Original aggregate bounds retained for CSV without subtractive rounding. */
+  xMin?: number;
+  xMax?: number;
+  yMin?: number;
+  yMax?: number;
   /** Asymmetric distances from the X mean to [minimum, maximum]. */
   xError?: [number, number];
   /** Asymmetric distances from the Y mean to [minimum, maximum]. */

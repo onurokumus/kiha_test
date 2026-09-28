@@ -213,6 +213,9 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
       stops.forEach((rgb, i) => gradient.addColorStop(i / (stops.length-1), `rgb(${rgb.join(',')})`));
       c.fillStyle = gradient; c.fillRect(x, b.top, w, b.height);
       c.fillStyle = '#626f83'; c.font = `${9 * ratio}px Manrope`; c.textAlign = 'left';
+      c.textBaseline = 'bottom';
+      c.fillText(logColor ? 'log10(U)' : 'U', x, b.top - 2 * ratio);
+      c.textBaseline = 'alphabetic';
       colorTicks.forEach(({ fraction: v, label }) => c.fillText(label, x+w+3*ratio, b.top + b.height*(1-v) + (v===0 ? 0 : 7*ratio)));
     };
     control.sync(() => {
@@ -327,6 +330,7 @@ export function WaterfallPlot(props: Props) {
         const u = plots.current.get(tr.label); if (!u) throw new Error('Wait for the waterfall canvas.');
         const metadata = Object.fromEntries(Object.entries(tr.data).filter(([key]) => key !== 'magnitude'));
         captures.push(capturePlotPng(u, { title: `${cfg.label} · Waterfall FFT · ${tr.label}`, scope: [scope],
+          showLegend: false,
           details: [`Color: ${colorDescription}. Values outside the range use the endpoint colors.`,
             `Hann window ${tr.data.method.nperseg} samples (${fmt(tr.data.method.window_seconds)} s), overlap ${overlap}%; Δf ${fmt(tr.data.method.bin_spacing_hz)} Hz.`,
             `Grid ${tr.data.reduction.method}; maximum over ${tr.data.reduction.time_factor} frames × ${tr.data.reduction.frequency_factor} bins per full cell. ${tr.data.nan_count} missing samples interpolated; ${tr.data.method.trailing_samples} trailing samples unused.`],

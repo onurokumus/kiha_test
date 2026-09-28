@@ -1162,6 +1162,10 @@ function App() {
           y,
           ...(xError ? { xError } : {}),
           ...(yError ? { yError } : {}),
+          ...(typeof xStat.min === 'number' && Number.isFinite(xStat.min) ? { xMin: xStat.min } : {}),
+          ...(typeof xStat.max === 'number' && Number.isFinite(xStat.max) ? { xMax: xStat.max } : {}),
+          ...(typeof yStat.min === 'number' && Number.isFinite(yStat.min) ? { yMin: yStat.min } : {}),
+          ...(typeof yStat.max === 'number' && Number.isFinite(yStat.max) ? { yMax: yStat.max } : {}),
           id,
           test,
           name: tp.name,
@@ -1511,6 +1515,15 @@ function App() {
           visibleStatsErrors.length === 1 ? '' : 's'
         } failed. ${statsErrors[visibleStatsErrors[0]]}`
       : null;
+  const exportSources = tests.filter(test => test.status === 'ready' &&
+    (test.name !== datasheetZone || datasheetVisible));
+  const scatterExportDisabledReason =
+    loading || scatterStatsLoading || exportSources.some(test => !metaByTest[test.name] && !metaErrors[test.name]) ||
+      (datasheetVisible && datasheetLine.loading)
+      ? 'Wait for scatter data to finish loading.'
+      : scatterErrorText || (datasheetVisible ? datasheetLine.error : null) ||
+        (exportSources.some(test => metaErrors[test.name])
+          ? 'Some test metadata could not load. Reload data before exporting.' : null);
   const retryStatistics = useCallback((keys: string[]) => {
     statsRequestEpoch.current += 1;
     statsInFlight.current.clear();
@@ -2220,6 +2233,9 @@ function App() {
                   scatterData={scatterData}
                   datasheetData={datasheetData}
                   rawDataCount={rawScatterData.length}
+                  exportDisabledReason={scatterExportDisabledReason}
+                  xVariable={xAxis}
+                  yVariable={yAxis}
                   xLabel={xLabel}
                   yLabel={yLabel}
                   mainZoom={mainZoom}

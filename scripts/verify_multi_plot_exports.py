@@ -44,10 +44,19 @@ CANVAS_INSTRUMENT = r'''(()=>{
     };
     const draw=CanvasRenderingContext2D.prototype.drawImage;
     CanvasRenderingContext2D.prototype.drawImage=function(source,...args){
+        if(source instanceof HTMLCanvasElement && source.isConnected){
+            const u=source.closest('.uplot')?.__verificationPlot;
+            const owner=source.closest('[data-select-focus-scope]');
+            const slot=owner?.getAttribute('data-select-focus-scope')?.match(/-(\d+)$/);
+            if(u)this.canvas.__verificationChart={
+                slot:slot?Number(slot[1])+1:null,
+                axes:u.axes.map(axis=>axis.label??''),
+                labels:u.series.slice(1).filter(series=>series.show!==false).map(series=>String(series.label))};
+        }
         if(source instanceof HTMLCanvasElement && !source.isConnected){
             const r=args.length===8?args.slice(4):args;
             (this.canvas.__verificationPanels??=[]).push({
-                texts:source.__verificationTexts??[],
+                texts:source.__verificationTexts??[],chart:source.__verificationChart??null,
                 x:r[0],y:r[1],width:r[2]??source.width,height:r[3]??source.height,
                 sourceWidth:source.width,sourceHeight:source.height});
         }
@@ -56,7 +65,7 @@ CANVAS_INSTRUMENT = r'''(()=>{
     const encode=HTMLCanvasElement.prototype.toBlob;
     HTMLCanvasElement.prototype.toBlob=function(callback,...args){
         window.__multiPngCaptures.push({width:this.width,height:this.height,
-            texts:this.__verificationTexts??[],panels:this.__verificationPanels??[]});
+            texts:this.__verificationTexts??[],panels:this.__verificationPanels??[],chart:this.__verificationChart??null});
         return encode.call(this,callback,...args);
     };
 })();'''
@@ -178,10 +187,14 @@ def download_png(page,panel,output,label,slots,layout):
     assert capture and len(capture['panels'])==len(slots),capture
     side=2 if layout=='2x2' else 3
     panels=capture['panels']
-    slots_seen=[int(re.match(r'^Plot\s+(\d+)',row['text'])[1]) for row in capture['texts']
-                if re.match(r'^Plot\s+\d+',row['text'])]
+    # Inspect the actual copied chart identity, not removed slot captions.
+    assert not capture['texts'],'Combined PNG regained layout/slot text'
+    assert all(p.get('chart') for p in panels),'An exported panel lost its native chart'
+    slots_seen=[p['chart']['slot'] for p in panels]
     for ordinal,p in enumerate(panels):
-        assert p['texts'],'An exported panel lost its title/source/settings/legend text'
+        assert p['texts'],'An exported panel lost its title/legend text'
+        text=' '.join(row['text'] for row in p['texts'])
+        assert not any(token in text for token in ('Displayed axes', 'Visible traces', 'CSV exports')),text
         assert p['width']>100 and p['height']>100,p
         assert p['x']>=0 and p['y']>=0 and p['x']+p['width']<=capture['width']+1 and p['y']+p['height']<=capture['height']+1,p
         if ordinal%side:

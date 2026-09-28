@@ -58,7 +58,13 @@ def main():
                                           output, 'legend-hidden', 'png')
                     texts = page.evaluate('window.__pngTexts')
                     assert not any('plot_export_beta' in text for text in texts), texts
-                    assert any('2 events; 2 samples repaired' in text for text in texts), texts
+                    assert not any('samples repaired' in text or 'Displayed axes' in text
+                                   or 'Visible traces' in text for text in texts), texts
+                    labels = plot(page).locator('.uplot').evaluate('''el =>
+                        el.__verificationPlot.series.slice(1).filter(s => s.show !== false).map(s => String(s.label))''')
+                    compact = ''.join(''.join(texts).split())
+                    assert labels and all(''.join(label.split()) in compact for label in labels), (labels, texts)
+                    assert any('original' in label for label in labels) and any('filtered' in label for label in labels), labels
                     assert name.endswith('_both.png'), name
                     png_inspect(page, path, [])
                     close_export(page, panel)
@@ -80,7 +86,7 @@ def main():
                 finally:
                     browser.close()
                     request.dispose()
-    print('PASS: centered dialog, Escape focus, hidden-TP PNG scope/counts, '
+    print('PASS: centered dialog, Escape focus, compact PNG visible/hidden legends, '
           'actual original-only filename/settings; owned servers stopped', flush=True)
 
 

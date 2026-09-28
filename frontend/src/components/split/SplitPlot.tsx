@@ -209,7 +209,7 @@ export default function SplitPlot(props: Props) {
         plugins: [xPanZoomPlugin(r => {
           const context = contextRef.current;
           if (context.ready && context.requestKey === requestKey) context.onRangeChange(r);
-        }, r => { yRangeRef.current = r; })],
+        }, r => { yRangeRef.current = r; }, undefined, false, 'scroll')],
         hooks: {
           setSelect: [
             (u2) => {

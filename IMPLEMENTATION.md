@@ -1,5 +1,138 @@
 # Implementation handoff
 
+## GitHub checkpoint (2026-09-28)
+
+This checkpoint includes all pending UI, compact PNG, scatter CSV/PNG and section
+scrolling changes at the user's request. Publication target is the existing
+codex/ptt-ui-rework-2026-09-28 branch of onurokumus/kiha_test. Validation results
+below remain applicable; historical references to uncommitted work describe
+status before this checkpoint. No deployment is part of this request.
+
+
+## Scatter CSV and PNG export (2026-09-28)
+
+Completed the explicit user request ahead of the independent Phase 11 backlog.
+The scatter has a visible Export control and the same action in its three-dot /
+right-click menu. The existing keyboard-accessible export dialog and task status
+are reused; other plots keep their existing metadata ZIP defaults. Scatter
+exports download standalone files locally with no backend packaging request.
+
+CSV contains one row per filtered original test point, irrespective of zoom or
+visual clustering, plus separately identified enabled datasheet rows. Columns
+include source/point identity, name/label, time bounds, selection, axis names,
+X/Y and min/max. Source aggregate extrema are retained directly, avoiding
+subtractive rounding. Values match supplied scatter statistics (the backend's
+existing aggregate rounding is unchanged); CSV adds no numeric rounding. UTF-8
+BOM and CSV escaping retain Unicode, quotes and embedded line breaks. Numeric
+point IDs remain unquoted; unsafe integer IDs fail explicitly rather than
+silently emitting a rounded identifier. Decimal IDs remain supported.
+
+PNG freezes the current native SVG before asynchronous font/encoding work and
+embeds the bundled font. Axes, zoom/pan, colors, clusters, range bars and enabled
+datasheet line remain; hover effects/cursor and controls are excluded. Output is
+opaque white at 2x display dimensions, bounded to 8192px edges / 16M pixels.
+Canvas and temporary SVG URLs are released; cancellation prevents download.
+Loading/error guards include enabled datasheet metadata; empty comparisons
+cannot export, while datasheet-only views can.
+
+Entry points: MainScatterPlot.tsx, App.tsx and types/index.ts; new
+utils/scatterExport.ts. PlotExportControls.tsx adds optional metadata support
+and PNG copy for this client export, preserving prior compact-PNG work.
+
+Verification on codex/ptt-ui-rework-2026-09-28:
+- Frontend build/lint pass; existing bundle-size advisory remains.
+- node --test frontend/tests/*.test.mjs: 52 pass (eight new export tests).
+- D:/okumus/kiha_test/backend/.venv/Scripts/python.exe -m pytest backend/tests
+  -p no:cacheprovider -q: 492 pass / 456 subtests, 45.11s; two existing dependency
+  deprecations. The active checkout venv lacks pytest, so its existing neighboring
+  Python 3.13 test environment was used with this checkout's tests.
+- python -X utf8 scripts/verify_scatter_exports.py: 13 CSV/PNG downloads pass;
+  exact fixture values/IDs/escaping, filters, reference-only/empty views,
+  clustering, wheel zoom/pan, keyboard/menu focus, 1100x720 and 960x500,
+  opaque decoded PNG pixels/colors, encoding failure/retry and cancellation.
+- The same script --zoom-only: four downloads at actual 125%/150% browser zoom,
+  modal fit and focus return pass. No JavaScript errors or API writes.
+- Independent review resolved metadata loading, extrema precision and unsafe-ID
+  issues. Exported PNG visually inspected: clean axes, colors and range bars.
+Evidence: %TEMP%/ptt-scatter-exports (CSVs/PNGs, captured SVGs and JSON reports).
+Browser tests use isolated GET-only mocks and profiles; user datasets unchanged.
+
+Built local preview http://127.0.0.1:8087/ptt/ includes these changes
+(index-SXCLMbWf.js). Changes are local/uncommitted alongside independent work;
+no deployment or push. This request is complete. Next independent backlog item
+remains Phase 11b; no additional scatter export work is required.
+
+
+## Section scrolling fix (2026-09-28)
+
+User-requested scrolling repair takes priority over the independent Phase 11
+backlog. Chromium's scrolling fieldset accepted wheel events over child content
+but ignored events over its own padding and flex gaps. Reproduced with every
+Edit disclosure expanded: an 800px wheel moved content by 800px, while the same
+wheel over left/right padding or a fieldset gap left scrollTop at zero.
+Adding min-height:0 or display:block did not repair the fieldset hit-testing.
+
+Edit now uses a bounded outer div as the sole page scroll owner. The inner
+fieldset retains native disabled/busy behavior, natural section heights and the
+sticky Save toolbar. All formerly dead page areas scroll, with identical expanded
+content height, at 1440x800 and 960x400. Split explicitly has min-height:0 and
+allows ordinary wheel events over its plots to scroll the page. Shift+wheel zooms
+time and Alt+wheel zooms Y; Details documents these gestures. Analyze keeps its
+existing wheel zoom. No backend processing or dataset changes.
+
+Build/lint, 44 frontend helper tests, all 11 existing Edit/Settings browser groups
+(including sticky actions, draft guards, menus, keyboard and actual 125%/150%
+zoom), live-library before/after wheel probes and independent scoped review pass.
+All 50 focused checks now pass with
+`python -X utf8 scripts/verify_section_scrolling.py`. They use an isolated browser,
+existing library GETs and a guard against all API writes. Actual wheel input covers
+Edit margins, fieldset gaps, inputs, nested column-table boundary chaining and
+bottom-control reachability; expanded Settings/Components; overflowing Uploads;
+Split scrolling plus Shift/Alt zoom; and unchanged Analyze wheel zoom. Cases cover
+1440x800 and 960x400 content viewports plus actual 125%/150% browser zoom. Analyze's
+shared wheel handler is checked in a single plot with the scatter collapsed so
+short-window control wrapping does not exhaust its trace area; this is not a new
+Analyze grid-sizing test. No JavaScript errors or API writes. Evidence and reviewed
+screenshots: `%TEMP%/ptt-section-scrolling` (report.json and four Edit captures).
+
+The built local preview at http://127.0.0.1:8087/ptt/ serves index-DvqQFut7.js with
+the repair. The existing Vite bundle-size advisory remains. No deployment or
+backend/data changes. Changes remain uncommitted on
+codex/ptt-ui-rework-2026-09-28 alongside independent PNG-export work. This request
+is complete; the independent Phase 11 backlog is the next separate milestone.
+
+## Compact PNG exports (2026-09-28)
+
+Completed the user's request ahead of the independent Phase 11 backlog. Shared
+PNG capture now draws only a small title, the unscaled native plot and a compact
+wrapping legend. It no longer paints source/settings paragraphs, full-precision
+axis summaries or Visible traces headings. Source/filter/method/axis context is
+unchanged in optional analysis.json. Full-test titles retain the test name.
+Identically styled, visible min/max edges of actual envelope bands share one
+legend item; hidden edges remain independent. Waterfall has no synthetic line
+legend and its native colorbar identifies U or log10(U). Combined 2x2/3x3 exports
+use tight white gutters without layout/slot captions; original slots remain in
+metadata and intentionally unused fixed-grid cells stay blank.
+
+Changed entry points: utils/plotPngExport.ts, FullTestPlot/WaterfallPlot and the
+two export-dialog descriptions. No data/DSP/backend changes. Build/lint and all
+44 existing frontend helper tests pass; only the existing Vite bundle advisory
+remains. The built local preview includes these changes. Nine real ZIP/PNG
+downloads cover TP Time, Full envelope, FFT, PSD, XY, linear/log Waterfall and
+2x2/3x3 layouts; decoded PNGs, absent report text, retained metadata and slot
+ordering pass with no page errors or dataset writes. Reproduction:
+python -X utf8 scripts/verify_compact_png_exports.py
+(default preview http://127.0.0.1:8087/ptt/, override PTT_PREVIEW_URL).
+Evidence: %TEMP%/ptt-compact-png-exports; separate file-only single/2x2 PNGs:
+%TEMP%/ptt-compact-png-preview. The script uses the existing demo read-only in
+an isolated browser context and permits only image packaging/progress writes.
+Historical export helpers now verify native chart/source/axis identity instead
+of removed report text; their four complete older suites were not rerun.
+
+Changes remain uncommitted on codex/ptt-ui-rework-2026-09-28 alongside independent
+work, with no deployment or push. This request is complete; next independent
+milestone remains Phase 11b.
+
 ## Scatter reload race (2026-09-28)
 
 Reload previously cleared source identities with metadata. A fast test with no
