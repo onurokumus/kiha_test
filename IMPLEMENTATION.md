@@ -259,55 +259,50 @@ changes; no backend data changes. Independent Phase 11 backlog remains next.
 
 ## Stable analysis controls (2026-09-28)
 
-The requested follow-up puts source, view, compact test selector, Spectrum
-methods, icon-only Options and layout controls on the first row above 1000px
-of panel content width. The selector is capped at 180px with no visible Test
-label; existing searchable-select tooltips reveal the full test name on
-hover/focus. The duplicate selection-source summary is removed. Spectrum
-methods and the 32px Options icon sit together at the right beside the layout
-buttons, with reset space reserved before the spectrum group. The shared display
-detail badge (for example `1:16`) is grouped immediately before `1 / 4 / 9`,
-vertically centered with the buttons, with its target space retained across views.
-This alignment correction passes build/lint and focused browser checks at 1115px
-and 544px panel widths: badge-to-layout gaps are 9px/5px with matching centers;
-Full Time, TP Time and Spectrum preserve deck/Options bounds. No page errors or
-API writes. Evidence: `%TEMP%/ptt-detail-layout`. The full suite below predates
-this small correction; its grouping assertion was updated without rerunning it.
-Options retains its accessible name and
-the same opening/closing position. Narrow panes use fixed fallback rows.
-A matching hairline divider follows Time/Spectrum/XY before the test dropdown
-in the single-row layout. It occupies the existing gap without changing sizes;
-it is omitted when those controls wrap onto different rows. Build/lint pass.
-Unavailable modes retain a disabled Options button; test/source context,
-Spectrum methods and layout/detail/reset controls retain their reserved space.
-Selected points use a fixed-height horizontal scrolling strip, including the
-empty state, with Clear and the existing export portal kept at the right. Its
-tray is now 68px instead of 80px at ordinary desktop heights; chip/export top
-padding is reduced without changing their hit areas. The short-window variant
-retains its compact 64px tray.
+The latest alignment correction replaces independently wrapping controls with
+two coherent groups: source/view/test on the left; Reset, Spectrum methods,
+Options and detail/layout on the right. Above 900px of panel content width they
+share one row, including the user's exact 960px and 1115px panels. Narrower panes
+use fixed rows, preserving panel height across modes and selection counts. The
+test selector gets its own row only at 510px content width or below; the left
+group's measured 497px footprint otherwise fits comfortably in a 544px pane.
+Toolbar controls share a 32px height. The test field is 160px with full-name
+hover/focus, no visible Test label, and a matching divider after the view buttons.
 
-`AnalysisOptionsPopover.tsx` owns portal-aware outside dismissal, nested RPM
-search, two-stage Escape, keyboard traversal and viewport-aware placement. Source,
-view, settings, export and selection actions still call their existing handlers.
-Desktop container breakpoints reduce wrapping where controls fit. Concurrent
-short-window spacing changes are retained and reconciled with those breakpoints.
+Absent methods, reset and detail content consume no space. A real detail badge
+such as `1:16` sits 6px before the layout buttons; Options and layout have a
+subtle separator. Reset uses a named icon button and its existing handler.
+Unavailable views keep a disabled Options icon. Opening/closing settings never
+moves its trigger or the panel. The popover also observes its containing group's
+size so an arriving detail badge cannot leave the popup misaligned.
 
-Final build/lint and 16 read-only browser groups pass using
-`python scripts/verify_analysis_controls.py`: both sources and all views/methods,
-first-row alignment at the exact 1115px reference-panel width, right-aligned
-spectrum/options grouping, absent duplicate labels, unclipped 68px tray with
-identical 8/1/0-chip bounds, real long-name ellipsis/full-name hover, identical
-open/close coordinates, nested RPM search/Escape, Tab order,
-manual Waterfall settings, test switching, export focus/maximize, narrow desktop
-panes, actual 125%/150% zoom and a 960x400 window with every floating field
-reachable. No JavaScript errors or API writes; panel screenshots were visually
-reviewed. Evidence: `%TEMP%/ptt-analysis-controls`. The existing browser-only
-Python/Playwright runtime was used; no native scientific-data libraries loaded.
+Clear and the export portal now share the selection heading's baseline. Empty
+selection guidance occupies the left chip area; Clear is disabled at zero.
+The fixed horizontal chip strip stays 38px high and never wraps; the full tray
+is 70px (68px in short desktop windows). Long shared test names truncate while
+the selection count remains on one line. Both portal targets stay mounted.
+Settings, source/view, selection, export and analysis handlers remain intact.
 
-The rebuilt local `/ptt/` preview serves this completed request. Existing Vite
-bundle-size advisory remains. No backend or session-schema changes. Work remains
-uncommitted on `codex/ptt-feature-light` alongside existing work. Independent
-Phase 11 backlog remains outside this request.
+Build/lint and 17 read-only browser groups pass with
+`python -X utf8 scripts/verify_analysis_controls.py`: both sources/all views and
+methods, exact 960px/1115px first-row alignment, no overlapping controls or
+phantom detail gaps, identical 8/1/0-chip panel/tray bounds, real long-name
+tooltip, stationary open/close trigger, nested RPM search/two-stage Escape,
+Tab traversal, Waterfall settings, test switching, export focus/maximize,
+narrow panes, actual 125%/150% zoom and all popup fields at 960x400. No JavaScript
+errors or API writes. Updated panel screenshots were visually reviewed.
+Final targeted checks on the rebuilt correction also pass immediately either
+side of the 900px/510px breakpoints, with Reset visible, real Time detail, and
+stationary Options. At 307px content width, a 20/20 count remains on one line
+beside a truncated long shared test name and Clear/export. The actual 544px
+minimum pane now needs only two toolbar rows. See final-boundary-report.json.
+Evidence: `%TEMP%/ptt-analysis-controls`; existing browser-only Python/Playwright
+runtime, without loading native scientific-data libraries.
+
+The rebuilt local preview http://127.0.0.1:8087/ptt/ serves this correction.
+Existing Vite bundle-size advisory remains. No backend or session-schema changes.
+This checkpoint targets `codex/ptt-ui-rework-2026-09-28`. Independent Uploads
+rename changes and the Phase 11b backlog remain outside this alignment checkpoint.
 
 ## Compact waterfall color controls (2026-09-28)
 

@@ -27,8 +27,21 @@ MEASURE = """panel => {
   const options = panel.querySelector('button[aria-label="Options"]');
   const chips = panel.querySelector('[aria-label="Selected test points"]');
   const exportButton = panel.querySelector('[aria-label="Export selected plots"]');
+  const clear = panel.querySelector('[aria-label="Clear selection"]');
+  const empty = panel.querySelector('[class*="emptyMessage"]');
+  const detail = panel.querySelector('[class*="displayDetailTarget"]');
+  const command = panel.querySelector('[class*="commandRow"]');
+  const buttons = [...(command?.querySelectorAll('button') ?? [])]
+    .filter(button => button.getClientRects().length && getComputedStyle(button).visibility !== 'hidden')
+    .map(button => ({name:button.getAttribute('aria-label') ?? button.textContent.trim(), ...rect(button)}));
+  const overlaps = buttons.flatMap((left, i) => buttons.slice(i + 1).filter(right =>
+    Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x) > 1 &&
+    Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y) > 1)
+    .map(right => [left.name, right.name]));
   return {panel:rect(panel), options:rect(options), chips:rect(chips),
-    tray:rect(chips?.parentElement), firstChip:rect(chips?.firstElementChild),
+    tray:rect(chips?.closest('[class*="selectionTray"]')), firstChip:rect(chips?.firstElementChild),
+    clear:rect(clear), empty:rect(empty), detail:rect(detail), hasDetail:!!panel.querySelector('[data-plot-resolution]'),
+    overlaps,
     repeatedSourceSummary:/\\b\\d+ selected points?\\b/i.test(panel.innerText),
     visibleTestLabel:[...panel.querySelectorAll('span')].some(span =>
       span.textContent.trim() === 'Test' && span.getClientRects().length &&
@@ -132,7 +145,9 @@ def run():
             assert data["pageOverflow"] <= 1, (name, data)
             assert not data["repeatedSourceSummary"], (name, data)
             assert not data["visibleTestLabel"], (name, data)
-            assert data["tray"]["height"] <= 68, (name, "Selection tray should stay compact", data)
+            assert not data["overlaps"], (name, data["overlaps"])
+            if not data["hasDetail"] and data["detail"]:
+                assert data["detail"]["width"] == 0, (name, "Empty detail target reserves space", data)
             if data["firstChip"]:
                 assert data["firstChip"]["y"] >= data["chips"]["y"], (name, data)
                 assert (data["firstChip"]["y"] + data["firstChip"]["height"] <=
@@ -141,6 +156,12 @@ def run():
                 assert data["export"]["y"] >= data["tray"]["y"], (name, data)
                 assert (data["export"]["y"] + data["export"]["height"] <=
                         data["tray"]["y"] + data["tray"]["height"] + 1), (name, data)
+                if data["clear"]:
+                    assert abs(data["export"]["y"] + data["export"]["height"] / 2 -
+                               data["clear"]["y"] - data["clear"]["height"] / 2) <= 1, (name, data)
+                assert data["export"]["y"] + data["export"]["height"] <= data["chips"]["y"] + 1, (name, data)
+            if data["empty"]:
+                assert data["empty"]["x"] <= data["chips"]["x"] + 5, (name, "Empty message must align left", data)
             report["geometry"].append({"name": name, **data})
             return data
 
@@ -172,7 +193,6 @@ def run():
             expect(options).to_have_attribute("aria-expanded", "false")
             before = measure(name + "-closed")
             same_box(baseline["panel"], before["panel"], name + " panel")
-            same_box(baseline["options"], before["options"], name + " options")
             if not options.is_enabled():
                 expect(popup).to_have_count(0)
                 return
@@ -210,7 +230,7 @@ def run():
                         options_geometry(state_name, baseline)
                         expect(export).to_have_count(1)
                         assert export.evaluate("e => !!e.closest('[aria-label=\"Analysis controls\"]')")
-            passed(name + ": equal panel/toggle bounds across both sources and all views/methods")
+            passed(name + ": stable deck across sources/views; fixed open-close trigger and coherent controls")
 
         def single_toolbar_row(name):
             controls = [panel.get_by_role("button", name=label, exact=True) for label in
@@ -226,13 +246,11 @@ def run():
             assert 110 <= controls[2].bounding_box()["width"] <= 220
             methods = panel.get_by_role("group", name="Spectrum type", exact=True).bounding_box()
             one = panel.get_by_role("button", name="1", exact=True).bounding_box()
-            tools_box = panel.locator('[aria-label="Plot tools"]').bounding_box()
             options_box = options.bounding_box()
             method_gap = options_box["x"] - methods["x"] - methods["width"]
-            tools_gap = tools_box["x"] - options_box["x"] - options_box["width"]
+            layout_gap = one["x"] - options_box["x"] - options_box["width"]
             edge_gap = panel.bounding_box()["x"] + panel.bounding_box()["width"] - bounds[-1]["x"] - bounds[-1]["width"]
             assert 0 <= method_gap <= 12, (name, "Spectrum and Options gap", method_gap)
-            assert 0 <= tools_gap <= 20, (name, "Options and plot tools gap", tools_gap)
             assert 0 <= edge_gap <= 16, (name, "Toolbar should align right", edge_gap)
             badge = panel.locator('[data-plot-resolution]')
             if badge.count():
@@ -241,9 +259,11 @@ def run():
                 assert 0 <= badge_gap <= 12, (name, "Display detail and layout gap", badge_gap)
                 assert abs(badge_box["y"] + badge_box["height"] / 2 -
                            one["y"] - one["height"] / 2) <= 2
+            else:
+                assert 0 <= layout_gap <= 20, (name, "Empty badge leaves no phantom gap", layout_gap)
             report.setdefault("singleRowGeometry", []).append({"name": name, "controls": bounds,
-                "methodOptionsGap": method_gap, "optionsToolsGap": tools_gap, "rightEdgeGap": edge_gap})
-            measure(name + "-compact-tray")
+                "methodOptionsGap": method_gap, "optionsLayoutGap": layout_gap, "rightEdgeGap": edge_gap})
+            return measure(name + "-compact-tray")
 
         try:
             page.goto(args.url)
@@ -258,9 +278,16 @@ def run():
             cdp.send("Browser.setWindowBounds", {"windowId": window_id,
                      "bounds": {"width": 1171, "height": 1000}})
             settled()
-            single_toolbar_row("1115-control-pane")
+            wide_reference = single_toolbar_row("1115-control-pane")
             assert abs(panel.bounding_box()["width"] - 1115) <= 2
             capture_panel("1115-control-pane")
+            cdp.send("Browser.setWindowBounds", {"windowId": window_id,
+                     "bounds": {"width": 1016, "height": 1000}})
+            settled()
+            mode_matrix("960-control-pane")
+            compact_reference = single_toolbar_row("960-control-pane")
+            assert abs(panel.bounding_box()["width"] - 960) <= 2
+            capture_panel("960-control-pane")
             cdp.send("Browser.setWindowBounds", {"windowId": window_id,
                      "bounds": {"width": 1100, "height": 1000}})
             settled()
@@ -355,6 +382,15 @@ def run():
             # Check the existing test picker and full-test trace controls too.
             click_control("Full test")
             click_control("Time")
+            real_detail = panel.locator('[data-plot-resolution]')
+            expect(real_detail).to_be_visible(timeout=15000)
+            detail_box = real_detail.bounding_box()
+            layout_one = panel.get_by_role("button", name="1", exact=True).bounding_box()
+            assert 0 <= layout_one["x"] - detail_box["x"] - detail_box["width"] <= 12
+            assert abs(layout_one["y"] + layout_one["height"] / 2 -
+                       detail_box["y"] - detail_box["height"] / 2) <= 1
+            report["realDisplayDetail"] = {"text": real_detail.inner_text(),
+                                          "badge": detail_box, "layout": layout_one}
             before = measure("test-change-before")
             panel.get_by_role("button", name="Active test", exact=True).click()
             page.get_by_role("option", name=re.compile("^ptt_demo_run_b")).click()
@@ -409,6 +445,17 @@ def run():
             click_control("Full test")
             expect(export).to_be_enabled()
             same_selection_geometry("empty-full-test")
+            for pane_width, reference in [(1115, wide_reference), (960, compact_reference)]:
+                cdp.send("Browser.setWindowBounds", {"windowId": window_id,
+                         "bounds": {"width": pane_width + 56, "height": 1000}})
+                settled()
+                empty_layout = measure(f"empty-full-{pane_width}")
+                same_box(reference["panel"], empty_layout["panel"], f"Empty {pane_width} panel")
+                same_box(reference["tray"], empty_layout["tray"], f"Empty {pane_width} tray")
+                capture_panel(f"empty-full-{pane_width}")
+            cdp.send("Browser.setWindowBounds", {"windowId": window_id,
+                     "bounds": {"width": 1100, "height": 1000}})
+            settled()
             patch(selections=selections[:1])
             same_selection_geometry("single-selection")
             patch(selections=selections, scatterCollapsed=False)

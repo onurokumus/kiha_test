@@ -40,6 +40,8 @@ export function AnalysisOptionsPopover({ contextKey, available, summary, childre
     const observer = new ResizeObserver(position);
     observer.observe(anchor);
     observer.observe(popup);
+    const toolsGroup = anchor.closest('[data-analysis-tools]');
+    if (toolsGroup) observer.observe(toolsGroup);
     window.addEventListener('resize', position);
     window.addEventListener('scroll', position, true);
     return () => {

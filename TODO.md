@@ -36,10 +36,11 @@ Split/upload/component/Edit/Settings workflows pass. See IMPLEMENTATION.md and
 
 ## Requested stable analysis controls (2026-09-28)
 
-Follow-up: added a matching divider between the view buttons and test dropdown
-in the single-row layout; build/lint and scoped review pass.
-The shared display-detail badge now sits immediately beside the layout buttons;
-build/lint and focused wide/narrow browser checks pass.
+Latest follow-up: coherent left/right control groups fit the exact 960px and
+1115px panels without premature wrapping. Optional controls leave no phantom
+gaps, toolbar heights match, and Clear/export share the selection heading.
+The view/test divider and adjacent display-detail/layout group remain. Build/lint
+and 17 read-only desktop browser groups pass; see IMPLEMENTATION.md.
 
 - [x] Keep the analysis control panel steady across source/view/method changes, use the same Options button to open and close settings, and prevent selected-point chips from resizing the panel. Follow-up: fit test/method controls in the first row, shorten the test field with a full-name tooltip, and use an icon-only Options button. Remove repeated source/Test labels, group spectrum/options at the right, and tighten the selection tray. Build/lint and 16 read-only desktop browser groups pass; see IMPLEMENTATION.md.
 

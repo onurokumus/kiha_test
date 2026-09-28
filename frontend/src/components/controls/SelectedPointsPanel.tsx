@@ -190,6 +190,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
   return (
     <section className={styles.deck} aria-label="Analysis controls">
       <div className={styles.commandRow}>
+        <div className={styles.navigationGroup}>
         <div className={styles.primaryControls}>
           <div className={styles.contextControl}>
             <div className={styles.sourceButtons} role="group" aria-label="Data source">
@@ -223,7 +224,6 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
           </div>
         </div>
 
-        <div className={styles.contextRow} aria-label="Current view options">
           {activeSource === 'full' ? (
             <div className={`${styles.contextControl} ${styles.testControl}`}>
               <TestSelect
@@ -235,18 +235,22 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
               />
             </div>
           ) : (
-            <div className={styles.testControl} aria-hidden="true" />
+            <div className={styles.testControl} data-empty aria-hidden="true" />
           )}
-          <span className={styles.resetSlot} data-visible={!!(timeZoom || hasYZoom)}>
+        </div>
+
+        <div className={styles.analysisGroup} data-analysis-tools aria-label="Analysis and layout tools">
+          <span className={styles.resetSlot} hidden={!timeZoom && !hasYZoom}>
             <button
               type="button"
               className={styles.toolButton}
+              aria-label="Reset zoom"
               disabled={!timeZoom && !hasYZoom}
               tabIndex={timeZoom || hasYZoom ? undefined : -1}
               onClick={onResetTimeZoom}
               title={viewMode === 'tp' ? 'Reset time and all test-point Y ranges' : 'Reset the time range shown in all plots'}
             >
-              Reset zoom
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 6a5 5 0 1 1-.2 4M3 2v4h4" /></svg>
             </button>
           </span>
             <div className={`${styles.sourceButtons} ${styles.spectrumSlot}`} data-visible={activeView === 'spectrum'}
@@ -380,8 +384,6 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
                   </>
                 )}
             </AnalysisOptionsPopover>
-        </div>
-
         <div className={styles.toolGroup} aria-label="Plot tools">
           <span ref={detailTargetRef} className={styles.displayDetailTarget} />
           <div className={styles.densityControl}>
@@ -401,6 +403,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
             </div>
           </div>
         </div>
+        </div>
       </div>
 
       <div className={styles.selectionTray}>
@@ -416,13 +419,14 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
             {selectedTPs.length} / {maxPoints}
           </span>
           {sharedSelectionTest && <span className={styles.sharedTest} title={sharedSelectionTest}>{sharedSelectionTest}</span>}
-          {selectedTPs.length > 0 && (
-            <button type="button" className={styles.clearButton} onClick={onClearAll} aria-label="Clear selection">
+          <div className={styles.selectionActions}>
+            <button type="button" className={styles.clearButton} onClick={onClearAll} disabled={selectedTPs.length === 0} aria-label="Clear selection">
               Clear
             </button>
-          )}
-          {selectedTPs.length === 0 && <span className={styles.emptyMessage}>None selected</span>}
+            <div ref={exportTargetRef} className={styles.selectionExport} />
+          </div>
         </div>
+        <div className={styles.selectionBody}>
           <ul className={styles.selectionList} aria-label="Selected test points" tabIndex={selectedTPs.length > 0 ? 0 : undefined}>
             {selectedTPs.map(point => {
               const isVisible = !hiddenTPs.has(point.id);
@@ -469,7 +473,8 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
               );
             })}
           </ul>
-        <div ref={exportTargetRef} className={styles.selectionExport} />
+          {selectedTPs.length === 0 && <span className={styles.emptyMessage}>Choose points from the scatter plot</span>}
+        </div>
       </div>
     </section>
   );
