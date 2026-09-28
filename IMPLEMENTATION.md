@@ -1,5 +1,39 @@
 # Implementation handoff
 
+## Scatter-filter fixes integrated into Codex rework (2026-09-28)
+
+Corrects the earlier branch split: filter behavior was committed separately as
+88f9483 on feature/resumable-multipart-upload, while scatter CSV/PNG export,
+compact PNGs and section scrolling were already on this rework branch in c0b5121.
+The authoritative UI checkout for this request is D:/okumus/work_v2/kiha_test,
+branch codex/ptt-ui-rework-2026-09-28. This correction is committed and pushed to
+that branch; the older checkout is only a source reference.
+
+Adapted the filter fixes to the rework's shared NumericField, funnel control and
+light styling. Portaled column menus remain open for mouse selection; searched
+parent checkboxes reflect the visible subset; Add opens Parameters, Clear removes
+draft rows, and saved unavailable columns remain identifiable. Valid numeric edits
+commit immediately so closing the drawer cannot discard them. Raw sign, decimal
+and exponent spelling is retained while typing. Reversed bounds show an accessible
+error and match no points, including while statistics are pending. The legacy
+'any' mode is accurately labeled Range overlap. CSV/PNG exports are unchanged.
+
+Verification on the corrected rework:
+- Frontend build and lint pass; existing bundle-size advisory remains.
+- node --test frontend/tests/*.test.mjs: all 60 pass, including eight filter tests.
+- python -X utf8 scripts/verify_scatter_filters.py: all six browser groups pass,
+  covering mouse/keyboard, numeric ranges and immediate close, tree/labels,
+  persistence, missing columns, desktop resize and actual 125%/150% browser zoom.
+- python -X utf8 scripts/verify_scatter_exports.py: all 13 CSV/PNG downloads pass,
+  including filtered exports, viewport changes, encoding failure and cancellation.
+- Independent source review and git diff --check pass. The 150% browser capture
+  was visually inspected. Browser fixtures allow GET only; no API writes/errors.
+
+The preview http://127.0.0.1:8087/ptt/ was rebuilt (index-BdEq7vh2.js). Filter
+screenshots/results are in ignored data/verification/scatter-filters; export
+evidence is in %TEMP%/ptt-scatter-exports. No backend or deployment changes.
+Earlier checkpoint sections below retain their historical validation counts.
+
 ## GitHub checkpoint (2026-09-28)
 
 This checkpoint includes all pending UI, compact PNG, scatter CSV/PNG and section

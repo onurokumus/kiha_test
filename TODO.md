@@ -1,5 +1,9 @@
 # TODO
 
+## Correct scatter-filter branch placement (2026-09-28)
+
+- [x] Integrate the separately committed scatter-filter fixes into the Codex rework, preserving its NumericField, funnel control, light styling and scatter exports. Build/lint, 60 frontend tests, six filter browser groups (including actual 125%/150% zoom) and 13 CSV/PNG downloads pass. This correction targets only codex/ptt-ui-rework-2026-09-28; see IMPLEMENTATION.md.
+
 ## Requested scatter CSV and PNG export (2026-09-28)
 
 - [x] Add discoverable CSV and PNG export to the scatter plot. Export all filtered test-point means and source bounds before visual grouping/zoom, plus enabled datasheet rows. Save the current chart as a clean 2x PNG. Build/lint, 52 frontend tests, 492 backend tests/456 subtests, 13 browser downloads and four additional downloads at actual 125%/150% browser zoom pass. See IMPLEMENTATION.md.
