@@ -13,10 +13,12 @@ export interface ViewportProps {
   onViewportChange?: (value: PlotViewport | null) => void;
 }
 export interface PlotViewports {
+  full: (PlotViewport | null)[];
   spectrum: (PlotViewport | null)[];
   xy: (PlotViewport | null)[];
 }
 export const emptyPlotViewports = (): PlotViewports => ({
+  full: Array(9).fill(null),
   spectrum: Array(9).fill(null),
   xy: Array(9).fill(null),
 });
@@ -32,23 +34,33 @@ export function normalizePlotViewports(value: unknown): PlotViewports {
         ? { context: item.context, x: item.x, y: item.y }
         : null;
     });
-  return { spectrum: normalize(raw?.spectrum), xy: normalize(raw?.xy) };
+  return { full: normalize(raw?.full), spectrum: normalize(raw?.spectrum), xy: normalize(raw?.xy) };
 }
 
 /** uPlot batches scale work in a microtask. Flush our own sync/apply work via
  * batch() while muted, so an automatic range never overwrites the saved view.
- * User wheel/box/pan hooks then capture final scales through the same path. */
+ * User wheel/box/pan hooks then capture final scales through the same path.
+ * 'manual' keeps Y automatic until a vertical gesture explicitly fixes it. */
 export function usePlotViewport(
   plotRef: { current: uPlot | null },
   props: ViewportProps,
-  twoAxes: boolean
+  twoAxes: boolean | 'manual'
 ) {
   const latest = useRef(props);
   latest.current = props;
+  const manual = useRef<{ context?: string; range: AxisRange | null }>({ context: props.viewportContext, range: props.viewport?.context === props.viewportContext ? props.viewport?.y ?? null : null });
+  const previous = useRef(props.viewport);
+  if (previous.current !== props.viewport || manual.current.context !== props.viewportContext) {
+    manual.current = { context: props.viewportContext,
+      range: props.viewport?.context === props.viewportContext ? props.viewport?.y ?? null : null };
+    previous.current = props.viewport;
+  }
   const controller = useRef<{
     plugin: uPlot.Plugin;
     sync: (action: () => void) => void;
     reset: () => void;
+    setY: (range: AxisRange) => void;
+    yRange: () => AxisRange | null;
   }>();
   if (!controller.current) {
     let muted = false;
@@ -61,11 +73,12 @@ export function usePlotViewport(
     const read = (u: uPlot) => {
       if (muted || resetting || !latest.current.viewportContext) return;
       const x = [u.scales.x.min, u.scales.x.max];
-      const y = twoAxes ? [u.scales.y.min, u.scales.y.max] : null;
+      const y = twoAxes === 'manual' ? manual.current.range : twoAxes ? [u.scales.y.min, u.scales.y.max] : null;
       if (validAxisRange(x) && (y === null || validAxisRange(y)))
         publish({ context: latest.current.viewportContext, x, y });
     };
     const auto = () => {
+      manual.current.range = null;
       publish(null);
       const u = plotRef.current;
       if (!u) return;
@@ -81,6 +94,7 @@ export function usePlotViewport(
       }
     };
     const doubleClick = () => {
+      manual.current.range = null;
       resetting = true;
       publish(null);
       clearTimeout(resetTimer);
@@ -92,10 +106,10 @@ export function usePlotViewport(
       plugin: {
         hooks: {
           // Spectrum's Y follows visible X and may refit in a later microtask.
-          // Only an X transaction can change its saved viewport; recording a
-          // Y-only auto-fit would turn a default/reset view into a manual crop.
+          // Ignore Y-only auto-fit transactions; explicit manual Y and true
+          // two-axis viewports still publish their vertical changes.
           setScale: (u, axis) => {
-            if (twoAxes || axis === 'x') read(u);
+            if (twoAxes === true || axis === 'x' || (twoAxes === 'manual' && manual.current.range !== null)) read(u);
           },
           ready: (u) => u.over.addEventListener('dblclick', doubleClick, true),
           destroy: (u) => {
@@ -123,6 +137,8 @@ export function usePlotViewport(
         }
       },
       reset: auto,
+      setY: range => { manual.current.range = range; },
+      yRange: () => manual.current.range,
     };
   }
   return controller.current;

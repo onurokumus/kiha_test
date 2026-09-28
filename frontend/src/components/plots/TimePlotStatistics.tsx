@@ -14,10 +14,17 @@ interface Props {
   filterActive: boolean;
 }
 
-function formatStatistic(value: number | null | undefined, precision = 5): string {
-  return typeof value === 'number' && Number.isFinite(value)
-    ? Number(value.toPrecision(precision)).toString()
-    : '—';
+function formatStatistic(value: number | null | undefined, precision = 4): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+  const rounded = Number(value.toPrecision(precision));
+  const magnitude = Math.abs(rounded);
+  // Keep tiny nonzero values and extreme finite magnitudes readable. Rounding
+  // Number.MAX_VALUE may overflow when converted back to a number.
+  if (!Number.isFinite(rounded) || (magnitude > 0 && (magnitude < 0.0001 || magnitude >= 1e6))) {
+    const [mantissa, exponent] = value.toExponential(precision - 1).split('e');
+    return `${Number(mantissa)}e${Number(exponent)}`;
+  }
+  return String(rounded === 0 ? 0 : rounded);
 }
 
 export function TimePlotStatistics({
@@ -61,19 +68,16 @@ export function TimePlotStatistics({
     .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
   const hasFailure = rows.some((row) => row.error || row.missingPoint);
   const pending = rows.some((row) => row.loading);
-  const prefix = `${filterActive ? 'Original ' : ''}${rows.length > 1 ? 'means' : 'mean'}`;
-  const values =
-    finiteMeans.length > 1
-      ? `${formatStatistic(Math.min(...finiteMeans))}…${formatStatistic(Math.max(...finiteMeans))}`
-      : finiteMeans.length === 1
-        ? formatStatistic(finiteMeans[0])
-        : pending
-          ? 'loading…'
-          : hasFailure
-            ? 'unavailable'
-            : '—';
+  const prefix = filterActive ? 'Original mean' : 'Mean';
+  const minimum = finiteMeans.length ? Math.min(...finiteMeans) : undefined;
+  const maximum = finiteMeans.length ? Math.max(...finiteMeans) : undefined;
+  const lower = formatStatistic(minimum), upper = formatStatistic(maximum);
+  const isRange = minimum !== undefined && maximum !== minimum;
+  const values = minimum !== undefined
+    ? isRange ? lower === upper ? `≈ ${lower}` : `${lower} – ${upper}` : lower
+    : pending ? 'loading…' : hasFailure ? 'unavailable' : '—';
   const partial = finiteMeans.length > 0 && finiteMeans.length < rows.length;
-  const caption = `${prefix[0].toUpperCase()}${prefix.slice(1)} ${values}${partial ? ' · partial' : ''}`;
+  const caption = `${prefix} ${values}${partial ? ' · partial' : ''}`;
   const retryKeys = Array.from(
     new Set(
       rows
@@ -130,6 +134,7 @@ export function TimePlotStatistics({
   if (!rows.length) return null;
   return (
     <>
+      <span className={styles.summary}>
       <button
         ref={trigger}
         className={styles.trigger}
@@ -138,11 +143,20 @@ export function TimePlotStatistics({
         aria-expanded={open}
         aria-controls={open ? id : undefined}
         aria-label={`Statistics for ${column}: ${caption}`}
-        title={`${caption}. Original data, complete test points. Open per-point means and population standard deviations.`}
+        title={caption}
         onClick={() => (open ? close() : setOpen(true))}
       >
-        {caption}
+        <svg className={styles.compactIcon} viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M3 12V8m5 4V3m5 9V6" />
+        </svg>
+        <span className={styles.triggerLabel}>{prefix}</span>
+        <span className={styles.triggerValue}>{values}</span>
+        {partial && <span className={styles.triggerLabel}>partial</span>}
+        <svg className={styles.chevron} viewBox="0 0 12 12" aria-hidden="true">
+          <path d="m3 4.5 3 3 3-3" />
+        </svg>
       </button>
+      </span>
       {open &&
         createPortal(
           <div
@@ -167,19 +181,10 @@ export function TimePlotStatistics({
                 ×
               </button>
             </div>
-            <p id={`${id}-scope`}>
-              Original data · complete test points. Zoom and plot filters do not change these
-              statistics.
-            </p>
+            <p id={`${id}-scope`}>Original data · complete TP</p>
             {filterActive && (
               <p className={styles.notice}>
                 The plot is filtered; these values describe the original signal.
-              </p>
-            )}
-            {rows.length > 1 && (
-              <p>
-                The header spans individual TP means; test points are not pooled. Hidden points are
-                excluded.
               </p>
             )}
             <div
@@ -234,7 +239,7 @@ export function TimePlotStatistics({
                         ) : (
                           <>
                             <td title={mean == null ? undefined : String(mean)}>
-                              {formatStatistic(mean, 12)}
+                              {formatStatistic(mean)}
                             </td>
                             <td
                               title={
@@ -243,7 +248,7 @@ export function TimePlotStatistics({
                                   : String(summary.std_population)
                               }
                             >
-                              {formatStatistic(summary?.std_population, 12)}
+                              {formatStatistic(summary?.std_population)}
                             </td>
                             <td>
                               {stat?.n_valid ?? '—'} / {stat?.n ?? '—'}
@@ -284,11 +289,17 @@ export function TimePlotStatistics({
                 and exact row bounds are unavailable.
               </p>
             )}
+            <details className={styles.method}>
+            <summary>Method and scope</summary>
+            <p>Values use four significant digits for display. Hover a value for full precision.</p>
+            <p>Zoom and plot filters do not change these statistics. The header spans individual
+              TP means; test points are not pooled. Hidden points are excluded.</p>
             <p>
               Each finite sample has equal weight. Missing values and infinities are excluded.
               Population SD divides by the finite sample count (N); one finite sample has SD 0. Both
               values use the variable’s stored units.
             </p>
+            </details>
           </div>,
           document.body
         )}

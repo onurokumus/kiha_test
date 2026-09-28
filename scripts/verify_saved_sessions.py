@@ -83,17 +83,17 @@ def run_checks(web, api, dataset, temporary, output):
                 plotConfigs:['signal','force','signal','rpm_aux','force','signal','force','signal','rpm'], plotsUserEdited:true,
                 plotDensity:'quad',scatterCollapsed:true,clusteringEnabled:false,datasheetVisible:false,
                 mainZoom:[-1,1,-2,2],filterState:{tpKeys:['alpha:3','beta:4'],labels:[],parameterFilters:[{id:'signal-mean',column:'signal',mode:'mean',min:-1,max:1}]},
-                showHorizontalErrorBars:true,showVerticalErrorBars:true,annotationsVisible:false,specRpmCol:'rpm_aux',
+                showHorizontalErrorBars:true,showVerticalErrorBars:true,specRpmCol:'rpm_aux',
                 xyXCols:Array(9).fill('force'),xyYCols:Array(9).fill('signal'),
                 plotFilters:s.plotFilters.map((f,i)=>({...f,kind:i===0?'moving_avg':'',winS:'0.03'})),plotShowOriginal:[true,false,false,false,false,false,false,false,false],
                 timeZoom:[.5,3.5],timeYRanges:[{context:JSON.stringify(['signal',[JSON.stringify(['alpha',3,0,5])]]),range:[-.6,.8]}]};}''',catalog)
             page.evaluate('([key,value])=>localStorage.setItem(key,JSON.stringify(value))',[KEY,base]); page.reload();settle()
             time_file=save('Time comparison'); current=time_file['session']
             assert current['selections']==base['selections'] and current['specRpmCol']=='rpm_aux'
-            for key in ('mainZoom','filterState','timeZoom','timeYRanges','plotFilters','plotShowOriginal','annotationsVisible','showHorizontalErrorBars','showVerticalErrorBars','clusteringEnabled','datasheetVisible'):
+            for key in ('mainZoom','filterState','timeZoom','timeYRanges','plotFilters','plotShowOriginal','showHorizontalErrorBars','showVerticalErrorBars','clusteringEnabled','datasheetVisible'):
                 assert current[key]==base[key] or (key=='timeYRanges' and current[key][0]==base[key][0]),key
             time_axes=axes(); mode('Spectrum'); reopen(time_file); assert_axes(time_axes)
-            print('PASS: real Time file, colors/hidden/filter/overlay/notes/scatter options and Time ranges round-trip',flush=True)
+            print('PASS: real Time file, colors/hidden/filter/overlay/scatter options and Time ranges round-trip',flush=True)
             # Actual wheel -> two independent manual X ranges; survives all draw rebuilds.
             mode('Spectrum'); plots().first.locator('.u-over').hover(); page.mouse.wheel(0,-200);settle()
             assert stored()['plotViewports']['spectrum'][0]

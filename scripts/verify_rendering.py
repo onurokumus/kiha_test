@@ -39,8 +39,6 @@ def mock_api(route):
         body = {"settings": None}
     elif path == "/analysis-sources":
         body = {'version': 1, 'sources': [SOURCE]}
-    elif path.endswith('/annotations'):
-        body = {'version': 1, 'test': TEST, 'revision': 0, 'annotations': [], 'data_bounds': [0, 40]}
     elif path == '/components':
         body = {'version': 1, 'components': []}
     elif path == '/trash':

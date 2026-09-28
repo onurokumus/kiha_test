@@ -128,7 +128,7 @@ def run_checks(web, api, dataset, temporary, output):
                 selections:[{test:'alpha',tpId:3,hidden:false},{test:'beta',tpId:4,hidden:true}],
                 plotConfigs:['signal','force','rpm'],plotsUserEdited:true,plotDensity:'quad',
                 plotFilters:Array.from({length:9},(_,i)=>({...defaultAnalysisSession().plotFilters[i],kind:i===0?'moving_avg':'',winS:'0.3'})),
-                plotShowOriginal:[true,false,false,false,false,false,false,false,false],annotationsVisible:false,
+                plotShowOriginal:[true,false,false,false,false,false,false,false,false],
                 timeZoom:[0.4,2.4],timeYRanges:[{context:JSON.stringify(['signal',[JSON.stringify(['alpha',3,0,4])]]),range:[2,25]}],
                 filterState:{tpKeys:['alpha:3','beta:4'],labels:[],parameterFilters:[]}};
             }''', catalog)
@@ -136,7 +136,7 @@ def run_checks(web, api, dataset, temporary, output):
             page.wait_for_function('key => JSON.parse(localStorage.getItem(key)).selections.length===2', arg=KEY)
             current = stored(); assert current['plotConfigs'][:3] == session['plotConfigs']
             assert current['plotFilters'][0]['kind'] == 'moving_avg' and current['plotShowOriginal'][0]
-            assert current['annotationsVisible'] is False and current['timeYRanges'][0]['range'] == [2,25]
+            assert current['timeYRanges'][0]['range'] == [2,25]
             assert not recovery().count()
             # Force the autosave debounce to complete after hydration.
             page.wait_for_function('key => JSON.parse(localStorage.getItem(key)).sources.every(s => s.id)', arg=KEY)
@@ -152,7 +152,7 @@ def run_checks(web, api, dataset, temporary, output):
             status_path.write_bytes(status_before)
             page.reload(); page.wait_for_load_state('networkidle'); trace_ready()
             assert stored()['selections'][0]['test'] == 'alpha'
-            print('PASS: 12 pure resolver cases, delayed metadata order, busy/reload references and live selections/hidden/filter/overlay/annotation/axes recovery', flush=True)
+            print('PASS: 12 pure resolver cases, delayed metadata order, busy/reload references and live selections/hidden/filter/overlay/axes recovery', flush=True)
 
             assert request.post('tests/alpha/rename?new_name=renamed').ok
             seed(session); trace_ready()

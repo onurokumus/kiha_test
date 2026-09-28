@@ -36,7 +36,6 @@ from .locks import (catalog_read, catalog_write, data_read, drop_test_lock,
 from .status import BUSY_STATUSES, INGEST_LIKE, write_status
 from .paths import is_link_or_junction
 from .test_notes import Description, Notes
-from . import annotations
 from . import components
 from . import component_stats
 from .components import ComponentIds, ComponentSets
@@ -436,21 +435,6 @@ def api_rename_test(name: str, new_name: str = Query(...)):
 
 
 # ---------- editing ----------
-
-@app.get("/api/tests/{name}/annotations")
-def api_get_annotations(name: str):
-    _reject_if_busy(name)
-    with test_read(name):
-        _reject_if_busy(name)
-        return annotations.read_annotations(name)
-
-
-@app.put("/api/tests/{name}/annotations")
-def api_put_annotations(name: str, payload: annotations.AnnotationPatch):
-    _reject_if_busy(name)
-    with test_write(name):
-        _reject_if_busy(name)
-        return annotations.replace_annotations(name, payload)
 
 @app.get("/api/components")
 def api_components():

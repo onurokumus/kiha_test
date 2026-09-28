@@ -30,6 +30,21 @@ const { resolveSessionSources } =
   loadTs(fileURLToPath(new URL('../src/services/sessionSources.ts', import.meta.url)));
 const emptySlots = () => Array.from({ length: 9 }, () => []);
 
+test('legacy time-note visibility is ignored when reopening and resaving sessions', () => {
+  for (const annotationsVisible of [true, false]) {
+    const current = { ...defaultAnalysisSession(), currentTest: 'legacy-test',
+      viewMode: 'full', plotConfigs: ['rpm'], timeZoom: [1, 4] };
+    const legacy = { ...current, annotationsVisible };
+    const restored = normalizeAnalysisSession(legacy);
+    const imported = parseSessionFile(JSON.stringify({ format: 'ptt-analysis-session', version: 1,
+      name: 'Legacy notes', savedAt: '2026-09-28T10:00:00Z', session: legacy })).session;
+    assert.deepEqual(restored, normalizeAnalysisSession(current));
+    assert.deepEqual(imported, normalizeAnalysisSession(current));
+    assert.equal('annotationsVisible' in restored, false);
+    assert.equal(JSON.stringify(imported).includes('annotationsVisible'), false);
+  }
+});
+
 test('new and legacy sessions have nine independent empty comparison slots', () => {
   const session = defaultAnalysisSession();
   assert.deepEqual(session.fullPlotExtraColumns, emptySlots());
@@ -115,5 +130,26 @@ test('source recovery preserves comparison slots while metadata is unavailable o
     assert.equal(recovery.session.plotsUserEdited, true);
     assert.deepEqual(recovery.session.plotConfigs, saved.plotConfigs);
     assert.deepEqual(recovery.session.fullPlotExtraColumns, extras);
+  }
+});
+
+
+test('full-test Y and spectrum Y crops survive session files while older sessions remain valid', () => {
+  const session = defaultAnalysisSession();
+  assert.deepEqual(session.plotViewports.full, Array(9).fill(null));
+  session.plotViewports.full[2] = { context: 'full-source-and-columns', x: [2, 8], y: [-0.2, 0.7] };
+  session.plotViewports.spectrum[0] = { context: 'fft-source', x: [20, 100], y: [-6, -2] };
+  const reopened = parseSessionFile(JSON.stringify(session)).session;
+  assert.deepEqual(reopened.plotViewports, session.plotViewports);
+  const legacy = defaultAnalysisSession();
+  delete legacy.plotViewports.full;
+  assert.deepEqual(parseSessionFile(JSON.stringify(legacy)).session.plotViewports.full, Array(9).fill(null));
+});
+
+test('explicit full-test ranges reject malformed or reversed Y bounds', () => {
+  for (const full of [{}, 'bad', Array(10).fill(null), [{context:'full', x:[0,1], y:[4,2]}]]) {
+    const session = defaultAnalysisSession();
+    session.plotViewports.full = full;
+    assert.throws(() => parseSessionFile(JSON.stringify(session)), /Invalid session full ranges/);
   }
 });

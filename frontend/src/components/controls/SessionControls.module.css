@@ -5,14 +5,14 @@
   margin: auto;
   padding: 18px;
   overflow: auto;
-  color: #d6e3ed;
-  background: #252526;
-  border: 1px solid #6d899a;
+  color: #202c42;
+  background: #ffffff;
+  border: 1px solid #c4cfe1;
   border-radius: 6px;
   font-size: 13px;
 }
 .dialog::backdrop {
-  background: #0008;
+  background: #202c4266;
 }
 .heading {
   display: flex;
@@ -34,7 +34,7 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 10px;
-  border: 1px solid #4c5963;
+  border: 1px solid #cbd3e0;
   border-radius: 4px;
   margin: 16px 0;
   padding: 12px;
@@ -56,11 +56,11 @@
   box-sizing: border-box;
 }
 .dialog button {
-  color: #e1edf4;
-  background: #304858;
-  border: 1px solid #718f9f;
+  color: #202c42;
+  background: #f8f9fc;
+  border: 1px solid #c4cfe1;
   padding: 5px 10px;
-  border-radius: 3px;
+  border-radius: 5px;
   cursor: pointer;
 }
 .dialog button:disabled {
@@ -68,7 +68,7 @@
   cursor: default;
 }
 .dialog :focus-visible {
-  outline: 2px solid #a0d7fa;
+  outline: 2px solid #405994;
   outline-offset: 2px;
 }
 .preview {
@@ -83,5 +83,5 @@
   margin: 0;
 }
 .error {
-  color: #ffb0a7;
+  color: #b84343;
 }

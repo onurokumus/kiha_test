@@ -65,7 +65,7 @@ export function TrashBin({ refreshKey, onRestored, components }: {
     operating.current = true; setBusy(true);
     try {
       if (!(await confirm({ title: all ? `Permanently delete all ${ids.length} trashed tests?` : `Permanently delete '${selected[0].name}'?`,
-        description: 'The selected data, notes and time annotations will be removed permanently. This cannot be undone.',
+        description: 'The selected data and notes will be removed permanently. This cannot be undone.',
         detail: all ? 'Only the entries currently listed in this trash snapshot will be deleted. Active tests and reusable components are kept.'
           : `Deleted ${selected[0].deleted_at ? new Date(selected[0].deleted_at).toLocaleString() : 'at an unknown time'} · ID ${ids[0]}. Active tests and reusable components are kept.`,
         confirmLabel: all ? 'Delete all permanently' : 'Delete permanently', tone: 'danger' }))) return;
@@ -82,9 +82,12 @@ export function TrashBin({ refreshKey, onRestored, components }: {
   };
   return <section className={styles.bin} aria-label="Trash bin">
     <div className={styles.header}>
-      <h2><button ref={toggle} type="button" className="btn" aria-expanded={open} aria-controls="trash-entries"
-        onClick={() => setOpen((value) => !value)}>Trash ({entries.length})</button></h2>
-      <button type="button" className="btn" disabled={busy || loading} onClick={() => void reload()}>Refresh trash</button>
+      <h2><button ref={toggle} type="button" className={styles.toggle} aria-expanded={open} aria-controls="trash-entries"
+        onClick={() => setOpen((value) => !value)}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>
+        Trash <span>({entries.length})</span>
+      </button></h2>
+      {(open || readError) && <button type="button" className="btn" disabled={busy || loading} onClick={() => void reload()}>Refresh trash</button>}
     </div>
     {loading && <p role="status">Loading trash…</p>}
     {readError && <p role="alert">Trash list unavailable: {readError}. Use Refresh trash to retry.</p>}
@@ -92,7 +95,7 @@ export function TrashBin({ refreshKey, onRestored, components }: {
     {note && <p role="status">{note}</p>}
     <div id="trash-entries" hidden={!open}>
       <div className={styles.policy}>
-        <p>{retention === undefined ? 'Loading retention policy…' : retention === null ? 'Tests stay here until permanently deleted.' : `Tests may expire after ${Math.round(retention / 60)} minutes, on the next test deletion.`} Notes, time annotations and component associations remain with each stored test.</p>
+        <p>{retention === undefined ? 'Loading retention policy…' : retention === null ? 'Tests stay here until permanently deleted.' : `Tests may expire after ${Math.round(retention / 60)} minutes, on the next test deletion.`} Notes and component associations remain with each stored test.</p>
         <button type="button" className="btn" disabled={locked || !entries.length} onClick={() => void remove(entries, true)}>Delete all</button>
       </div>
       {!loading && !readError && !entries.length && <p>The trash is empty.</p>}

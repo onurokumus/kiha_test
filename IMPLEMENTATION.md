@@ -1,75 +1,493 @@
 # Implementation handoff
 
-Updated: 2026-09-16. Branch `feature/resumable-multipart-upload`.
+## Scatter reload race (2026-09-28)
 
-## Current milestone / acceptance
+Reload previously cleared source identities with metadata. A fast test with no
+test points could replace the selected axes while the matching test's metadata
+and source catalog were still pending, leaving No comparable points. An isolated
+Vite transform reinstating the original reload reproduced both changed axes and
+lost selections; shared source was never reverted.
 
-**Requested Full test multi-variable comparison and resolution-label fix are
-complete and verified.** This user-requested feature takes priority over the
-independent Phase 11b side panel. Up to six variables share a plot; Edit plots
-has searchable + addition and a compact color/count legend with removal.
-Filters, saved sessions, exports and desktop interactions retain all variables.
+Manual reload now snapshots the live workspace and reuses identity-aware recovery:
+fetch the list/catalog before invalidation, restore axes and unchanged selections,
+and reject stale responses. Unresolved recovery references survive retries.
+Metadata finally cleanup is generation-guarded, and pending scatter metadata
+shows loading instead of a premature empty state. Recovered current axis/plot
+choices remain fixed, as when reopening a saved workspace.
 
-## Implementation and decisions
+Build/lint, 44 frontend tests and `python -X utf8 scripts/verify_scatter_reload.py`
+pass. Eight mocked browser checks cover staggered schemas/catalogs, repeated
+reload, late obsolete statistics, live axis changes, and catalog failure/retry
+without overwriting the saved workspace. Five read-only real-library reloads retained the
+eight scatter points (seven rendered point/cluster marks) and selected TP with
+no page errors or API writes. Evidence: `data/verification/scatter-reload` and
+`%TEMP%/ptt-scatter-reload-live.png`. Built local preview serves the fix; existing
+Vite bundle-size advisory remains. No backend or dataset edits. Changes remain
+uncommitted alongside the independent consistency work below.
 
-- `FullTestVariables.tsx`/CSS adds the styled +, source-colored selectors and
-  dropdown legend. Original overlays use lighter dashed strokes of each
-  variable's hue; filtered traces are solid. Keyboard boundaries and last-add
-  focus are preserved. Expanded plots retain the live numeric value legend.
-- `PlotHeader.identityControl` places the Full test selector in normal flow.
-  The raw/line/env resolution text sits underneath without absolute overlap.
-  Other plot headers keep their existing behavior.
-- `FullTestPlot.tsx` batches all columns in existing window/filter requests,
-  checks every array and shared time/row/mode/level alignment, and uses ordered
-  variables in request/export context guards. One shared Y axis retains native
-  units, with no normalization or changed DSP. Filter settings apply to all
-  variables. Errors fall back explicitly to originals with Retry.
-- `App.tsx`, `TimeSeriesGrid.tsx`, `analysisSession.ts` and `sessionFiles.ts`
-  persist nine independent `fullPlotExtraColumns` lists (max five extras).
-  Legacy sessions default empty; browser recovery sanitizes, explicit files
-  reject invalid entries. Temporarily missing variables remain dormant across
-  source switches; other modes keep their existing single primary variable.
-- `backend/app/plot_export.py` adds optional `columns` to legacy `column`:
-  unique, primary first, max six, Full-test-only when multiple. Shared staged
-  export reads original native values and filters all signals together before
-  the existing crop. CSV and metadata include every variable. CSV/PNG and
-  selected-plot bundles share mounted plot handlers; PNG records colors/styles.
+## Consistency across sections (2026-09-28, complete)
+
+Split, Edit, Uploads, Components and Settings now follow Analyze's compact
+controls and quieter hierarchy. Split has a stable action toolbar/Files menu,
+smaller plot headers and shared help. Edit keeps Save/Reset reachable and shows
+draft indicators on closed sections. Uploads uses stable setup fields, optional
+metadata, compact history and Trash below it. Components has aligned filters,
+tighter numeric/source tables and direct editing. Settings groups primary
+preferences and moves import/export/default actions into More.
+
+Existing handlers, safeguards and processing are retained. App passes an explicit
+component-section destination from Components/Uploads so those links reveal and
+focus the intended editor. Menus fit short zoomed windows; Split's toolbar scrolls
+normally at viewport heights of 400px or less so it cannot cover editing controls.
+Presentation-only sample-rate rounding retains exact hover values.
+
+Final build/lint and scoped whitespace checks pass; final bundle is
+`index-Cd2hOOzV.js`. All 44 frontend helper tests, 52 production integration checks,
+16 Analyze control groups, 19 isolated Split groups, four native component
+statistics groups, 11 Edit/Settings groups, and upload quality/component/resume
+and focused Uploads suites pass. Tests cover actual 125%/150% browser zoom,
+desktop windows down to 960x400, keyboard/menu actions, real isolated saves and
+CSV/JSON downloads, failures/retry, guards, and unchanged fixture sources.
+No production-preview API writes or JavaScript errors. Canonical browser suite
+selectors were updated without weakening assertions; new integration/Edit/
+Upload helpers are checked in. Details, commands, evidence and verification
+limits: [SECTION_CONSISTENCY_QA](docs/SECTION_CONSISTENCY_QA.md).
+
+Rebuilt preview: `http://127.0.0.1:8087/ptt/`. No backend processing change, user
+dataset mutation, deployment or offline-package rebuild. Existing Vite bundle-size
+advisory remains. Changes are uncommitted alongside earlier work on
+`codex/ptt-feature-light`; the independent Phase 11 backlog is unchanged.
+
+## Viewport-fitting plot grids (2026-09-28)
+
+The requested 1x1, 2x2 and 3x3 layouts now divide the available viewport with
+zero-minimum grid tracks and no grid scrolling or narrow-pane reflow. The scatter
+remains beside the grid at desktop widths; its divider keeps horizontal mouse
+and keyboard resizing. Short-window spacing preserves the current stable analysis
+controls while making room for traces at browser zoom. Recovery messages no
+longer force the plot pane into a scrolling minimum height.
+
+uPlot uses fixed 11px tick/title fonts, measured numeric gutters, compact X
+gutters and explicit padding. `utils/uplotAxisTitle.ts` fits Spectrum/XY/Waterfall
+titles to the whole canvas, wraps long titles and preserves complete labels for
+exports. Single-source Waterfall facets flex to their cells; existing multiple
+source comparisons retain internal scrolling. Concurrent color popovers and
+stable-toolbar changes are preserved.
+
+Build/lint and scoped whitespace checks pass. All 62 desktop grid-fit checks pass
+on the final `index-DBLnTTWQ.js` bundle, including glyph bounds, title/tick overlap,
+long X/Y labels, nonblank drag/wheel/reset, resize, maximize/restore and splitter
+controls. Actual XY PNG export retains full axis titles in both image and metadata.
+No JavaScript errors or dataset writes. Actual 125%/150% browser zoom passes for
+nine TP/Full-test plots with the scatter open; single,
+quad and nine Waterfall checks pass at 1600/1100/800px. Reproduction:
+`python scripts/verify_plot_grid_fit.py`, plus
+`python D:/okumus/work/.ptt-rework-stage/check_grid_browser_zoom.py` and
+`python D:/okumus/work/.ptt-rework-stage/check_waterfall_fit.py`.
+Evidence: `%TEMP%/ptt-plot-grid-fit`, `%TEMP%/ptt-grid-browser-zoom`,
+`%TEMP%/ptt-waterfall-fit` and `%TEMP%/ptt-grid-fit-export`.
+The rebuilt local `/ptt/` preview serves this completed request. Existing Vite
+bundle-size advisory remains. Work is uncommitted alongside the other current
+changes; no backend data changes. Independent Phase 11 backlog remains next.
+
+## Stable analysis controls (2026-09-28)
+
+The requested follow-up puts source, view, compact test selector, Spectrum
+methods, icon-only Options and layout controls on the first row above 1000px
+of panel content width. The selector is capped at 180px with no visible Test
+label; existing searchable-select tooltips reveal the full test name on
+hover/focus. The duplicate selection-source summary is removed. Spectrum
+methods and the 32px Options icon sit together at the right beside the layout
+buttons, with reset space reserved before the spectrum group. The shared display
+detail badge (for example `1:16`) is grouped immediately before `1 / 4 / 9`,
+vertically centered with the buttons, with its target space retained across views.
+This alignment correction passes build/lint and focused browser checks at 1115px
+and 544px panel widths: badge-to-layout gaps are 9px/5px with matching centers;
+Full Time, TP Time and Spectrum preserve deck/Options bounds. No page errors or
+API writes. Evidence: `%TEMP%/ptt-detail-layout`. The full suite below predates
+this small correction; its grouping assertion was updated without rerunning it.
+Options retains its accessible name and
+the same opening/closing position. Narrow panes use fixed fallback rows.
+A matching hairline divider follows Time/Spectrum/XY before the test dropdown
+in the single-row layout. It occupies the existing gap without changing sizes;
+it is omitted when those controls wrap onto different rows. Build/lint pass.
+Unavailable modes retain a disabled Options button; test/source context,
+Spectrum methods and layout/detail/reset controls retain their reserved space.
+Selected points use a fixed-height horizontal scrolling strip, including the
+empty state, with Clear and the existing export portal kept at the right. Its
+tray is now 68px instead of 80px at ordinary desktop heights; chip/export top
+padding is reduced without changing their hit areas. The short-window variant
+retains its compact 64px tray.
+
+`AnalysisOptionsPopover.tsx` owns portal-aware outside dismissal, nested RPM
+search, two-stage Escape, keyboard traversal and viewport-aware placement. Source,
+view, settings, export and selection actions still call their existing handlers.
+Desktop container breakpoints reduce wrapping where controls fit. Concurrent
+short-window spacing changes are retained and reconciled with those breakpoints.
+
+Final build/lint and 16 read-only browser groups pass using
+`python scripts/verify_analysis_controls.py`: both sources and all views/methods,
+first-row alignment at the exact 1115px reference-panel width, right-aligned
+spectrum/options grouping, absent duplicate labels, unclipped 68px tray with
+identical 8/1/0-chip bounds, real long-name ellipsis/full-name hover, identical
+open/close coordinates, nested RPM search/Escape, Tab order,
+manual Waterfall settings, test switching, export focus/maximize, narrow desktop
+panes, actual 125%/150% zoom and a 960x400 window with every floating field
+reachable. No JavaScript errors or API writes; panel screenshots were visually
+reviewed. Evidence: `%TEMP%/ptt-analysis-controls`. The existing browser-only
+Python/Playwright runtime was used; no native scientific-data libraries loaded.
+
+The rebuilt local `/ptt/` preview serves this completed request. Existing Vite
+bundle-size advisory remains. No backend or session-schema changes. Work remains
+uncommitted on `codex/ptt-feature-light` alongside existing work. Independent
+Phase 11 backlog remains outside this request.
+
+## Compact waterfall color controls (2026-09-28)
+
+Waterfall Min/Max/Apply/Auto now open from a Color button beside the plot title;
+cards at 400px or below use a color-scale icon, matching Time statistics density.
+The popup is portaled outside the plot scroll area, clamped to the viewport and
+keyboard accessible, with Escape/Close focus return and outside dismissal.
+Manual mode is highlighted. Exact values, validation, per-slot linear/log limits,
+draft preservation and existing Apply/Auto handlers remain intact. Missing-sample
+warnings retain their status row. The removed controls row frees plot space.
+
+Frontend build/lint, scoped whitespace and 13 waterfall session helper tests pass.
+Six read-only browser groups cover validation, Apply/Auto/Enter, draft retention,
+keyboard/outside dismissal, reload, maximize/restore, 1100px/800px windows,
+nine cards and actual 125%/150% browser zoom. No page errors or API writes.
+Evidence: `%TEMP%/ptt-color-popover`; reproduction:
+`python -X utf8 D:/okumus/work/.ptt-rework-stage/check_color_popover.py`.
+The existing waterfall color browser suite now opens the portal by its trigger
+and unique panel ID; syntax checked, its full export suite was not rerun.
+Existing Vite bundle-size advisory remains. Built `/ptt/` preview serves the change.
+Work is uncommitted alongside concurrent axis/layout edits on
+`codex/ptt-feature-light`; independent Phase 11 backlog remains next.
+
+## Spectrum and XY scope-text removal (2026-09-28)
+
+Removed the shared Original data / complete TP banner and its row from
+TimeSeriesGrid, including full-test/selected-interval variants and Spectrum's
+Waterfall mode. Removed unused banner styles. Analysis details, missing-data
+warnings and export provenance retain their existing behavior.
+
+Frontend build/lint and scoped whitespace checks pass. Read-only browser checks
+confirm the rebuilt preview has no banner or empty row in XY, FFT and PSD,
+including full-test sources, maximize/restore and a narrower desktop viewport.
+No page errors or API writes. Evidence: `%TEMP%/ptt-spectrum-xy-scope-removal.json`.
+The existing bundle-size advisory remains. Changes are uncommitted alongside
+prior work; this request is complete and the independent Phase 11 backlog remains.
+
+## Shared display-detail indicator (2026-09-28)
+
+Full-test display detail appears once as `1:16` (or the actual loaded level),
+beside the shared layout controls. It uses the existing controls row; plots have
+no resolution footer or extra row. The hover/focus tooltip distinguishes min/max
+groups from sampled lines and states that CSV uses full-resolution samples.
+Different visible levels show Mixed with per-variable detail in the tooltip.
+Stable per-slot registrations report actual displayed responses and clean up on
+unmount; density/maximize selects the relevant slots. A missing/empty plot hides
+the aggregate until every available displayed slot has data. Original + filtered
+and filtered status labels are removed from TP and Full-test headers; filter
+warnings, overlay controls, legends and export provenance are preserved.
+
+Build/lint and seven read-only browser groups pass: one shared indicator/no plot
+footers, reclaimed canvas height, 800px/1100px, nine plots, maximize/restore,
+keyboard tooltip, envelope/line/full-detail zoom, filtered-only/TP overlay,
+browser-only mixed-level fixture and real test switching. No page errors or API
+writes. Evidence: `%TEMP%/ptt-shared-plot-detail`; reproduction:
+`python D:/okumus/work/.ptt-rework-stage/check_plot_detail_footer.py`.
+The existing full-test comparison suite's layout assertion/documentation now
+uses the shared indicator. Existing bundle-size advisory remains; the built
+preview serves the completed request. Independent Phase 11 backlog remains next.
+
+## Scatter control styling (2026-09-28)
+
+Follow-up: More's SVG now sits 1px lower to align with Manrope's visible text,
+which sits below its line-box center. Only `.moreGlyph` changes. Build/lint and
+scoped whitespace checks pass; browser checks cover 1600/960px windows, actual
+125%/150% zoom and click/Enter/Escape menu behavior. No page errors or API writes.
+Evidence: `%TEMP%/ptt-more-alignment`. The rebuilt local preview serves the fix.
+
+Removed the extra boxes around the axis row and filter summary. X/Y fields now
+share a quiet background, 34px height and one outer focus/open outline; embedded
+pickers no longer add an inner hover frame. More uses an aligned SVG ellipsis.
+Filters has a 16px funnel SVG, a quiet resting state and a tinted open/active state;
+the summary uses a single lower divider. Narrow desktop panes retain compact
+controls and wrap without stretching Filters into a full-width button.
+
+Frontend build/lint and scoped whitespace checks pass. Read-only Chromium checks
+cover axis search/change, keyboard focus/Escape, More, filter selection/badges/Clear,
+1600/1100/960px windows, minimum pane width and actual 125%/150% zoom. Screenshots
+were visually reviewed; no JavaScript errors or API writes. Evidence:
+`%TEMP%/ptt-scatter-controls`; helper:
+`D:/okumus/work/.ptt-rework-stage/check_scatter_controls.py`.
+Existing Vite bundle-size advisory remains. Changes are uncommitted alongside
+other work in `work_v2/kiha_test`; the rebuilt `/ptt/` preview serves this completed
+request. Independent Phase 11 backlog remains next.
+
+## Compact variable legend (2026-09-28)
+
+Full-test legend tooltips now show colored strokes and variable names only.
+Popup entries use one row each; Original/Filtered labels and dashed/solid samples
+appear only when both traces are shown. Single-mode rows use an unlabeled swatch.
+The footer is shortened to Shared Y axis. Names truncate in popup rows with the
+full name available on hover; tooltip entries wrap when needed. PageTooltip's
+optional legend metadata uses the existing positioning and keyboard lifecycle,
+falls back to ordinary text, and dismisses when focus moves into the popup.
+
+Build/lint and six read-only browser groups pass: original/filtered/overlay,
+matching colors, one-row layout, keyboard/Escape, 800px/1100px widths, six variables,
+removal and ordinary tooltip regression. No page errors or API writes. Evidence:
+`%TEMP%/ptt-compact-legend`; reproduction:
+`python D:/okumus/work/.ptt-rework-stage/check_compact_legend.py`.
+Existing bundle-size advisory remains. The built local preview serves this change;
+this request is complete and the independent Phase 11 backlog remains next.
+
+## Export button placement (2026-09-28)
+
+Export selected plots now sits at the right of the selected-point chips, directly
+below Clear. A stable tray target receives the existing grid-owned export control
+through a React portal, preserving its registry and dialog. The separate export
+row is removed; Spectrum/XY scope text was removed in the subsequent request above. The empty TP tray reserves
+no button space, while Full test still exports without selected points.
+
+Build/lint and scoped whitespace checks pass. Read-only Chromium checks cover
+eight wrapping chips at 1600/1100/960px, keyboard/click dialog opening, Escape/Close
+focus return, maximize/restore availability, Time/Spectrum/XY switching, and
+empty/full-test states. No JavaScript errors or API writes; screenshots visually
+checked. Evidence: `%TEMP%/ptt-export-placement`; helper:
+`D:/okumus/work/.ptt-rework-stage/check_export_placement.py`.
+Existing Vite bundle-size advisory remains. Work remains uncommitted in the
+authoritative `work_v2/kiha_test` alongside prior/concurrent changes. The rebuilt
+`/ptt/` preview serves this completed request; independent Phase 11 remains next.
+
+## Time notes removed (2026-09-28)
+
+Removed the unused time-notes feature across TP and Full-test plots: toolbar toggle,
+marker/interval/manage menu items, dialog, canvas overlays, hooks/API requests,
+PNG text/provenance and export availability dependency, session visibility state,
+and backend GET/PUT routes/storage module. Source files already present on disk
+are not deleted or interpreted; ordinary test descriptions/findings remain.
+Legacy sessions ignore the retired field and new saves omit it.
+
+Build/lint and frontend helper tests pass (44 checks in the current workspace).
+Backend Python 3.13 suite: 492 tests / 456 subtests pass; two existing dependency
+deprecations. Existing Vite bundle-size advisory remains. Focused browser checks
+cover TP/Full-test keyboard/right-click menus, single/combined PNG ZIP exports,
+1100px resizing, maximize/restore, old session file import, save and reload, with
+no page errors, retired API requests or dataset-write requests. Reproduction:
+`python scripts/verify_time_notes_removal.py`; evidence:
+`%TEMP%/ptt-time-notes-removal`. Backend tests use the existing dependencies via
+`PYTHONPATH=D:/okumus/kiha_test/backend/.venv/Lib/site-packages` with
+`backend/.venv/Scripts/python.exe -m pytest backend/tests`.
+
+Local backend restarted (launcher PID 14340); live OpenAPI confirms no annotation
+endpoints. The rebuilt `/ptt/` preview serves the change. Obsolete annotation
+tests were removed and related browser suites updated. Other concurrent work
+and datasets are preserved; no deployment or Git checkpoint was requested.
+This request is complete; the independent Phase 11 backlog remains next.
+
+Updated: 2026-09-28. Selected test-point tooltips now show only the point name,
+test and optional label; the Click to hide/show suffix is removed in
+`frontend/src/components/controls/SelectedPointsPanel.tsx`. Visibility actions and
+accessible names remain intact. Frontend build/lint pass; this text-only change
+was checked in source without another browser run. Existing bundle-size advisory
+remains. Independent Phase 11 backlog is unchanged; prior work is recorded below.
+
+## Current milestone
+
+The user-requested interaction pass is installed in `work_v2/kiha_test` and
+verified through the final built `/ptt/` route. The local preview serves it now.
+
+Changes: fixed scatter hover dismissal and removed its heading; plot titles now
+select signals directly, including empty-workspace configuration; Source/View
+and FFT/PSD/Waterfall are clear separate controls; selected chips remain visible;
+shared numeric fields select all on entry and show small inline warnings; secondary
+help is under Details. TP plots keep one variable; Full-test comparisons keep six.
+Capacity remains 20 and selected colors remain distinct from blue overview points.
+
+Full precision, session schemas, exports, explicit save guards and backend methods
+are preserved. Invalid filter drafts, known Nyquist violations and invalid Waterfall
+color limits cannot launch processing or commit limits. Unknown sample rates still
+use server validation. Native focus stays on a signal selector after chart remount.
+
+## Source and preservation
+
+Authoritative destination: `D:/okumus/work_v2/kiha_test`, branch
+`codex/ptt-feature-light`, based on feature/resumable-multipart-upload commit
+`1f0793380d0bad43f88e2c4d384ad05f7a0421e2`. Work remains uncommitted.
+Current stage: `D:/okumus/work/.ptt-interaction-rework`.
+Do not copy older `.ptt-feature-rework` or `.ptt-main-rework-backup` over this work.
+
+Changed-file install protects intervening edits using
+`D:/okumus/work/.ptt-rework-stage/interaction-baseline.json`; overwritten files
+are backed up and dataset hashes verified. Installation/backup record:
+`D:/okumus/work/.ptt-rework-stage/interaction-install-report.json`.
+Original repositories, final data, Python environment and dependency versions
+are preserved. No GitHub push, ZIP or production deployment was requested.
+Earlier main UI remains in stash `3bbdbd2cec371d2db63a98dee4e1817b85281459`.
 
 ## Verification
 
-- Full backend: `backend/.venv/Scripts/python.exe -m pytest backend/tests
-  -p no:cacheprovider -q`: **497 tests / 477 subtests pass**, 50.69 s, native
-  Python 3.13.14. Two existing dependency deprecations.
-- Frontend `npm.cmd run build`, `npm.cmd run lint`: pass (existing Vite
-  bundle-size notice). `node --test tests/*.test.mjs`: **32 pass**, including
-  six new session persistence/recovery cases.
-- `python scripts/verify_full_test_variables.py`: **nine groups pass** on
-  isolated 3353/8353. Real additions/removals, capacity and keyboard focus,
-  missing-schema source switch/return, raw/envelope/filtered alignment/colors,
-  native CSV/PNG/bundle downloads, actual session Save/Open/reload, mode switch,
-  live expanded values, crosshair/drag/wheel/reset, filter failure/Retry,
-  1100px and actual 125%/150% zoom. **13 source files unchanged**, zero page errors.
-- Existing `python scripts/verify_filter_overlay.py --frontend-port 3354
-  --backend-port 8354`: **ten groups pass unmodified**, seven sources unchanged,
-  TP/Full legacy overlays, stale/failure/misalignment handling, nine-slot and
-  desktop gesture/resize/maximize/zoom regression.
-- Edit/legend/150% desktop/exported PNG images reviewed; independent code
-  reviews and whitespace checks pass. See
-  [full verification](docs/FULL_TEST_VARIABLES_VERIFICATION.md). Browser evidence
-  is ignored under `data/verification/full-test-variables/` and
-  `data/verification/filter-overlay/`. Early test harness selectors were
-  corrected; no outstanding failure or verification blocker.
+- Frontend build/lint pass; all 41 frontend helper tests pass.
+- Python 3.13 backend: 497 tests / 477 subtests pass; two dependency deprecations.
+- Isolated browser suites: 9 direct-analysis, 9 scatter-hover, 8 numeric groups.
+  Exports/session reopening, keyboard focus, source/view combinations, 20 chips,
+  actual 125%/150% zoom, invalid-input guards and fixture preservation pass.
+- Final destination build/lint, 41 helpers and Git whitespace check pass.
+- Final built `/ptt/` smoke: all six pages, scatter dismissal, Source/View/method
+  controls, local logo/font, 1100px resize and K11C0 roundtrip pass. No page/HTTP
+  errors or external requests; 26 non-cache dataset files unchanged.
+- Details and local reproduction: [INTERACTION_QA](docs/INTERACTION_QA.md).
+  Evidence: `%TEMP%/codex-ptt-interaction-qa`.
+- Preceding feature migration evidence remains in [REWORK_QA](docs/REWORK_QA.md).
 
-## Git checkpoint / next steps
+Inherited Vite large-bundle advisory remains. Dependencies were not upgraded.
 
-The user requested a GitHub commit and push after verification. This checkpoint
-contains the feature's frontend controls/rendering/state/session plumbing, time
-CSV backend/type/tests, helper and browser tests, and TODO/handoff/verification
-docs on `feature/resumable-multipart-upload`. Existing datasets and dependencies
-are preserved. No deployment was requested. An inaccessible ignored pytest
-cache can produce a harmless Git status warning.
+## Runtime and next step
 
-Stop at this completed milestone. Next backlog remains **Phase 11b
-(collapsible variable/filter side panel)**. Earlier CSV quoting, waterfall color,
-detail and auto-split milestones remain complete; their evidence is linked from
-TODO.md and the corresponding verification documents.
+Preview: `http://127.0.0.1:8087/ptt/`; same-origin `/ptt/api/`, local backend8000,
+K11C0 return link, local Manrope and the shared K11C0 rotor favicon/logo. No backend code change
+requires a restart. The project uses `npm run build` (no build:rota script).
+
+This requested milestone is complete. Independent Phase11 backlog remains unchanged. Offline Linux deployment
+and 20/100-user load testing have not been performed. Deployment notes remain in
+`../PTT.md`; runtime has no internet/GPT/auth dependency.
+
+## Subsequent requested visual polish
+
+Browse full test has white text in normal/hover states. Source/View/Layout
+visible captions were removed while accessible group names remain. The browser
+title is PTT · Propeller Test Tool (HTML entity prevents mojibake). Header and
+favicon now share a local copy of toolsPage/assets/favicon.svg, replacing the
+previous PTT image. Original asset remains available; no external asset dependency.
+
+Header now uses one 64px row for brand, navigation and actions above 1240px.
+Narrower desktop widths retain all controls in two rows; checked at 1600, 1440,
+1241, 1100, 960 and 800px with no overflow. Build/lint, navigation and Sessions
+checks pass. Local backend was found stopped and restarted (PID21296); all three
+ready tests load again. Header preview: %TEMP%/ptt-single-row-header.png.
+
+Shared control contrast audit: fixed the legacy primary-button text override
+centrally, including hover and disabled states; removed the Browse-only exception.
+Primary/import/upload actions share white text on the accent background. Improved
+muted selection controls, Auto-split toggle and warning/danger confirmation hovers.
+Build/lint and Git whitespace checks pass. Disposable-browser audit covers all six
+pages, searchable dropdown selections/hover, native filter select, invalid/valid
+numeric fields, axis and session dialogs, shared action variants and the actual
+Try again state via browser-only API failure interception. All 42 checked states
+pass; rendered enabled control text meets 4.5:1 in sampled states. No page errors
+or data writes. Evidence: %TEMP%/ptt-control-colors/report.json; helper:
+D:/okumus/work/.ptt-rework-stage/check_control_colors.py.
+
+Plot-copy simplification initially consolidated scope above the grid for
+XY/Spectrum/Waterfall; that banner is now removed by the request above. Mean captions
+open statistics directly; filtered plots still say Original mean(s). Routine per-plot
+scope/Details rows are removed; Analysis details stays in each plot menu and
+missing-sample warnings retain direct Details access. Incompatible signals use a
+quiet one-line state without the waveform or repeated names; complete reasons
+remain accessible and in XY Details. Slots, signal pickers, retries and export
+provenance are preserved. Build/lint and whitespace checks pass; 15 focused
+browser checks cover quad/maximized scopes, keyboard focus, filter context,
+analysis details, incompatible data and omitted-row warnings at 1600/1100 widths.
+No browser errors or data-write requests. Evidence: %TEMP%/ptt-plot-repetition;
+helper: D:/okumus/work/.ptt-rework-stage/check_plot_repetition.py.
+
+Statistics display polish: the quiet Mean label, tabular value and disclosure
+chevron now sit at the right of the signal title row, before the plot actions.
+Only Time TP headers opt into this layout; other summaries keep their placement.
+Cards at 400px or below use a statistics icon with the rounded mean in its compact tooltip
+and the same popup, keeping the title row compact. Identical means appear once;
+ranges use a spaced dash, while distinct means that round to the same value show
+an approximation marker. Captions and popup means/population SD use four
+significant digits with trailing zeros removed; small nonzero values retain
+scientific notation. Full precision stays available on popup cell hover. The header tooltip now shows
+only the rounded caption (including Original/partial context when applicable). Sample counts,
+row bounds, time precision and all calculations are unchanged. Popup numeric
+columns align to the right. Build/lint and whitespace checks pass; focused browser
+checks verify real demo means/SD, exact titles, keyboard opening/closing, equal
+and near-equal values, tiny signed numbers/zero, and unclipped desktop captions.
+Evidence: %TEMP%/ptt-statistic-display. Follow-up header build/lint and browser
+checks pass for four/nine plots at 1600/1100px, including same-row alignment,
+unclipped values, signal picking and keyboard statistics. Compact statistics
+controls also preserve tooltip and popup access with the scatter pane open. Latest screenshots:
+%TEMP%/ptt-statistic-header.
+
+Requested TP toolbar text removal (2026-09-28): removed the Statistics / original
+data / complete TP banner from TimeSeriesGrid. Build/lint pass; read-only browser
+check against the rebuilt /ptt/ preview confirms four TP plots and statistics
+controls remain visible with no shared scope banner. Existing bundle-size advisory
+remains. This request is complete; independent Phase 11 backlog is unchanged.
+
+
+## Selected-point left-drag zoom (2026-09-28)
+
+Ordinary left-drag now zooms X, Y or both in TP Time plots, using a 10 CSS pixel
+threshold on each axis. X remains linked; only the target plot receives fixed Y
+bounds through its existing saved range state. The shared pan/zoom plugin owns
+this gesture for TP plots so synchronized uPlot mouse events cannot apply Y to
+other variables. Y is committed before X to prevent automatic fitting from
+undoing the selection. Existing Alt+drag/wheel Y, Shift/middle X pan retain their existing behavior. Other plot modes are covered
+by the extension below. Escape, blur, resize/destruction and
+reset clean up the selection. Double-click resets both axes; Reset Y still fits
+only Y. The Y-axis Details text describes these gestures.
+
+Build/lint and scoped whitespace checks pass. Nine read-only browser checks cover
+diagonal/vertical/horizontal/reverse drags, exact plotted Y bounds, per-slot state,
+maximize/resize/reload, double-click reset, Alt-drag, Escape/tiny gestures,
+Shift/middle pan and right-drag exclusion. No JavaScript errors or API writes.
+Evidence: %TEMP%/ptt-left-drag-zoom; reproduction helper:
+D:/okumus/work/.ptt-rework-stage/check_left_drag_zoom.py.
+
+
+## Left-drag zoom across non-scatter plots (2026-09-28)
+
+Full test, FFT/PSD, Waterfall, XY and Split previews now use the same 10px-per-axis
+left-drag selection as TP Time: horizontal X, vertical Y, diagonal both. Full/Split
+X stays linked and each plot owns its Y. The main Recharts scatter keeps its
+existing wheel zoom and left-drag pan. Split labels/edge handles still edit only
+the unsaved TP draft. Escape/right-click exclusions and double-click reset remain.
+
+Full-test Y ranges persist in the optional `plotViewports.full` session slots;
+older sessions normalize to automatic Y. FFT/PSD and Waterfall distinguish manual
+Y from automatic fitting, so X changes/refetches cannot discard the vertical crop.
+Spectrum linear/log switches preserve X and reset incompatible Y bounds; old
+X-only viewport contexts still restore. Split Y survives refetch/resize, and any
+Split reset clears all preview Y axes. Split viewport state remains local to its
+editing view, as before. XY retains its two-axis wheel/pan behavior.
+
+Build/lint and 44 frontend tests pass, including new full-range session validation
+and legacy compatibility. Read-only browser checks cover all modes with actual
+rendered bounds, vertical/horizontal/reverse box drag, reset, resize/reload,
+linear/log transitions, Escape and right click. Split handle edits remained in the
+disposable browser draft. Scatter wheel/pan behavior was checked unchanged.
+No JavaScript errors or data-write requests. A transient backend-unavailable
+response interrupted one Waterfall reload check; the backend recovered and the
+rerun passed. No backend changes. Evidence and reproduction:
+%TEMP%/ptt-all-plot-zoom and D:/okumus/work/.ptt-rework-stage/check_all_plot_zoom.py.
+
+
+## Drag-box border snap fix (2026-09-28)
+
+Two real-mouse reproductions exposed separate transitions: reversing back inside
+an activated axis threshold, and crossing X/Y thresholds at different times at
+the start of a drag. Latching activation fixed the first but left the initial
+full-height/full-width flash. `uplotPanZoom.ts` now draws the ordinary preview
+from the anchor to the pointer immediately, independently of commit thresholds.
+Pure horizontal/vertical drags have a one-pixel visual thickness, clamped inward
+at plot edges. Unmoved/cancelled/released selections have zero area. Alt-Y keeps
+its full-width preview; the original axis thresholds/latches, actual-coordinate
+range calculation and finite/nonzero guards still govern commits. Calculations,
+linked axes and scatter behavior are unchanged.
+
+Build/lint and all 44 frontend tests pass. `check_zoom_start.py` passes 28 browser
+groups across TP Time, Full test, FFT, PSD, Waterfall, XY and Split: first-pixel
+and unequal threshold starts in both directions, reversals, Alt-Y, visible thin
+horizontal/vertical drags, tiny noncommitting gestures, Escape, actual final
+ranges and selection cleanup. No JavaScript errors or API writes. Evidence:
+%TEMP%/ptt-zoom-start (before.json records the original 213px-to-11px height snap);
+helper: D:/okumus/work/.ptt-rework-stage/check_zoom_start.py. Existing earlier
+reset/resize/reload/scatter checks are recorded under the non-scatter extension.
+The stopped local preview/backend were restarted for testing (ports 8087/8000).
+This requested fix is complete; the independent Phase 11 backlog is unchanged.

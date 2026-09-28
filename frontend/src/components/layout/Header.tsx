@@ -43,8 +43,8 @@ const UploadChip: React.FC<{
       <span
         className="badge upload-chip"
         style={{
-          color: '#f48771',
-          background: '#4b1d1d',
+          color: '#b84343',
+          background: '#fff1f0',
           display: 'inline-flex',
           alignItems: 'center',
           gap: 6,
@@ -158,46 +158,46 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="app-header">
-      <div className="app-header-primary">
-        <div className="app-brand">
-          <img
-            className="app-brand-mark"
-            src={`${import.meta.env.BASE_URL}ptt-logo.webp`}
-            width={32}
-            height={32}
-            alt=""
-            decoding="async"
-            draggable={false}
-          />
-          <span>
-            Propeller Test Tool<small>Test data workbench</small>
-          </span>
-        </div>
-        <nav className="app-nav" aria-label="Main navigation">
-          {tabButton('analyze', 'Analyze')}
-          {tabButton('split', 'Split')}
-          {tabButton('edit', 'Edit')}
-          {tabButton('uploads', 'Uploads')}
-          {tabButton('components', 'Components')}
-          {tabButton('settings', 'Settings')}
-        </nav>
+      <div className="app-brand">
+        <img className="app-brand-mark" src={`${import.meta.env.BASE_URL}assets/k11c0-mark.svg`}
+          width={36} height={36} alt="K11C0 logo" decoding="async" draggable={false} />
+        <h1>Propeller Test Tool</h1>
+      </div>
+      <nav className="app-nav" aria-label="Main navigation">
+        {tabButton('analyze', 'Analyze')}
+        {tabButton('split', 'Split')}
+        {tabButton('edit', 'Edit')}
+        {tabButton('uploads', 'Uploads')}
+        {tabButton('components', 'Components')}
+        {tabButton('settings', 'Settings')}
+      </nav>
+      <div className="app-header-actions">
+        <span className="app-header-summary" role="status">
+          {testListStatus === 'ready' ? <><span className="app-ready-dot" aria-hidden="true" />
+            {tests.filter((test) => test.status === 'ready').length} ready tests
+          </> : testListStatus === 'loading' ? 'Loading tests…' : 'Test count unavailable'}
+        </span>
         <button className="btn app-import-button" onClick={() => importRef.current?.click()}>
           <span aria-hidden="true">＋</span> Import CSV
         </button>
         {sessionControls}
-        <input
-          ref={importRef}
-          type="file"
-          accept=".csv"
-          multiple
-          style={{ display: 'none' }}
-          onChange={(event) => {
-            const files = Array.from(event.target.files ?? []);
-            if (files.length) onImportFiles(files);
-            event.target.value = '';
-          }}
-        />
+        <a className="app-back-link" href="/k11c0/">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m6-6-6 6 6 6" /></svg>
+          Back to K11C0
+        </a>
       </div>
+      <input
+        ref={importRef}
+        type="file"
+        accept=".csv"
+        multiple
+        style={{ display: 'none' }}
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          if (files.length) onImportFiles(files);
+          event.target.value = '';
+        }}
+      />
       <div className="app-header-activity" aria-label="Upload activity">
         {uploads.map((item) => (
           <UploadChip
@@ -231,12 +231,6 @@ export const Header: React.FC<HeaderProps> = ({
           </span>
         )}
       </div>
-      <span className="app-header-summary" role="status">
-        {testListStatus === 'ready' ? <>
-          <span className="app-ready-dot" aria-hidden="true" />
-          {tests.filter((test) => test.status === 'ready').length} ready tests
-        </> : testListStatus === 'loading' ? 'Loading tests…' : 'Test count unavailable'}
-      </span>
     </header>
   );
 };

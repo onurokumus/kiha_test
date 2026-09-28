@@ -7,6 +7,7 @@ import { FilterSpec, SelectedTestPoint, StatsCache, TimePlotConfig } from '../..
 import { noSelect } from '../../constants/styles';
 import {
   AXIS_STYLE,
+  PLOT_PADDING,
   TIME_AXIS_STYLE,
   TP_SYNC_KEY,
 } from '../../constants/uplotTheme';
@@ -31,10 +32,6 @@ import { SearchableSelect } from '../controls/SearchableSelect';
 import { PlotStateOverlay, PlotEmptyState } from './PlotState';
 import { TimeYAxisControls, type TimeYAxisActions } from './TimeYAxisControls';
 import { TimePlotStatistics } from './TimePlotStatistics';
-import { PlotAnnotations, type PlotAnnotationActions } from './PlotAnnotations';
-import type { AnnotationManager } from '../../hooks/useAnnotations';
-import { usePlotAnnotations, annotationAvailability } from '../../hooks/usePlotAnnotations';
-import { annotationsPlugin, annotationImageDetails, traceTimeBounds, type AnnotationSource } from '../../utils/plotAnnotations';
 import { PlotActionMenu } from './PlotActionMenu';
 import { PlotHeader } from './PlotHeader';
 import styles from './TimePlot.module.css';
@@ -47,9 +44,6 @@ function setRange(u: uPlot, axis: string, range: AxisRange | null) {
 }
 
 interface TimePlotProps {
-  annotations: AnnotationManager;
-  annotationsVisible: boolean;
-  onAnnotationsVisibleChange: (visible: boolean) => void;
   cfg: TimePlotConfig;
   selectedTPs: SelectedTestPoint[];
   hiddenTPs: Set<string>;
@@ -128,7 +122,6 @@ const EMPTY_FILTER_RESULT: FilterResultState = {
  *  from TP start. uPlot mode 2 (facets) — each series keeps its own time
  *  array, so TPs of different lengths overlay without resampling. */
 export const TimePlot: React.FC<TimePlotProps> = ({
-  annotations, annotationsVisible, onAnnotationsVisibleChange,
   cfg,
   selectedTPs,
   hiddenTPs,
@@ -152,7 +145,6 @@ export const TimePlot: React.FC<TimePlotProps> = ({
   showOriginal = false,
   onShowOriginalChange,
   fs = null,
-  isEditMode = false,
   allConfigs = [],
   onConfigChange,
   registerExport,
@@ -160,7 +152,6 @@ export const TimePlot: React.FC<TimePlotProps> = ({
   const chartRef = useRef<HTMLDivElement>(null);
   const yAxisActions = useRef<TimeYAxisActions>(null);
   const exportActions = useRef<PlotExportActions>(null);
-  const annotationActions = useRef<PlotAnnotationActions>(null);
   const plotRef = useRef<uPlot | null>(null);
   const structKeyRef = useRef('');
   // Latest zoom-commit callback — a reused uPlot keeps its build-time closures.
@@ -413,15 +404,6 @@ export const TimePlot: React.FC<TimePlotProps> = ({
     ]
   );
 
-  const annotationSources = useMemo<AnnotationSource[]>(() => eligibleTPs.flatMap((point) => {
-    const bounds = traceTimeBounds(point.traces[cfg.key]);
-    const seriesIndices = plottedTraces.flatMap((trace, index) => trace.id === point.id ? [index + 1] : []);
-    return bounds && seriesIndices.length ? [{ key: point.id, test: point.test,
-      label: `${point.test} · TP ${point.tpId} · ${point.name}`, origin: bounds[0], bounds,
-      color: point.color, seriesIndices }] : [];
-  }), [eligibleTPs, cfg.key, plottedTraces]);
-  const annotationItems = usePlotAnnotations(annotationSources, annotations, annotationsVisible, plotRef);
-
   useEffect(() => {
     const el = chartRef.current;
     if (!el || plottedTraces.length === 0 || box.w < 40 || box.h < 40) {
@@ -455,6 +437,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
       mode: 2,
       width: box.w,
       height: box.h,
+      padding: PLOT_PADDING,
       scales: {
         x: {
           time: false,
@@ -473,7 +456,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
         drag: { x: true, y: false },
         sync: { key: TP_SYNC_KEY, scales: ['x', null] },
       },
-      plugins: [visibleYAutoFitPlugin(() => yRangeRef.current !== null), annotationsPlugin((plot) => annotationItems.current(plot)), xPanZoomPlugin(
+      plugins: [visibleYAutoFitPlugin(() => yRangeRef.current !== null), xPanZoomPlugin(
         (r) => onZoomChangeRef.current(r),
         (r) => {
           yRangeRef.current = r;
@@ -537,7 +520,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
     });
     appliedXRef.current = zoomDomain;
     appliedTracesRef.current = plottedTraces;
-  }, [plottedTraces, showingOverlay, zoomDomain, yRange, box, isExpanded, zoomResetVersion, annotationItems]);
+  }, [plottedTraces, showingOverlay, zoomDomain, yRange, box, isExpanded, zoomResetVersion]);
 
   const containerClass = `${styles.plotContainer} ${
     isExpanded ? styles.plotContainerExpanded : styles.plotContainerCollapsed
@@ -626,9 +609,9 @@ export const TimePlot: React.FC<TimePlotProps> = ({
     : filterPending ? 'Wait for the filter to finish.'
       : ferror || filterPartialMessage ? 'Retry the filter for every visible test point before exporting filtered data.'
         : !showingFiltered ? 'No filtered result is available.' : null;
-  const pngExportReason = annotationAvailability(annotationSources, annotations, annotationsVisible) || (!hasData ? 'Wait for a plot with samples.'
+  const pngExportReason = !hasData ? 'Wait for a plot with samples.'
     : filterSpec && filteredExportReason ? filteredExportReason
-      : (!filterSpec || showOriginal) ? originalExportReason : null);
+      : (!filterSpec || showOriginal) ? originalExportReason : null;
   const exportTPs = () => {
     const shown = new Set(plottedTraces.filter((_trace, index) =>
       plotRef.current?.series[index + 1]?.show !== false).map((trace) => trace.id));
@@ -644,8 +627,9 @@ export const TimePlot: React.FC<TimePlotProps> = ({
     };
   } else if (eligibleTPs.length === 0) {
     emptyState = {
-      title: `${cfg.label} is not available`,
-      detail: 'None of the visible test points contain this signal.',
+      title: 'Signal unavailable',
+      detail: `None of the visible test points contain ${cfg.label}.`,
+      compact: true,
     };
   } else if (filterSpec && !ferror) {
     emptyState = {
@@ -688,7 +672,6 @@ export const TimePlot: React.FC<TimePlotProps> = ({
       ? [`Visible filtered TPs (complete TP counts): ${visibleResults.reduce((n, r) => n + (r.spikeEventCount ?? 0), 0)} events; ${visibleResults.reduce((n, r) => n + (r.replacementCount ?? 0), 0)} samples repaired.`] : [];
     return { plot, options: {
       provenance: { kind: 'time', column: cfg.key, source_mode: 'tp',
-        annotations: { visible: annotationsVisible, items: annotationItems.current(plot) },
         sources: points.map((point) => ({ test: point.test, test_point_id: String(point.tpId),
           traces: visibleTraces.filter((trace) => trace.id === point.id).map((trace) => ({
             kind: trace.kind, label: trace.label,
@@ -703,7 +686,6 @@ export const TimePlot: React.FC<TimePlotProps> = ({
       scope: ['Time (s) relative to each TP first stored sample; current X/Y view.',
         ...points.map((p) => `${p.test} · TP ${p.tpId} · ${p.name}`)],
       details: [...plotFilterDetails(hasFiltered ? filterSpec : null),
-        ...annotationImageDetails(annotationItems.current(plot), annotationsVisible),
         'Plot representation may be reduced. CSV exports full-resolution samples.',
         ...(hasFiltered ? ['Filters process complete saved TPs before the displayed zoom.', ...repairCounts] : []),
         ...(visibleResults.some((f) => f.warning) ? ['Dataset edge: filter transients possible.'] : []),
@@ -725,27 +707,30 @@ export const TimePlot: React.FC<TimePlotProps> = ({
     <div className={containerClass} style={{ ...noSelect }} role="group" aria-label={`${cfg.label} time plot`}
       data-filter-display={plottedTraces.length > 0 ? showingOverlay ? 'overlay' : showingFiltered ? 'filtered' : 'original' : undefined}>
       <PlotHeader label={cfg.label} isExpanded={isExpanded} onToggleExpand={onToggleExpand}
+        identityControl={allConfigs.length > 0 && onConfigChange ? <SearchableSelect
+          value={cfg.key} onChange={onConfigChange}
+          options={allConfigs.map(config => ({ value: config.key, label: config.label, keywords: [config.key] }))}
+          ariaLabel="Plot variable" title="Change plot variable"
+          searchPlaceholder="Search plot variables..." optionNoun="variable" appearance="title" /> : undefined}
 
+        summaryInline
         summary={<TimePlotStatistics column={cfg.key} selectedTPs={selectedTPs} hiddenTPs={hiddenTPs}
           columnsByTest={columnsByTest} statsCache={statsCache} errors={statsErrors}
           onRetry={onRetryStatistics} filterActive={Boolean(filterSpec)} />}
         status={<>
           {yRange && <span title="Fixed Y bounds; choose Auto-fit Y in the plot menu">Y fixed</span>}
-          {showingFiltered && <span className={styles.filteredStatus} title={showingOverlay ? 'Original: thin dashed · filtered: solid' : 'Filtered signal'}>
-            {showingOverlay ? 'original + filtered' : 'filtered'}
-          </span>}
-          {(ferror || filterNeedsAttention) && <span title={ferror || 'Open Filter settings in the plot menu'} style={{ color: '#e7c16f' }}>Filter needs attention</span>}
+          {(ferror || filterNeedsAttention) && <span title={ferror || 'Open Filter settings in the plot menu'} style={{ color: '#806b20' }}>Filter needs attention</span>}
         </>}
         actions={<>
           <PlotActionMenu label={cfg.label} targetRef={chartRef} contextKey={JSON.stringify([cfg.key, tpFingerprint, filterSpec, showOriginal, zoomDomain])}
-            getPlot={() => plotRef.current} exportActions={exportActions} annotationActions={annotationActions}
-            canAnnotate={!!annotationSources.length} resetLabel="Reset linked time / TP Y axes" onReset={() => onZoomReset?.()}
+            exportActions={exportActions}
+            resetLabel="Reset linked time / TP Y axes" onReset={() => onZoomReset?.()}
             yAxis={{ automatic: yRange === null, enabled: hasData, onEdit: () => yAxisActions.current?.open() }}
             onResetY={() => onYRangeChange(null)}
             onEditFilter={filterUi && onFilterUiChange ? () => setShowFilter(true) : undefined}
             filterStatus={ferror || (filterNeedsAttention ? "Filter settings need attention" : undefined)}
             overlay={onShowOriginalChange ? { checked: showOriginal, enabled: !!filterSpec, onChange: onShowOriginalChange } : undefined}
-            notes={{ visible: annotationsVisible, onChange: onAnnotationsVisibleChange }} />
+            />
           <TimeYAxisControls hideTrigger actionsRef={yAxisActions} label={cfg.label} range={yRange} disabled={!hasData}
             getRange={() => {
               const scale = plotRef.current?.scales.y;
@@ -753,8 +738,6 @@ export const TimePlot: React.FC<TimePlotProps> = ({
               return validAxisRange(range) ? range : null;
             }}
             onChange={onYRangeChange} />
-          <PlotAnnotations hideTrigger actionsRef={annotationActions} label={cfg.label} sources={annotationSources} manager={annotations}
-            visible={annotationsVisible} onVisibleChange={onAnnotationsVisibleChange} getPlot={() => plotRef.current} />
           <PlotExportControls hideTrigger actionsRef={exportActions} label={cfg.label}
             contextKey={JSON.stringify([cfg.key, tpFingerprint, filterSpec, showOriginal])}
             scope={exportScope}
@@ -767,31 +750,6 @@ export const TimePlot: React.FC<TimePlotProps> = ({
             }} />
 
         </>}>
-        {isEditMode && allConfigs.length > 0 && (
-          <SearchableSelect
-            value={cfg.key}
-            onChange={(nextKey) => onConfigChange?.(nextKey)}
-            options={allConfigs.map((config) => ({
-              value: config.key,
-              label: config.label,
-              keywords: [config.key],
-            }))}
-            ariaLabel="Plot variable"
-            title="Change the variable shown in this plot"
-            searchPlaceholder="Search plot variables..."
-            optionNoun="variable"
-            appearance="plot"
-            size="compact"
-            style={{
-              position: 'absolute',
-              left: 0,
-              top: -2,
-              width: 180,
-              maxWidth: 'calc(100% - 76px)',
-              zIndex: 5,
-            }}
-          />
-        )}
       </PlotHeader>
       {showFilter && filterUi && onFilterUiChange && (
         <PlotFilterDialog label={cfg.label} onClose={() => setShowFilter(false)}>
@@ -806,24 +764,25 @@ export const TimePlot: React.FC<TimePlotProps> = ({
           )}
           {showingFiltered && <span className="badge">{filterSummary}</span>}
           {fovers.some((f) => f.warning) && (
-            <span style={{ fontSize: 10, color: '#dcdcaa' }}>
+            <span style={{ fontSize: 10, color: '#806b20' }}>
               ⚠ range touches data edge — filter transients possible
             </span>
           )}
           {fovers.some((f) => f.gapWarning) && (
-            <span style={{ fontSize: 10, color: '#dcdcaa' }}>
+            <span style={{ fontSize: 10, color: '#806b20' }}>
               ⚠ filters run separately on each side of missing-data gaps
             </span>
           )}
           {fovers.some((f) => f.segmentWarning) && (
-            <span style={{ fontSize: 10, color: '#dcdcaa' }}>
+            <span style={{ fontSize: 10, color: '#806b20' }}>
               short continuous regions have no filtered trace
             </span>
           )}
-          {ferror && <span style={{ color: '#f48771', fontSize: 10 }}>{ferror}</span>}
-          {filterSpec && <span style={{ flexBasis: '100%', fontSize: 10, color: '#a5b0b8' }}>
+          {ferror && <span style={{ color: '#b84343', fontSize: 10 }}>{ferror}</span>}
+          {filterSpec && <details style={{ flexBasis: '100%', fontSize: 10, color: '#626f83' }}>
+            <summary style={{ cursor: 'pointer' }}>Details</summary>
             Filters each complete saved TP; zoom does not change the filter. Original is stored data before this filter, including prior edits.
-          </span>}
+          </details>}
         </div>
         </PlotFilterDialog>
       )}

@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 import re
 import tempfile
-from uuid import uuid4
 
 from playwright.sync_api import expect, sync_playwright
 from verify_data_quality import ROOT, servers, upload
@@ -29,10 +28,9 @@ def run_checks(web, api, dataset, temporary, output):
         legacy['user_meta'] = {'motor': 'legacy motor text', 'components': 'legacy field', '__proto__': 'keep'}
         legacy['notes'] = 'Existing findings'
         legacy_path.write_text(json.dumps(legacy), encoding='utf-8')
-        doc = request.get('tests/legacy/annotations').json()
-        assert request.put('tests/legacy/annotations', data={'expected_revision': 0, 'expected_data_bounds': doc['data_bounds'],
-            'annotations': [{'id': str(uuid4()), 'start_s': 2, 'text': 'Keep marker'}]}).ok
-        annotations = (dataset / 'tests/legacy/annotations.json').read_bytes()
+        # Retired feature files remain inert and survive unrelated metadata edits.
+        annotations = b'{"version":1,"annotations":[{"start_s":2,"text":"Keep marker"}]}\n'
+        (dataset / 'tests/legacy/annotations.json').write_bytes(annotations)
         unrelated = (dataset / 'tests/unrelated/meta.json').read_bytes()
         context = p.chromium.launch_persistent_context(str(temporary / 'profile'), channel='chromium', headless=True,
             no_viewport=True, args=[f'--disable-extensions-except={extension}', f'--load-extension={extension}', '--window-size=1440,1000'])
@@ -59,6 +57,8 @@ def run_checks(web, api, dataset, temporary, output):
             chooser.value.set_files(files)
             page.get_by_label('Uploaded by', exact=True).fill('Hardware lab')
             expect(component_set()).to_have_count(0)
+            page.get_by_role('region', name='Import setup', exact=True).locator('summary').filter(
+                has_text='Description and components').click()
             page.get_by_role('button', name='Add component set', exact=True).click()
             expect(select('motor')).to_be_enabled()
         def edit(name):
@@ -177,10 +177,10 @@ def run_checks(web, api, dataset, temporary, output):
             for kind in labels: expect(select(kind)).to_have_value(assigned[kind])
             select('motor').select_option('__new')
             picker().get_by_role('textbox', name='New electric motor name', exact=True).fill('Unsaved new motor')
-            page.get_by_role('button', name='reset drafts', exact=True).click()
+            page.get_by_role('button', name='Reset drafts', exact=True).click()
             expect(picker().get_by_role('textbox')).to_have_count(0)
             expect(select('motor')).to_have_value(motor2)
-            print('PASS: legacy correction/clear/reload, metadata/annotations preservation, failed-save retry, stale409 and draft reset', flush=True)
+            print('PASS: legacy correction/clear/reload, metadata/legacy-file preservation, failed-save retry, stale409 and draft reset', flush=True)
 
             # A missing registry entry stays visibly unresolved until corrected.
             registry_path = dataset / 'components.json'; registry = registry_path.read_bytes()

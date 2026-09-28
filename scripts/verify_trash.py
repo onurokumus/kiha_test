@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import re
 import tempfile
-from uuid import uuid4
 
 from playwright.sync_api import expect, sync_playwright
 from verify_data_quality import ROOT, servers, upload
@@ -30,9 +29,9 @@ def run_checks(web, api, dataset, temporary, output):
         for name in ('alpha', 'unrelated', 'from_edit', 'legacy_bin'):
             assert upload(request, name, csv, components={'motor': motor['id']}, description=f'{name}: retained notes and hardware')['status'] == 'ready'
         meta = request.patch('tests/alpha/meta', data={'notes': 'Keep all findings <literal> 🔧', 'user_meta': {'motor': 'legacy text'}}).json()
-        doc = request.get('tests/alpha/annotations').json()
-        assert request.put('tests/alpha/annotations', data={'expected_revision': 0, 'expected_data_bounds': doc['data_bounds'],
-            'annotations': [{'id': str(uuid4()), 'start_s': 1, 'end_s': 3, 'text': 'Preserve interval'}]}).ok
+        # Retired feature files remain inert and survive the test lifecycle.
+        (dataset / 'tests/alpha/annotations.json').write_bytes(
+            b'{"version":1,"annotations":[{"start_s":1,"end_s":3,"text":"Preserve interval"}]}\n')
         assert request.put('tests/alpha/testpoints', data={'test': 'alpha', 'test_points': [{'id': 3, 'name': 'Run', 'start_s': 0, 'end_s': 5}]}).ok
         # Analysis lazily adds durable IDs before its first metadata load (8a).
         # Include that additive file in lifecycle preservation checks.

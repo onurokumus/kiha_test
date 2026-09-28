@@ -41,11 +41,13 @@ export default function ComponentStatisticsView({ onEditTest }: { onEditTest: (n
     `${item.name} ${item.id}`.toLocaleLowerCase().includes(search.toLocaleLowerCase())) ?? [], [data, kind, search]);
   const component = data?.components.find(item => item.id === selected);
   const sources = data?.sources.filter(source => !component || source.component_ids[component.kind] === component.id) ?? [];
+  const filtered = Boolean(search || kind);
 
   const sourceRow = (source: UsageSource, index: number) => <tr key={`${source.name}:${source.set_id ?? 'none'}:${index}`}>
-    <th scope="row"><span>{source.name}</span><small>{source.set_name ?? 'No sets assigned'}</small><small>{source.rpm_column ? `RPM: ${source.rpm_column}` : 'RPM unassigned'}</small>
+    <th scope="row"><div className={styles.sourceHeading}><span>{source.name}</span>
       <button className="btn" disabled={source.status !== 'ready'} onClick={() => onEditTest(source.name)}
-        aria-label={`Edit component settings for ${source.name}`}>Edit settings</button></th>
+        aria-label={`Edit component settings for ${source.name}`}>Edit settings</button></div>
+      <div className={styles.sourceMeta}><span>{source.set_name ?? 'No sets assigned'}</span><span>{source.rpm_column ? `RPM: ${source.rpm_column}` : 'RPM unassigned'}</span></div></th>
     <td>{source.summary ? minutes(source.summary.running_seconds) : '—'}</td>
     <td>{source.summary ? range(source.summary.min_rpm, source.summary.max_rpm) : '—'}</td>
     <td>{source.issue ? <span className={styles.warning}>{source.issue}</span> : source.summary && <>
@@ -71,9 +73,16 @@ export default function ComponentStatisticsView({ onEditTest }: { onEditTest: (n
 
   return <main className={styles.page} aria-label="Component statistics">
     <div className={styles.content}>
-      <div className={styles.header}><div><h1>Component use</h1>
-        <p>Runtime, shaft RPM, motor temperature and power across active tests, for each individual component.</p></div>
-        <button className="btn" disabled={loading} onClick={() => setGeneration(value => value + 1)}>Refresh statistics</button>
+      <div className={styles.toolbar}>
+        <h1>Component use</h1>
+        <div className={styles.filters}>
+          <label><span className={styles.srOnly}>Find component</span><input className="input" type="search" placeholder="Find component…" value={search} onChange={e => setSearch(e.target.value)} /></label>
+          <label><span className={styles.srOnly}>Component type</span><select className="input" value={kind} onChange={e => setKind(e.target.value as ComponentKind | '')}>
+            <option value="">All types</option>{COMPONENT_KINDS.map(value => <option key={value} value={value}>{COMPONENT_LABELS[value]}</option>)}
+          </select></label>
+          <button className="btn" disabled={!filtered} onClick={() => { setSearch(''); setKind(''); }}>Clear filters</button>
+        </div>
+        <button className={`btn ${styles.refresh}`} disabled={loading} onClick={() => setGeneration(value => value + 1)}>Refresh statistics</button>
       </div>
       <details className={styles.policy}><summary>Counting policy · active tests, RPM &gt; 0</summary>
         <p>Each finite positive RPM sample contributes 1 / sample rate seconds. Minutes = running seconds / 60.
@@ -92,15 +101,17 @@ export default function ComponentStatisticsView({ onEditTest }: { onEditTest: (n
       {error && <div role="alert" className={styles.warning}>Component statistics unavailable: {error}
         <button className="btn" onClick={() => setGeneration(value => value + 1)}>Retry statistics</button></div>}
       {data && <>
-        <p className={styles.snapshot} role="status">Components: {data.components.length} · Active tests: {new Set(data.sources.map(source => source.name)).size} · Set contributions: {data.sources.length} · Excluded sets: {data.sources.filter(source => source.issue).length} · Refreshed {new Date(data.generated_at).toLocaleTimeString()}</p>
+        <div className={styles.snapshot} role="status">
+          <span>{filtered ? `${items.length} of ${data.components.length}` : data.components.length} components</span>
+          <span>{new Set(data.sources.map(source => source.name)).size} active tests</span>
+          <span>{data.sources.length} set contributions</span>
+          <span className={data.sources.some(source => source.issue) ? styles.warning : undefined}>{data.sources.filter(source => source.issue).length} excluded sets</span>
+          <span className={styles.refreshed}>Refreshed {new Date(data.generated_at).toLocaleTimeString()}</span>
+        </div>
         {!data.components.length && <p>No components yet. Create hardware sets in Uploads or Edit, then choose each set’s RPM and optional temperature/power columns in Edit.</p>}
         {data.components.length > 0 && <>
-          <div className={styles.filters}><label>Find component<input className="input" type="search" value={search} onChange={e => setSearch(e.target.value)} /></label>
-            <label>Component type<select className="input" value={kind} onChange={e => setKind(e.target.value as ComponentKind | '')}>
-              <option value="">All types</option>{COMPONENT_KINDS.map(value => <option key={value} value={value}>{COMPONENT_LABELS[value]}</option>)}
-            </select></label></div>
-          <div className={styles.tableScroll} role="region" aria-label="Component totals" tabIndex={0}><table>
-            <caption>Runtime in minutes; RPM, temperature and power statistics include running samples only.</caption>
+          <div className={`${styles.tableScroll} ${styles.totals}`} role="region" aria-label="Component totals" tabIndex={0}><table>
+            <caption className={styles.srOnly}>Runtime in minutes; RPM, temperature and power statistics include running samples only.</caption>
             <thead><tr><th scope="col">Component</th><th scope="col">Tests used / assigned</th><th scope="col">Runtime (min)</th><th scope="col">Mean RPM</th><th scope="col">SD RPM</th><th scope="col">RPM range</th><th scope="col">Motor temperature (°C)</th><th scope="col">Power (W)</th></tr></thead>
             <tbody>{items.map(item => <tr key={item.id} data-component-id={item.id} aria-selected={selected === item.id}>
               <th scope="row"><button className={styles.nameButton} aria-pressed={selected === item.id}
@@ -123,9 +134,11 @@ export default function ComponentStatisticsView({ onEditTest }: { onEditTest: (n
           <p>Excluded from runtime: missing RPM {minutes(component.summary.missing_rpm_seconds)} min; acquisition gaps {minutes(component.summary.gap_seconds)} min.
             Stopped: {minutes(component.summary.stopped_seconds)} min. Tests without usable data have unknown runtime.</p>
         </section>}
-        <section aria-label="Test contributions"><h2>{component ? `Tests assigned to ${component.name}` : 'Test contributions and coverage'}</h2>
-          <p>Select a component above to inspect its ranges and sources. Each row is one test set; Source details shows temperature/power and coverage during running.</p>
-          {sources.length ? <div className={styles.tableScroll} role="region" aria-label="Source contributions" tabIndex={0}><table>
+        <section className={styles.contributions} aria-label="Test contributions">
+          <div className={styles.header}><h2>{component ? `Tests assigned to ${component.name}` : 'Test contributions and coverage'}</h2>
+            <span className={styles.contributionCount}>{sources.length} set{sources.length === 1 ? '' : 's'}</span></div>
+          <details className={styles.help}><summary>About contributions</summary><p>Select a component above to inspect its ranges and sources. Each row is one test set; Source details shows temperature/power and coverage during running.</p></details>
+          {sources.length ? <div className={`${styles.tableScroll} ${styles.sources}`} role="region" aria-label="Source contributions" tabIndex={0}><table>
             <thead><tr><th scope="col">Test / set / RPM source</th><th scope="col">Runtime (min)</th><th scope="col">RPM range</th><th scope="col">Coverage</th></tr></thead>
             <tbody>{sources.map(sourceRow)}</tbody></table></div> : <p>No active tests{component ? ' assigned to this component' : ''}.</p>}
         </section>

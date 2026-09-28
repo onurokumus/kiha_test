@@ -1,0 +1,140 @@
+{
+  "source_branch": "feature/resumable-multipart-upload",
+  "source_commit": "1f0793380d0bad43f88e2c4d384ad05f7a0421e2",
+  "backend_tests": 497,
+  "backend_subtests": 477,
+  "browser_suites": 10,
+  "browser_check_groups": 63,
+  "suites": {
+    "component_sets": {
+      "suite": "component_sets",
+      "stage": "D:\\okumus\\work\\.ptt-feature-rework",
+      "frontend_port": 3356,
+      "backend_port": 8356,
+      "passed": true,
+      "seconds": 19.68,
+      "check_groups": 6
+    },
+    "full_test_variables": {
+      "suite": "full_test_variables",
+      "stage": "D:\\okumus\\work\\.ptt-feature-rework",
+      "frontend_port": 3356,
+      "backend_port": 8356,
+      "passed": true,
+      "seconds": 23.97,
+      "check_groups": 9
+    },
+    "filter_overlay": {
+      "suite": "filter_overlay",
+      "stage": "D:\\okumus\\work\\.ptt-feature-rework",
+      "frontend_port": 3357,
+      "backend_port": 8357,
+      "passed": true,
+      "seconds": 41.65,
+      "check_groups": 10
+    },
+    "analysis_metadata": {
+      "suite": "analysis_metadata",
+      "stage": "D:\\okumus\\work\\.ptt-feature-rework",
+      "frontend_port": 3357,
+      "backend_port": 8357,
+      "passed": true,
+      "seconds": 30.15,
+      "check_groups": 3
+    },
+    "saved_sessions": {
+      "suite": "saved_sessions",
+      "stage": "D:\\okumus\\work\\.ptt-feature-rework",
+      "frontend_port": 3357,
+      "backend_port": 8357,
+      "passed": true,
+      "seconds": 64.63,
+      "check_groups": 5
+    },
+    "waterfall_detail": {
+      "suite": "waterfall_detail",
+      "stage": "D:\\okumus\\work\\.ptt-feature-rework",
+      "frontend_port": 3357,
+      "backend_port": 8357,
+      "passed": true,
+      "seconds": 43.37,
+      "check_groups": 8
+    },
+    "waterfall_color": {
+      "suite": "waterfall_color",
+      "stage": "D:\\okumus\\work\\.ptt-feature-rework",
+      "frontend_port": 3356,
+      "backend_port": 8356,
+      "passed": true,
+      "seconds": 25.94,
+      "check_groups": 9
+    },
+    "multi_variable_autosplit": {
+      "suite": "multi_variable_autosplit",
+      "stage": "D:\\okumus\\work\\.ptt-feature-rework",
+      "frontend_port": 3357,
+      "backend_port": 8357,
+      "passed": true,
+      "seconds": 13.52,
+      "check_groups": 9
+    },
+    "edit_settings": {
+      "suite": "edit_settings",
+      "stage": "D:\\okumus\\work\\.ptt-feature-rework",
+      "frontend_port": 3356,
+      "backend_port": 8356,
+      "passed": true,
+      "seconds": 9.66,
+      "check_groups": 3
+    },
+    "visual_review": {
+      "suite": "visual_review",
+      "stage": "D:\\okumus\\work\\.ptt-feature-rework",
+      "frontend_port": 3356,
+      "backend_port": 8356,
+      "passed": true,
+      "seconds": 4.97,
+      "check_groups": 1
+    }
+  },
+  "legacy_compatibility": {
+    "passed": true,
+    "original_files_unchanged": 18,
+    "tests": [
+      {
+        "name": "ptt_demo_run_a",
+        "rows": 8192,
+        "test_points": 4,
+        "statistics_entries": 4,
+        "window_export_rows": 513,
+        "tp_export_rows": 1536
+      },
+      {
+        "name": "ptt_demo_run_b",
+        "rows": 8192,
+        "test_points": 4,
+        "statistics_entries": 4,
+        "window_export_rows": 513,
+        "tp_export_rows": 1536
+      }
+    ],
+    "analysis_sources": 2
+  },
+  "numerical_check": {
+    "rows": 40,
+    "double_signal": "3 * signal",
+    "shifted": "3 * signal + 1",
+    "passed": true
+  },
+  "isolated_ports_stopped": [
+    3356,
+    3357,
+    8356,
+    8357,
+    8358
+  ],
+  "normal_ports_left_running": [
+    8087,
+    8000
+  ]
+}

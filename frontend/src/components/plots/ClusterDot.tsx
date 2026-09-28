@@ -19,11 +19,11 @@ const ClusterDotComponent: React.FC<ClusterDotProps> = ({
   const baseRadius = Math.min(10 + Math.log10(count) * 5, 20);
   const activeRadius = isHovered ? baseRadius + 2 : baseRadius;
   const strokeWidth = isHovered ? 2 : 1;
-  const strokeColor = isHovered ? '#569cd6' : '#1e1e1e';
+  const strokeColor = isHovered ? '#263685' : '#f7f8fa';
   const fillColor = isHovered ? '#3a6fa0' : '#2e5c8a';
 
   return (
-    <g>
+    <g data-scatter-hover-target="cluster">
       {/* Single flat circle - no effects, no gradients */}
       <circle
         cx={cx}
@@ -54,10 +54,10 @@ const ClusterDotComponent: React.FC<ClusterDotProps> = ({
         y={cy}
         dy="0.35em"
         textAnchor="middle"
-        fill="#e0e0e0"
+        fill="#ffffff"
         fontSize={Math.min(baseRadius * 0.85, 14)}
         fontWeight="600"
-        fontFamily="Segoe UI, sans-serif"
+        fontFamily="Manrope, Segoe UI, sans-serif"
         style={{
           pointerEvents: 'none',
           userSelect: 'none',

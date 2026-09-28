@@ -19,8 +19,11 @@ Completed 2026-09-16 on `feature/resumable-multipart-upload`.
   normalization, resampling, independent Y scaling, or scientific-method change.
   The folded legend and image export explicitly describe the shared scale.
   Expanded plots retain the existing horizontally scrollable live value legend.
-- Display resolution (`raw`, `line 1:N`, `env 1:N`) now follows the controls in
-  normal layout flow instead of overlapping an absolutely positioned selector.
+- Display resolution appears once as a compact ratio such as `1:16` beside
+  the layout buttons in the existing shared Analysis controls row, outside
+  every plot header and canvas. Its hover/focus tooltip explains sampled
+  lines or grouped extrema. These labels and placement were updated on 2026-09-28;
+  the verification results below describe the original 2026-09-16 milestone.
 - The nine slots retain independent additional-variable lists in autosave and
   session Save/Open. Old sessions default to no extras. Temporarily unavailable
   variables stay dormant when viewing another test and reappear on return.

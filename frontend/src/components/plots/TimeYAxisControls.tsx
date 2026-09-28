@@ -1,6 +1,8 @@
 import { useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react';
 import { createPortal } from 'react-dom';
 import { AxisRange, validAxisRange } from '../../utils/timePlotRanges';
+import { NumericField } from '../controls/NumericField';
+import { numericError, parseFiniteNumber } from '../../utils/numericField';
 import styles from './TimeYAxisControls.module.css';
 
 interface Props {
@@ -24,7 +26,11 @@ export function TimeYAxisControls({ label, range, disabled, getRange, onChange, 
   const [open, setOpen] = useState(false);
   const [min, setMin] = useState('');
   const [max, setMax] = useState('');
-  const [error, setError] = useState('');
+  const minimum = parseFiniteNumber(min);
+  const maximum = parseFiniteNumber(max);
+  const rangeError = minimum !== null && maximum !== null && !validAxisRange([minimum, maximum])
+    ? 'Keep minimum below maximum with a wider range.' : '';
+  const error = numericError(min) || numericError(max) || rangeError;
   const [position, setPosition] = useState({ left: 0, top: 0 });
   const close = () => {
     setOpen(false);
@@ -42,7 +48,6 @@ export function TimeYAxisControls({ label, range, disabled, getRange, onChange, 
     const current = getRange();
     setMin(current ? String(current[0]) : '');
     setMax(current ? String(current[1]) : '');
-    setError('');
     setOpen(true);
   };
   useImperativeHandle(actionsRef, () => ({ open: openEditor }));
@@ -151,11 +156,8 @@ export function TimeYAxisControls({ label, range, disabled, getRange, onChange, 
             }}
             onSubmit={(event) => {
               event.preventDefault();
-              const next: AxisRange = [Number(min), Number(max)];
-              if (!min.trim() || !max.trim() || !validAxisRange(next)) {
-                setError('Enter finite bounds with minimum below maximum and a wider range.');
-                return;
-              }
+              if (minimum === null || maximum === null || error) return;
+              const next: AxisRange = [minimum, maximum];
               onChange(next);
               close();
             }}
@@ -169,30 +171,25 @@ export function TimeYAxisControls({ label, range, disabled, getRange, onChange, 
             <div className={styles.fields}>
               <label>
                 Minimum
-                <input
+                <NumericField
+                  aria-label="Minimum"
                   value={min}
                   onChange={(event) => setMin(event.target.value)}
-                  aria-invalid={!!error}
-                  aria-describedby={error ? `${id}-error` : undefined}
+                  error={rangeError}
                 />
               </label>
               <label>
                 Maximum
-                <input
+                <NumericField
+                  aria-label="Maximum"
                   value={max}
                   onChange={(event) => setMax(event.target.value)}
-                  aria-invalid={!!error}
-                  aria-describedby={error ? `${id}-error` : undefined}
+                  error={rangeError}
                 />
               </label>
             </div>
-            {error && (
-              <p id={`${id}-error`} role="alert" className={styles.error}>
-                {error}
-              </p>
-            )}
             <div className={styles.actions}>
-              <button type="submit" disabled={disabled}>
+              <button type="submit" disabled={disabled || !!error}>
                 Apply range
               </button>
               <button
@@ -205,11 +202,14 @@ export function TimeYAxisControls({ label, range, disabled, getRange, onChange, 
                 Reset Y
               </button>
             </div>
+            <details className={styles.details}>
+            <summary>Details</summary>
             <p id={`${id}-hint`}>
               Automatic Y fits the visible traces as you zoom or pan time. Apply a range to keep
-              fixed bounds, or use Alt + wheel / Alt + drag for manual Y zoom. Reset Y restores
-              automatic fitting and keeps time zoom.
+              fixed bounds. Left-drag horizontally for X, vertically for Y, or diagonally for both.
+              Alt + wheel / Alt + drag adjusts only Y. Reset Y restores automatic fitting and keeps time zoom.
             </p>
+            </details>
           </form>,
           document.body
         )}

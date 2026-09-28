@@ -35,7 +35,6 @@ import {
 } from '../types';
 import { fetchExportFile } from './exportProgress';
 import type { AppSettings } from '../constants/settings';
-import type { AnnotationDocument, TimeAnnotation } from '../utils/plotAnnotations';
 import type { ComponentCatalog, ComponentIds, ComponentKind, ComponentSet, HardwareComponent } from '../utils/components';
 import type { AnalysisSourceCatalog } from './sessionSources';
 
@@ -87,18 +86,6 @@ export async function putDefaultSettings(settings: AppSettings): Promise<AppSett
 
 export async function fetchMeta(name: string, signal?: AbortSignal, expectedSourceId?: string | null): Promise<TestMeta> {
   return getJson<TestMeta>(`/tests/${encodeURIComponent(name)}${expectedSourceId ? `?expected_source_id=${encodeURIComponent(expectedSourceId)}` : ''}`, signal);
-}
-
-export function fetchAnnotations(name: string, signal?: AbortSignal): Promise<AnnotationDocument> {
-  return getJson(`/tests/${encodeURIComponent(name)}/annotations`, signal);
-}
-
-export function saveAnnotations(document: AnnotationDocument, annotations: TimeAnnotation[]): Promise<AnnotationDocument> {
-  return sendJson(`/tests/${encodeURIComponent(document.test)}/annotations`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expected_revision: document.revision,
-      expected_data_bounds: document.data_bounds, annotations }),
-  });
 }
 
 export async function fetchTestPoints(name: string, expectedSourceId?: string | null): Promise<TestPointsFile> {

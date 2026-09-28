@@ -107,8 +107,22 @@ def run(web, api, dataset, temporary, output):
         def plot(column='signal_N'):
             return page.get_by_role('group', name=f'{column} waterfall plot', exact=True).first
 
-        def form(column='signal_N'):
-            return plot(column).get_by_role('form', name='Waterfall color range', exact=True)
+        def color_panel(column='signal_N', slot=0):
+            target = page.get_by_role('group', name=f'{column} waterfall plot', exact=True).nth(slot)
+            trigger = target.get_by_role('button', name=f'Color range for {column}', exact=True)
+            if trigger.get_attribute('aria-expanded') != 'true':
+                trigger.click()
+            expect(trigger).to_have_attribute('aria-expanded', 'true')
+            # The panel is portaled outside the plot. Its generated ID also
+            # distinguishes slots that show the same variable.
+            panel_id = trigger.get_attribute('aria-controls')
+            assert panel_id, 'Open color range trigger must identify its panel'
+            panel = page.locator(f'[id={json.dumps(panel_id)}]')
+            expect(panel).to_be_visible()
+            return panel
+
+        def form(column='signal_N', slot=0):
+            return color_panel(column, slot).get_by_role('form', name='Waterfall color range', exact=True)
 
         def settled(columns=('signal_N',)):
             page.wait_for_load_state('networkidle')
@@ -196,7 +210,7 @@ def run(web, api, dataset, temporary, output):
             worker = context.service_workers[0] if context.service_workers else context.wait_for_event('serviceworker')
             page.goto(web)
             settled()
-            expect(form()).to_contain_text('Color (U)')
+            expect(color_panel()).to_contain_text('Auto · U')
             initial_color = colors()
             initial_axes = scales()
             assert initial_color[0] == initial_color[1]
@@ -266,7 +280,7 @@ def run(web, api, dataset, temporary, output):
             before_requests = len(requests)
             page.get_by_role('button', name='Log color', exact=True).click()
             settled()
-            expect(form()).to_contain_text('Color (log10(U))')
+            expect(color_panel()).to_contain_text('Auto · log10(U)')
             auto_log = colors()
             assert math.isclose(auto_log[0]['scale'][1] - auto_log[0]['scale'][0], 6)
             apply(-3, -.2, keyboard=True)
@@ -365,7 +379,7 @@ def run(web, api, dataset, temporary, output):
             settled(('signal_N', 'quiet_U'))
             duplicates = page.get_by_role('group', name='signal_N waterfall plot', exact=True)
             expect(duplicates).to_have_count(2)
-            duplicate_form = duplicates.nth(1).get_by_role('form', name='Waterfall color range', exact=True)
+            duplicate_form = form('signal_N', slot=1)
             expect(duplicate_form.get_by_role('button', name='Auto', exact=True)).to_have_attribute('aria-pressed', 'true')
             duplicate_form.get_by_label('Color min', exact=True).fill('0.3')
             duplicate_form.get_by_label('Color max', exact=True).fill('3.3')

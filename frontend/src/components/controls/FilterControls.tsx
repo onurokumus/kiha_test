@@ -10,6 +10,8 @@ import React, {
 } from 'react';
 import { AggMode, FilterOptions, ScatterFilterState } from '../../types';
 import { SearchableSelect } from './SearchableSelect';
+import { NumericField } from './NumericField';
+import { parseFiniteNumber } from '../../utils/numericField';
 import styles from './FilterControls.module.css';
 
 const AGG_MODES: { value: AggMode; label: string }[] = [
@@ -76,16 +78,21 @@ const NumericInput: React.FC<{
   placeholder: string;
   value: number | null;
   onCommit: (value: number | null) => void;
-}> = ({ label, placeholder, value, onCommit }) => {
+  min?: number | null;
+  max?: number | null;
+}> = ({ label, placeholder, value, onCommit, min, max }) => {
   const [text, setText] = useState(value === null ? '' : String(value));
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const commit = useCallback(
     (raw: string) => {
-      const parsed = raw.trim() === '' ? null : Number(raw);
-      onCommit(parsed === null || Number.isFinite(parsed) ? parsed : null);
+      // Blank intentionally removes a bound; incomplete/invalid drafts never do.
+      if (raw.trim() === '') { onCommit(null); return; }
+      const parsed = parseFiniteNumber(raw);
+      if (parsed === null || (min != null && parsed < min) || (max != null && parsed > max)) return;
+      onCommit(parsed);
     },
-    [onCommit]
+    [onCommit, min, max]
   );
 
   useEffect(() => {
@@ -102,8 +109,11 @@ const NumericInput: React.FC<{
   return (
     <label className={styles.rangeField}>
       <span>{label}</span>
-      <input
-        type="number"
+      <NumericField
+        aria-label={label}
+        allowEmpty
+        min={min ?? undefined}
+        max={max ?? undefined}
         inputMode="decimal"
         placeholder={placeholder}
         value={text}
@@ -117,6 +127,16 @@ const NumericInput: React.FC<{
         onBlur={() => {
           if (timer.current) clearTimeout(timer.current);
           commit(text);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            if (timer.current) clearTimeout(timer.current);
+            setText(value === null ? '' : String(value));
+          }
+          if (event.key === 'Enter') {
+            if (timer.current) clearTimeout(timer.current);
+            commit(text);
+          }
         }}
       />
     </label>
@@ -301,13 +321,15 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
           ref={triggerRef}
           type="button"
           className={styles.trigger}
+          data-active={hasActiveFilters || undefined}
           aria-expanded={isOpen}
           aria-controls={drawerId}
           onClick={() => setIsOpen((open) => !open)}
         >
-          <span className={styles.filterGlyph} aria-hidden="true">
-            ≡
-          </span>
+          <svg className={styles.filterGlyph} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4 4h16v3l-6 7v5l-4 2v-7L4 7V4Z" />
+          </svg>
           <span>Filters</span>
           {activeFilterCount > 0 && (
             <span className={styles.activeBadge} aria-label={`${activeFilterCount} active filters`}>
@@ -544,12 +566,14 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
                           label="Minimum"
                           placeholder="Min"
                           value={filter.min}
+                          max={filter.max}
                           onCommit={(value) => onUpdateParameterFilter(filter.id, 'min', value)}
                         />
                         <NumericInput
                           label="Maximum"
                           placeholder="Max"
                           value={filter.max}
+                          min={filter.min}
                           onCommit={(value) => onUpdateParameterFilter(filter.id, 'max', value)}
                         />
                         <button

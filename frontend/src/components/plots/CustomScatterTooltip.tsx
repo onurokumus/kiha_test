@@ -111,9 +111,9 @@ export const CustomScatterTooltip: React.FC<ScatterTooltipProps> = ({
     content = (
       <>
         <div className="chart-tooltip__header">
-          {data.test ? `${data.test} · ` : ''}
-          {data.name}
-          {data.label ? ` — ${data.label}` : ''}
+          <strong>{data.name}</strong>
+          {data.test && <div className="chart-tooltip__meta">{data.test}</div>}
+          {data.label && <div className="chart-tooltip__meta">{data.label}</div>}
         </div>
 
         {payload.map((entry, index) => (

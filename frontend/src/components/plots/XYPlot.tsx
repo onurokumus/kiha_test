@@ -6,8 +6,9 @@ import 'uplot/dist/uPlot.min.css';
 import { fetchXY, isAbortError } from '../../services/api';
 import { SelectedTestPoint, TimePlotConfig, XYData, XYExportRequest, XYExportSource } from '../../types';
 import { noSelect } from '../../constants/styles';
-import { ACCENT, AXIS_STYLE, safeRange } from '../../constants/uplotTheme';
-import { xyPanZoomPlugin } from '../../utils/uplotPanZoom';
+import { ACCENT, AXIS_STYLE, PLOT_PADDING, safeRange } from '../../constants/uplotTheme';
+import { axisTitlesPlugin } from '../../utils/uplotAxisTitle';
+import { xyPanZoomPlugin, boxZoomPlugin } from '../../utils/uplotPanZoom';
 import { syncPlot, clearPlot } from '../../utils/uplotSync';
 import { PlotStateOverlay, PlotEmptyState } from './PlotState';
 import { SearchableSelect } from '../controls/SearchableSelect';
@@ -16,7 +17,8 @@ import { downloadPlotCsv } from '../../utils/plotExport';
 import { capturePlotPng, downloadPlotPng } from '../../utils/plotPngExport';
 import { usePlotExportRegistration, type RegisterPlotExport } from '../../utils/plotExportRegistry';
 import { PlotActionMenu } from './PlotActionMenu';
-import { PlotHeader } from './PlotHeader';
+import { PlotHeader, PlotDetailsButton } from './PlotHeader';
+import headerStyles from './PlotHeader.module.css';
 import styles from './TimePlot.module.css';
 import type { PanelSource } from './SpectrumPlot';
 
@@ -41,10 +43,9 @@ interface XYPlotProps extends ViewportProps {
   registerExport?: RegisterPlotExport;
 }
 
-const editSelectStyle: React.CSSProperties = {
+const titleSelectStyle: React.CSSProperties = {
   flex: '1 1 0',
   minWidth: 0,
-  maxWidth: 180,
 };
 
 interface XYTrace {
@@ -60,7 +61,7 @@ interface XYTrace {
 const EMPTY_TRACES: XYTrace[] = [];
 
 /** Variable-vs-variable scatter (this cell's own x and y columns, both
- *  pickable in Edit Plots mode): either the active test over its zoom range,
+ *  pickable directly in the title): either the active test over its zoom range,
  *  or one point cloud per selected test point (each over its own time range,
  *  in TP colors). Rendered as points via uPlot mode 2 — trajectories are not
  *  x-sorted. */
@@ -75,7 +76,6 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   range,
   isExpanded,
   onToggleExpand,
-  isEditMode = false,
   allConfigs = [],
   onConfigChange,
   onXColChange,
@@ -84,6 +84,8 @@ export const XYPlot: React.FC<XYPlotProps> = ({
 }) => {
   const chartRef = useRef<HTMLDivElement>(null);
   const exportActions = useRef<PlotExportActions>(null);
+  const detailsDialog = useRef<HTMLDialogElement>(null);
+  const detailsOpener = useRef<HTMLElement | null>(null);
   const plotRef = useRef<uPlot | null>(null);
   const viewportControl = usePlotViewport(plotRef, {viewport, viewportContext, onViewportChange}, true);
   const structKeyRef = useRef('');
@@ -203,14 +205,15 @@ export const XYPlot: React.FC<XYPlotProps> = ({
       mode: 2,
       width: box.w,
       height: box.h,
+      padding: PLOT_PADDING,
       scales: {
         x: { time: false, range: safeRange as uPlot.Scale.Range },
-        y: { range: safeRange as uPlot.Scale.Range },
+        y: { range: (u, min, max) => viewportControl.yRange() ?? safeRange(u, min, max) },
       },
       axes: [{ ...AXIS_STYLE, label: xCol }, { ...AXIS_STYLE, label: cfg.label }],
       legend: { show: isExpanded, live: true },
       cursor: { drag: { x: true, y: true } },
-      plugins: [xyPanZoomPlugin(), viewportControl.plugin],
+      plugins: [axisTitlesPlugin(cfg.label), xyPanZoomPlugin(), boxZoomPlugin(viewportControl.setY), viewportControl.plugin],
       series,
     });
 
@@ -260,7 +263,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   );
   let emptyState: PlotEmptyState;
   if (!xCol) {
-    emptyState = { title: 'Choose an X variable', detail: 'Use Edit plots to choose both variables for this XY plot.' };
+    emptyState = { title: 'Choose an X variable', detail: 'Choose X and Y in the plot title.' };
   } else if (source === 'tp' && visibleTPs.length === 0) {
     emptyState = {
       title: 'Select test points to compare',
@@ -268,8 +271,9 @@ export const XYPlot: React.FC<XYPlotProps> = ({
     };
   } else if (source === 'tp' && eligibleTpCount === 0) {
     emptyState = {
-      title: 'No compatible test points',
-      detail: `The visible points need both ${cfg.label} and ${xCol}.`,
+      title: 'Signals unavailable',
+      detail: `No visible test point contains both ${cfg.label} and ${xCol}. Choose other signals or test points.`,
+      compact: true,
     };
   } else {
     emptyState = {
@@ -347,19 +351,72 @@ export const XYPlot: React.FC<XYPlotProps> = ({
     capturePng: () => { const { plot, options } = getPngSource(); return capturePlotPng(plot, options); },
   });
   const missingCount = traces.reduce((total, trace) => total + (trace.data.series[cfg.key].missing_pair_count ?? 0), 0);
+  const openDetails = () => {
+    detailsOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    detailsDialog.current?.showModal();
+  };
+  const closeDetails = () => {
+    detailsDialog.current?.close();
+    if (detailsOpener.current?.isConnected) detailsOpener.current.focus({ preventScroll: true });
+  };
+  useEffect(() => { detailsDialog.current?.close(); }, [contextKey]);
 
   return (
     <div className={containerClass} style={{ ...noSelect }} role="group" aria-label={`${label} XY plot`}>
       <PlotHeader label={label} isExpanded={isExpanded} onToggleExpand={onToggleExpand}
+        identityControl={allConfigs.length > 0 ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: 10, color: '#626f83', flexShrink: 0 }}>X</span>
+            <SearchableSelect
+              value={xCol}
+              onChange={(nextKey) => onXColChange?.(nextKey)}
+              options={allConfigs.map((config) => ({
+                value: config.key,
+                label: config.label,
+                keywords: [config.key],
+              }))}
+              style={titleSelectStyle}
+              ariaLabel="X variable"
+              title="X column (this plot only)"
+              searchPlaceholder="Search X variables..."
+              optionNoun="variable"
+              appearance="title"
+              size="compact"
+            />
+            <span aria-hidden="true" style={{ fontSize: 10, color: '#626f83', flexShrink: 0 }}>Y</span>
+            <SearchableSelect
+              value={cfg.key}
+              onChange={(nextKey) => onConfigChange?.(nextKey)}
+              options={allConfigs.map((config) => ({
+                value: config.key,
+                label: config.label,
+                keywords: [config.key],
+              }))}
+              style={titleSelectStyle}
+              ariaLabel="Y variable"
+              title="Y column"
+              searchPlaceholder="Search Y variables..."
+              optionNoun="variable"
+              appearance="title"
+              size="compact"
+            />
+          </div>
+        ) : undefined}
         expandLabel={`${cfg.label} versus ${xCol}`}
-        summary={traces.length > 0 && <span title={`${missingCount} source rows omitted because X or Y is nonfinite. Display stride may omit additional valid pairs; CSV uses full resolution.`} style={{ color: missingCount ? '#dcdcaa' : undefined }}>
-          {source === 'tp' ? `${traces.length} TP${traces.length === 1 ? '' : 's'} · ` : ''}
-          1:{maxStride}{missingCount ? ` · ${missingCount} missing` : ''}
-        </span>}
+        summary={missingCount > 0 ? <><span style={{ color: '#806b20' }}>
+          {missingCount.toLocaleString()} rows omitted
+        </span><PlotDetailsButton label={label} onClick={openDetails} /></> : undefined}
 
         actions={<>
           <PlotActionMenu label={label} targetRef={chartRef} contextKey={contextKey}
-            getPlot={() => plotRef.current} exportActions={exportActions} onReset={viewportControl.reset} />
+            exportActions={exportActions} onReset={viewportControl.reset}
+            onAnalysisDetails={openDetails} />
 
 
           <PlotExportControls hideTrigger actionsRef={exportActions} label={label} contextKey={contextKey} scope={exportScope}
@@ -370,53 +427,23 @@ export const XYPlot: React.FC<XYPlotProps> = ({
             onPng={(signal, includeMetadata) => { const { plot, options } = getPngSource(); return downloadPlotPng(plot, { ...options, signal, includeMetadata }); }} />
 
         </>}>
-        {isEditMode && allConfigs.length > 0 && (
-          <div
-            style={{
-              flex: '1 1 100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              zIndex: 5,
-            }}
-          >
-            <span aria-hidden="true" style={{ fontSize: 10, color: '#909090', flexShrink: 0 }}>X</span>
-            <SearchableSelect
-              value={xCol}
-              onChange={(nextKey) => onXColChange?.(nextKey)}
-              options={allConfigs.map((config) => ({
-                value: config.key,
-                label: config.label,
-                keywords: [config.key],
-              }))}
-              style={editSelectStyle}
-              ariaLabel="X variable"
-              title="X column (this plot only)"
-              searchPlaceholder="Search X variables..."
-              optionNoun="variable"
-              appearance="plot"
-              size="compact"
-            />
-            <span aria-hidden="true" style={{ fontSize: 10, color: '#909090', flexShrink: 0 }}>Y</span>
-            <SearchableSelect
-              value={cfg.key}
-              onChange={(nextKey) => onConfigChange?.(nextKey)}
-              options={allConfigs.map((config) => ({
-                value: config.key,
-                label: config.label,
-                keywords: [config.key],
-              }))}
-              style={editSelectStyle}
-              ariaLabel="Y variable"
-              title="Y column"
-              searchPlaceholder="Search Y variables..."
-              optionNoun="variable"
-              appearance="plot"
-              size="compact"
-            />
-          </div>
-        )}
       </PlotHeader>
+      <dialog ref={detailsDialog} className={headerStyles.detailsDialog} aria-label={`XY details for ${label}`}
+        onCancel={event => { event.preventDefault(); closeDetails(); }}>
+        <h3>{cfg.label} (Y) · {xCol} (X)</h3>
+        {source === 'tp' && visibleTPs.length > eligibleTpCount && <p>
+          {eligibleTpCount === 0
+            ? 'No visible test point contains both signals. Choose another X or Y signal, or select other test points.'
+            : `${visibleTPs.length - eligibleTpCount} visible test points do not contain both signals and are excluded.`}
+        </p>}
+        <p>{source === 'tp' ? `${traces.length} test points · complete saved intervals.` : range ? 'Selected full-test interval.' : 'Complete full test.'}</p>
+        <p>Original stored data, including saved edits. Time-plot filters are not applied.
+          Both axes retain their stored units; pairs are not interpolated, sorted or resampled.</p>
+        <p>Display stride 1:{maxStride}. {missingCount} source rows omitted because X or Y is nonfinite.
+          Display stride may omit additional valid pairs; CSV uses full-resolution finite pairs.</p>
+        <p>Drag to zoom. Shift-drag or middle-drag to pan. Wheel to zoom; double-click to reset.</p>
+        <button type="button" className="btn" onClick={closeDetails}>Close</button>
+      </dialog>
       <div className={styles.plotViewport}>
         <div
           ref={chartRef} tabIndex={0} aria-label={`Plot canvas for ${label}`}

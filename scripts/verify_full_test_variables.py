@@ -121,10 +121,18 @@ def run(web, api, dataset, temporary, output):
             print('PASS', label, flush=True)
         def header_layout():
             assert plot().evaluate('''el=>{const h=el.querySelector('[data-plot-header]'), c=h.querySelector('[data-full-test-variables]'),
-                s=h.querySelector('[title="Display resolution"]'), a=h.querySelector('[data-plot-toolbar]');
-                const cr=c.getBoundingClientRect(),sr=s.getBoundingClientRect(),ar=a.getBoundingClientRect();
-                return sr.top>=cr.bottom-1 && (cr.right<=ar.left || cr.top>=ar.bottom || cr.bottom<=ar.top)
-                    && el.scrollWidth<=el.clientWidth+1 && c.scrollWidth<=c.clientWidth+1;}'''), 'Overlapping header / resolution'
+                indicators=document.querySelectorAll('[data-plot-resolution]'), s=indicators[0],
+                controls=document.querySelector('[aria-label="Analysis controls"]'), a=h.querySelector('[data-plot-toolbar]'),
+                layout=controls.querySelector('[aria-label="Plot layout"]');
+                if(indicators.length!==1 || !controls.contains(s)
+                    || s.closest('[data-plot-header],.uplot,[role="group"][aria-label$=" full test plot"]'))return false;
+                const cr=c.getBoundingClientRect(),sr=s.getBoundingClientRect(),ar=a.getBoundingClientRect(),
+                    ctr=controls.getBoundingClientRect(),lr=layout.getBoundingClientRect();
+                return sr.left>=ctr.left-1 && sr.right<=ctr.right+1 && sr.top>=ctr.top-1 && sr.bottom<=ctr.bottom+1
+                    && sr.right<=lr.left+1 && sr.top<lr.bottom && sr.bottom>lr.top
+                    && sr.width>0 && sr.height>0 && s.tabIndex===0
+                    && (cr.right<=ar.left || cr.top>=ar.bottom || cr.bottom<=ar.top)
+                    && el.scrollWidth<=el.clientWidth+1 && c.scrollWidth<=c.clientWidth+1;}'''), 'Overlapping controls or misplaced shared resolution'
         def export(fmt, tag):
             menu('Export CSV / PNG…')
             dialog = page.get_by_role('dialog', name=re.compile('^Export .* plot$'))

@@ -1,4 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { NumericField } from '../controls/NumericField';
+import { parseFiniteNumber } from '../../utils/numericField';
 import { deleteTest, rawCsvUrl, rebuildTpStats } from '../../services/api';
 import {
   cancelUploadSession,
@@ -39,7 +41,7 @@ interface Props {
   onCancelUpload: (id: number) => void;
   /** Open a ready test in the Analyze tab. */
   onOpenTest: (name: string) => void;
-  onEditNotes: (name: string) => void;
+  onEditNotes: (name: string, section?: 'components') => void;
   /** A test was deleted server-side — parent drops caches + refreshes. */
   onTestDeleted: (name: string) => void;
   /** Server-side list changed (restore) — parent refreshes the list. */
@@ -89,13 +91,13 @@ const fmtCount = (n?: number | null): string =>
 /** Colored status chip; active states pulse via inline animation class. */
 const StatusChip: React.FC<{ status: string }> = ({ status }) => {
   const palette: Record<string, { color: string; bg: string }> = {
-    ready: { color: '#4ec9b0', bg: '#173d35' },
-    error: { color: '#f48771', bg: '#4b1d1d' },
-    receiving: { color: '#569cd6', bg: '#1e3a52' },
-    ingesting: { color: '#569cd6', bg: '#1e3a52' },
-    rebuilding: { color: '#569cd6', bg: '#1e3a52' },
+    ready: { color: '#237c66', bg: '#e7f4ee' },
+    error: { color: '#b84343', bg: '#fff1f0' },
+    receiving: { color: '#263685', bg: '#e5edff' },
+    ingesting: { color: '#263685', bg: '#e5edff' },
+    rebuilding: { color: '#263685', bg: '#e5edff' },
   };
-  const { color, bg } = palette[status] ?? { color: '#909090', bg: '#3c3c3c' };
+  const { color, bg } = palette[status] ?? { color: '#626f83', bg: '#dfe4ec' };
   const active = isBusyStatus(status);
   return (
     <span
@@ -118,15 +120,15 @@ const thStyle: React.CSSProperties = {
   textAlign: 'left',
   fontSize: 11,
   fontWeight: 600,
-  color: '#909090',
-  padding: '11px 12px',
-  borderBottom: '1px solid #3c3c3c',
+  color: '#626f83',
+  padding: '9px 12px',
+  borderBottom: '1px solid #dfe4ec',
   whiteSpace: 'nowrap',
 };
 const thRight: React.CSSProperties = { ...thStyle, textAlign: 'right' };
 const tdStyle: React.CSSProperties = {
-  padding: '13px 12px',
-  borderBottom: '1px solid #2d2d2d',
+  padding: '10px 12px',
+  borderBottom: '1px solid #f2f4f8',
   fontSize: 12,
   whiteSpace: 'nowrap',
   verticalAlign: 'middle',
@@ -298,8 +300,8 @@ export default function UploadView({
     return () => window.cancelAnimationFrame(frame);
   }, [pendingFiles]);
 
-  const parsedFs = Number(fsInput);
-  const validFs = Number.isFinite(parsedFs) && parsedFs > 0;
+  const parsedFs = parseFiniteNumber(fsInput);
+  const validFs = parsedFs !== null && parsedFs > 0;
   const selectedTimeColumn = timeColumn;
   const workingTimeColumn = timeMode === 'generated' ? generatedColumn.trim() : selectedTimeColumn;
   const pyramidFieldSource = commonColumns.find(
@@ -331,6 +333,10 @@ export default function UploadView({
                     : fsInput && !validFs
                       ? 'Sample rate must be a number greater than 0.'
                       : '';
+  // Numeric errors are already next to the rate field; keep the footer for
+  // file/header/component feedback instead of repeating the same warning.
+  const setupFeedback = setupError === 'Enter a sample rate greater than 0 Hz.' ||
+    setupError === 'Sample rate must be a number greater than 0.' ? '' : setupError;
 
   const beginConfiguredUpload = () => {
     if (setupError || pendingFiles.length === 0) return;
@@ -342,7 +348,7 @@ export default function UploadView({
       description: normalizeTestText(description),
       component_sets: sets,
       timeMode,
-      ...(validFs ? { fsHz: parsedFs } : {}),
+      ...(validFs && parsedFs !== null ? { fsHz: parsedFs } : {}),
       ...(timeMode === 'column'
         ? { timeColumn: selectedTimeColumn }
         : timeMode === 'generated'
@@ -515,7 +521,7 @@ export default function UploadView({
             style={{
               flex: 1,
               height: 6,
-              background: '#3c3c3c',
+              background: '#dfe4ec',
               borderRadius: 3,
               overflow: 'hidden',
             }}
@@ -526,7 +532,7 @@ export default function UploadView({
                 width: pct === null ? '100%' : `${pct}%`,
                 height: '100%',
                 background:
-                  u.phase === 'paused' ? '#909090' : u.phase === 'error' ? '#f48771' : '#569cd6',
+                  u.phase === 'paused' ? '#626f83' : u.phase === 'error' ? '#b84343' : '#263685',
                 transition: 'width 0.2s ease',
               }}
             />
@@ -534,14 +540,14 @@ export default function UploadView({
           <span
             style={{
               fontSize: 10,
-              color: u.phase === 'error' ? '#f48771' : '#569cd6',
+              color: u.phase === 'error' ? '#b84343' : '#263685',
               whiteSpace: 'nowrap',
             }}
           >
             {phase}
           </span>
         </div>
-        <span style={{ fontSize: 9, color: '#777', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 9, color: '#707b8c', whiteSpace: 'nowrap' }}>
           {fmtBytes(u.committedBytes)} verified
           {u.totalBytes ? ` / ${fmtBytes(u.totalBytes)}` : ''}
           {u.totalChunks ? ` • ${u.completedChunks}/${u.totalChunks} chunks` : ''}
@@ -566,7 +572,7 @@ export default function UploadView({
             style={{
               flex: 1,
               height: 6,
-              background: '#3c3c3c',
+              background: '#dfe4ec',
               borderRadius: 3,
               overflow: 'hidden',
             }}
@@ -576,15 +582,15 @@ export default function UploadView({
               style={{
                 width: pct === null ? '100%' : `${pct}%`,
                 height: '100%',
-                background: '#569cd6',
+                background: '#263685',
               }}
             />
           </div>
-          <span style={{ fontSize: 10, color: '#569cd6', whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: 10, color: '#263685', whiteSpace: 'nowrap' }}>
             {pct === null ? 'receiving…' : `${pct}%`}
           </span>
         </div>
-        <span style={{ fontSize: 9, color: '#777', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 9, color: '#707b8c', whiteSpace: 'nowrap' }}>
           {fmtBytes(committed)} verified
           {total ? ` / ${fmtBytes(total)}` : ''}
           {test.total_chunks ? ` • ${test.received_chunks ?? 0}/${test.total_chunks} chunks` : ''}
@@ -613,7 +619,7 @@ export default function UploadView({
           {u.sessionId ? (
             <button
               className="btn"
-              style={{ color: '#f48771' }}
+              style={{ color: '#b84343' }}
               onClick={() => onCancelUpload(u.id)}
             >
               Cancel
@@ -631,7 +637,7 @@ export default function UploadView({
         <button className="btn" onClick={() => onPauseUpload(u.id)}>
           Pause
         </button>
-        <button className="btn" style={{ color: '#f48771' }} onClick={() => onCancelUpload(u.id)}>
+        <button className="btn" style={{ color: '#b84343' }} onClick={() => onCancelUpload(u.id)}>
           Cancel
         </button>
       </span>
@@ -644,10 +650,9 @@ export default function UploadView({
         <header className={styles.pageHeader}>
           <div>
             <h1>Test uploads</h1>
-            <p>Import rig data, track transfers, and open a test for analysis.</p>
           </div>
           <span className={styles.storageSummary}>
-            {rows.length} tests · {fmtBytes(totalBytes)} stored
+            {rows.length} {rows.length === 1 ? 'test' : 'tests'} · {fmtBytes(totalBytes)} stored
           </span>
         </header>
         <input
@@ -692,24 +697,20 @@ export default function UploadView({
             </span>
             <span className={styles.dropCopy}>
               <strong>Import test data</strong>
-              <span>Drop CSV files anywhere, or browse to choose files.</span>
-              <small>Review time and sample-rate settings before the upload starts.</small>
+              <span>Drop CSV files anywhere, or choose files to review before uploading.</span>
             </span>
             <span className={styles.browseButton}>Choose CSV files</span>
           </button>
         ) : (
           <section
             ref={setupRef}
-            className="panel upload-setup-panel"
+            className={`panel upload-setup-panel ${styles.setupPanel}`}
             aria-label="Import setup"
             tabIndex={-1}
           >
             <div className="upload-setup-heading">
               <div>
                 <div className="section-title">Import setup</div>
-                <div className="upload-setup-subtitle">
-                  Every imported test uses elapsed seconds beginning at 0.
-                </div>
               </div>
               <div className="upload-setup-files">
                 {pendingFiles.map((file) => (
@@ -743,24 +744,8 @@ export default function UploadView({
                 />
               </label>
               <span id="upload-uploader-help" className="upload-uploader-help">
-                Applies to all selected files and is remembered in this browser.
+                Used for all selected files. Remembered in this browser.
               </span>
-            </div>
-
-            <label className={`upload-setup-field ${styles.descriptionField}`}>
-              <span>Description (optional)</span>
-              <textarea className="input" rows={2} value={description}
-                placeholder="e.g. Temperature test at sustained load"
-                aria-invalid={!!descriptionError} aria-describedby="upload-description-help upload-setup-feedback"
-                onChange={(event) => setDescription(event.target.value)} />
-              <span id="upload-description-help" className="upload-uploader-help">
-                Applies to all selected files. Edit it and add findings later in Edit.
-                {' '}{textLength(description).toLocaleString()} / {MAX_DESCRIPTION_LENGTH.toLocaleString()}
-              </span>
-            </label>
-
-            <div className={styles.descriptionField}>
-              <ComponentSetsPicker value={sets} onChange={setSets} catalog={catalog} onDraftChange={setComponentDraft} />
             </div>
 
             <div className="upload-setup-grid">
@@ -776,6 +761,14 @@ export default function UploadView({
                   <option value="generated">Generate from sample rate</option>
                 </select>
               </label>
+
+              {timeMode === 'auto' && (
+                <label className="upload-setup-field">
+                  <span>Detected time column</span>
+                  <input className="input" value={headersLoading ? 'Inspecting…' : timeColumn || 'Generated time_s'}
+                    title={timeColumn || 'Generated time_s'} readOnly />
+                </label>
+              )}
 
               {timeMode === 'column' && (
                 <label className="upload-setup-field">
@@ -794,9 +787,10 @@ export default function UploadView({
 
               {timeMode === 'generated' && (
                 <label className="upload-setup-field">
-                  <span>Working time column (creates or replaces)</span>
+                  <span>Working time column</span>
                   <input
                     className="input"
+                    aria-label="Working time column (creates or replaces)"
                     value={generatedColumn}
                     placeholder="time_s"
                     aria-invalid={
@@ -811,18 +805,18 @@ export default function UploadView({
               )}
 
               <label className="upload-setup-field">
-                <span>{timeMode === 'generated' ? 'Sample rate (Hz)' : 'Fallback rate (Hz)'}</span>
-                <input
+                <span>{timeMode === 'generated' ? 'Sample rate' : 'Fallback rate'}</span>
+                <NumericField
                   className="input"
-                  type="number"
                   min="0"
+                  exclusiveMin
+                  allowEmpty={timeMode !== 'generated'}
+                  unit="Hz"
+                  aria-label={timeMode === 'generated' ? 'Sample rate (Hz)' : 'Fallback rate (Hz)'}
                   step="any"
                   inputMode="decimal"
                   value={fsInput}
                   placeholder="2048"
-                  aria-invalid={
-                    !!setupError && (setupError.includes('rate') || setupError.includes('number'))
-                  }
                   aria-describedby="upload-setup-feedback"
                   onChange={(event) => setFsInput(event.target.value)}
                 />
@@ -863,14 +857,41 @@ export default function UploadView({
               </span>
             </div>
 
+            <details className={styles.metadataDisclosure}>
+              <summary>
+                Description and components{' '}
+                <span className={descriptionError || componentSetsError(sets) || componentDraft ? styles.metadataWarning : undefined}>
+                  {descriptionError || componentSetsError(sets) ? 'Needs attention'
+                    : componentDraft ? 'Unfinished component'
+                      : description || sets.length
+                        ? [description ? 'Description added' : '', sets.length ? `${sets.length} component ${sets.length === 1 ? 'set' : 'sets'}` : ''].filter(Boolean).join(' · ')
+                        : 'Optional'}
+                </span>
+              </summary>
+              <div className={styles.metadataBody}>
+                <label className={`upload-setup-field ${styles.descriptionField}`}>
+                  <span>Description (optional)</span>
+                  <textarea className="input" rows={2} value={description}
+                    placeholder="e.g. Temperature test at sustained load"
+                    aria-invalid={!!descriptionError} aria-describedby="upload-description-help upload-setup-feedback"
+                    onChange={(event) => setDescription(event.target.value)} />
+                  <span id="upload-description-help" className="upload-uploader-help">
+                    Applies to all selected files. Add findings later in Edit.
+                    {' '}{textLength(description).toLocaleString()} / {MAX_DESCRIPTION_LENGTH.toLocaleString()}
+                  </span>
+                </label>
+                <ComponentSetsPicker value={sets} onChange={setSets} catalog={catalog} onDraftChange={setComponentDraft} />
+              </div>
+            </details>
+
             <div className="upload-setup-footer">
               <span
                 id="upload-setup-feedback"
-                className={setupError ? 'upload-setup-error' : ''}
-                role={setupError ? 'alert' : 'status'}
+                className={setupFeedback ? 'upload-setup-error' : ''}
+                role={setupFeedback ? 'alert' : 'status'}
                 aria-live="polite"
               >
-                {setupError || headerNote}
+                {setupFeedback || headerNote}
               </span>
               <div className="upload-setup-actions">
                 <button className="btn" onClick={() => fileRef.current?.click()}>
@@ -954,7 +975,7 @@ export default function UploadView({
                       className="btn"
                       disabled={busyRow !== null}
                       onClick={() => handleCancelReceiving(test)}
-                      style={{ color: '#f48771' }}
+                      style={{ color: '#b84343' }}
                     >
                       {busyRow === test.name ? 'canceling…' : 'Cancel'}
                     </button>
@@ -964,8 +985,6 @@ export default function UploadView({
             </div>
           </section>
         )}
-
-        <TrashBin refreshKey={trashRevision} onRestored={onTestsChanged} components={catalog.items} />
 
         {actionError && (
           <div className={styles.actionError} role="alert">
@@ -983,7 +1002,7 @@ export default function UploadView({
           <div className={styles.historyHeader}>
             <div className={styles.historyTitle}>
               <h2>Upload history</h2>
-              <span role="status">
+              <span role="status" aria-live="polite">
                 {visibleRows.length === rows.length
                   ? rows.length
                   : `${visibleRows.length} of ${rows.length}`}{' '}
@@ -995,7 +1014,7 @@ export default function UploadView({
                 className="input"
                 type="search"
                 aria-label="Search upload history"
-                placeholder="Search test, description, file, or uploader…"
+                placeholder="Search tests, files, people, components…"
                 value={historyQuery}
                 onChange={(event) => setHistoryQuery(event.target.value)}
               />
@@ -1010,6 +1029,12 @@ export default function UploadView({
                 <option value="processing">Processing</option>
                 <option value="error">Error</option>
               </select>
+              <button type="button" className={`btn ${styles.clearFilters}`}
+                aria-label="Clear upload history filters"
+                disabled={!historyQuery && historyStatus === 'all'}
+                onClick={() => { setHistoryQuery(''); setHistoryStatus('all'); }}>
+                Clear
+              </button>
             </div>
           </div>
           {visibleRows.length === 0 ? (
@@ -1073,6 +1098,7 @@ export default function UploadView({
                             <span className={styles.testName} title={t.name}>
                               {t.name}
                             </span>
+                            <div className={styles.metadataLinks}>
                             {t.status === 'ready' ? (
                               <button className={styles.notesLink} onClick={() => onEditNotes(t.name)}
                                 aria-label={`Edit notes for ${t.name}`} title={t.description || 'Add a description and findings'}>
@@ -1083,10 +1109,11 @@ export default function UploadView({
                                 {t.description}
                               </span>
                             )}
-                            {t.status === 'ready' && <button className={styles.notesLink} onClick={() => onEditNotes(t.name)}
+                            {t.status === 'ready' && <button className={styles.notesLink} onClick={() => onEditNotes(t.name, 'components')}
                               aria-label={`Edit components for ${t.name}`} title={componentSummary || 'Assign components'}>
                               {componentSummary || 'Assign components'}
                             </button>}
+                            </div>
                             <span className={styles.sourceFile} title={t.source_file ?? undefined}>
                               {t.source_file ?? 'Source file unavailable'}
                             </span>
@@ -1096,19 +1123,19 @@ export default function UploadView({
                             >
                               {t.uploader_name ? `by ${t.uploader_name}` : 'Uploader not recorded'}
                             </span>
-                            <DataQualityButton
-                              test={t}
-                              expanded={qualityTest === t.name}
-                              detailsId={qualityId}
-                              onClick={() => {
-                                setSplitDownloadTest(null);
-                                setQualityTest(qualityTest === t.name ? null : t.name);
-                              }}
-                            />
                           </td>
                           <td style={{ ...tdStyle, overflow: 'hidden' }}>
                             <div className="upload-history-status">
                               <StatusChip status={t.status} />
+                              <DataQualityButton
+                                test={t}
+                                expanded={qualityTest === t.name}
+                                detailsId={qualityId}
+                                onClick={() => {
+                                  setSplitDownloadTest(null);
+                                  setQualityTest(qualityTest === t.name ? null : t.name);
+                                }}
+                              />
                               {t.status === 'error' && t.error && (
                                 <span className="upload-history-error" title={t.error}>
                                   {t.error}
@@ -1143,7 +1170,9 @@ export default function UploadView({
                               {fmtCount(t.n_rows)} × {fmtCount(t.n_columns)}
                             </div>
                             <div className="upload-history-metrics-secondary">
-                              {fmtDuration(t.duration_s)} · {t.fs_hz ?? '—'} Hz ·{' '}
+                              {fmtDuration(t.duration_s)} · <span title={t.fs_hz == null ? undefined : `${t.fs_hz} Hz`}>
+                                {t.fs_hz == null ? '—' : Number(t.fs_hz.toPrecision(6))} Hz
+                              </span> ·{' '}
                               {t.ingest_seconds != null
                                 ? `${t.ingest_seconds} s ingest`
                                 : '— ingest'}
@@ -1158,7 +1187,7 @@ export default function UploadView({
                             className="upload-history-actions-cell"
                             style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'normal' }}
                           >
-                            <span className="upload-history-actions">
+                            <div className="upload-history-actions">
                               {t.status === 'ready' && (
                                 <button
                                   className={`btn ${styles.analyzeButton}`}
@@ -1195,6 +1224,10 @@ export default function UploadView({
                                   Split CSV
                                 </button>
                               )}
+                              {(t.status === 'ready' || !busy) && (
+                                <details className={styles.manageActions}>
+                                  <summary>Manage</summary>
+                                  <div>
                               {t.status === 'ready' && (
                                 <button
                                   className="btn"
@@ -1212,12 +1245,15 @@ export default function UploadView({
                                   disabled={busyRow !== null}
                                   aria-label={`Delete ${t.name}`}
                                   onClick={() => handleDelete(t.name)}
-                                  style={{ color: '#f48771' }}
+                                  style={{ color: '#b84343' }}
                                 >
                                   Delete
                                 </button>
                               )}
-                            </span>
+                                  </div>
+                                </details>
+                              )}
+                            </div>
                           </td>
                         </tr>
                         {splitDownloadTest === t.name && t.status === 'ready' && (
@@ -1247,10 +1283,11 @@ export default function UploadView({
             </div>
           )}
         </div>
-        <div className={styles.historyNote}>
-          Status refreshes automatically. An asterisk marks a test edited after upload; hover its
-          date for details.
-        </div>
+        <details className={styles.historyNote}>
+          <summary>History details</summary>
+          <p>Status refreshes automatically. An asterisk marks a test edited after upload; hover its date for details.</p>
+        </details>
+        <TrashBin refreshKey={trashRevision} onRestored={onTestsChanged} components={catalog.items} />
       </div>
     </div>
   );

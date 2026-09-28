@@ -1,20 +1,24 @@
-.bin { background: #252526; border: 1px solid #3c3c3c; border-radius: 5px; padding: 14px 16px; min-width: 0; font-size: 12px; }
+.bin { background: #ffffff; border: 1px solid #dfe4ec; border-radius: 7px; padding: 8px 12px; min-width: 0; font-size: 11px; }
 .header, .policy, .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .header { justify-content: space-between; }
 .header h2 { margin: 0; }
-.header h2 button { font-size: 14px; }
+.toggle { display: flex; align-items: center; gap: 6px; min-height: 30px; border: 0; background: transparent; padding: 3px 0; color: #41516b; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.toggle > span { font-weight: 400; color: #66758c; }
+.toggle svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.toggle[aria-expanded='true'] svg { transform: rotate(90deg); }
+.toggle:hover { color: #263685; }
 .bin p { line-height: 1.5; margin: 8px 0; }
-.policy { justify-content: space-between; margin: 10px 0; color: #adb8c0; }
+.policy { justify-content: space-between; margin: 10px 0; color: #66758c; }
 .policy p { flex: 1 1 350px; }
 .entries { list-style: none; padding: 0; margin: 0; }
-.entry { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; padding: 14px 0; border-top: 1px solid #3c3c3c; }
-.identity { flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 5px; overflow-wrap: anywhere; color: #aeb9c2; }
-.identity strong { color: #e5edf2; font-size: 13px; }
+.entry { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; padding: 14px 0; border-top: 1px solid #dfe4ec; }
+.identity { flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 5px; overflow-wrap: anywhere; color: #66758c; }
+.identity strong { color: #344666; font-size: 13px; }
 .description { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
 .actions { flex-shrink: 0; }
-.restore { flex: 1 0 100%; min-width: 0; padding: 10px; background: #202428; border-radius: 4px; box-sizing: border-box; }
+.restore { flex: 1 0 100%; min-width: 0; padding: 10px; background: #f7f9fc; border-radius: 4px; box-sizing: border-box; }
 .restore label { display: flex; flex-direction: column; gap: 6px; max-width: 500px; }
 .restore input { width: 100%; min-width: 0; box-sizing: border-box; }
-.restore p { color: #adb8c0; }
-.bin .error { color: #f48771; white-space: pre-wrap; overflow-wrap: anywhere; }
-.bin button:focus-visible, .bin input:focus-visible { outline: 2px solid #82c5ed; outline-offset: 2px; }
+.restore p { color: #66758c; }
+.bin .error { color: #b84343; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bin button:focus-visible, .bin input:focus-visible { outline: 2px solid #263685; outline-offset: 2px; }

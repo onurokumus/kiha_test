@@ -110,12 +110,12 @@ export const PointSelectionMenu: React.FC<PointSelectionMenuProps> = ({
             onMouseEnter={() => onHover?.(point.id)} onMouseLeave={() => onHover?.(null)}
             onFocus={() => onHover?.(point.id)} onBlur={() => onHover?.(null)}>
             <span className={styles.swatch} aria-hidden="true"
-              style={{ background: point.color, borderColor: point.isSelected ? '#fff' : 'transparent' }} />
+              style={{ background: point.color, borderColor: point.isSelected ? point.color : 'transparent' }} />
             <span className={styles.description}>
               <span className={styles.name}>{point.name}</span>
               <span className={styles.details}>{point.test}{point.label ? ` — ${point.label}` : ''}</span>
             </span>
-            {point.isSelected && <span className={styles.selected}>✓ Selected</span>}
+            {point.isSelected && <span className={styles.selected} style={{ color: point.color }}>✓ Selected</span>}
           </button>
         ))}
       </div>

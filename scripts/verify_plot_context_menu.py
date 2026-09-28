@@ -5,7 +5,6 @@ import argparse
 import csv
 import io
 import json
-import math
 from pathlib import Path
 import re
 import tempfile
@@ -88,12 +87,6 @@ def run_checks(web, api, dataset, temporary, output):
         def mode(name):
             page.get_by_role('group', name='Plot mode', exact=True).get_by_role('button', name=name, exact=True).click(); settle()
 
-        def annotation_dialog(): return page.get_by_role('dialog', name=f'Time notes for {fixture.LOAD}', exact=True)
-        def annotation_ready(): expect(annotation_dialog().get_by_role('button', name='Reload saved notes', exact=True)).to_be_enabled()
-        def close_notes():
-            page.keyboard.press('Escape'); expect(annotation_dialog()).not_to_be_visible()
-            expect(plots().first.get_by_role('button', name=f'Time notes for {fixture.LOAD}', exact=True)).to_be_focused()
-
         def export(target, label):
             action(target, 'Export CSV / PNG…', 'key')
             dialog = page.get_by_role('dialog', name=re.compile('^Export '))
@@ -125,11 +118,11 @@ def run_checks(web, api, dataset, temporary, output):
             for method in ('right', 'key', 'button'):
                 open_menu(target, method)
                 expect(menu().get_by_role('menuitem').first).to_be_focused()
-                page.keyboard.press('End'); expect(menu().get_by_role('menuitemcheckbox').last).to_be_focused()
+                page.keyboard.press('End'); expect(menu().locator('[role^="menuitem"]').last).to_be_focused()
                 page.keyboard.press('Home'); expect(menu().get_by_role('menuitem').first).to_be_focused()
-                page.keyboard.press('ArrowUp'); expect(menu().get_by_role('menuitemcheckbox').last).to_be_focused()
+                page.keyboard.press('ArrowUp'); expect(menu().locator('[role^="menuitem"]').last).to_be_focused()
                 page.keyboard.press('ArrowDown'); expect(menu().get_by_role('menuitem').first).to_be_focused()
-                page.keyboard.press('m'); expect(menu().get_by_role('menuitem', name='Manage time notes…', exact=True)).to_be_focused()
+                page.keyboard.press('f'); expect(menu().get_by_role('menuitem', name='Filter settings…', exact=True)).to_be_focused()
                 page.keyboard.press('Escape'); expect(menu()).not_to_be_visible(); expect(button(target)).to_be_focused()
             open_menu(target, 'key'); page.keyboard.press('Tab'); expect(menu()).not_to_be_visible()
             assert page.evaluate('document.activeElement?.tagName') == 'BUTTON'
@@ -141,9 +134,12 @@ def run_checks(web, api, dataset, temporary, output):
             page.keyboard.press('Escape')
             # Native menu remains available on toolbar and in modal editable fields.
             assert not page.get_by_role('group', name='Plot mode', exact=True).evaluate('el=>{const e=new MouseEvent("contextmenu",{bubbles:true,cancelable:true});el.dispatchEvent(e);return e.defaultPrevented}')
-            action(target, 'Manage time notes…'); annotation_ready()
-            assert not annotation_dialog().get_by_role('textbox', name='Note', exact=True).evaluate('el=>{const e=new MouseEvent("contextmenu",{bubbles:true,cancelable:true});el.dispatchEvent(e);return e.defaultPrevented}')
-            close_notes()
+            action(target, 'Filter settings…')
+            filter_dialog = page.get_by_role('dialog', name=f'Filter settings for {fixture.LOAD}', exact=True)
+            expect(filter_dialog).to_be_visible()
+            assert not filter_dialog.locator('input').first.evaluate('el=>{const e=new MouseEvent("contextmenu",{bubbles:true,cancelable:true});el.dispatchEvent(e);return e.defaultPrevented}')
+            page.keyboard.press('Escape'); expect(filter_dialog).not_to_be_visible()
+            expect(button(target)).to_be_focused()
             print('PASS: plot-only native suppression, right-click/Shift+F10/button, arrows/Home/End/typeahead/Escape/Tab/focus and single-menu targeting', flush=True)
 
             # Same overlay state, independent slots, and no extra filter request for display-only toggles.
@@ -166,52 +162,6 @@ def run_checks(web, api, dataset, temporary, output):
             assert axes(target) == auto
             print('PASS: shared persisted overlay without filtering again; independent Y reset and linked time/all-TP-Y reset', flush=True)
 
-            # Clicked TP-relative time maps to actual source origin, never rounded TP descriptors.
-            set_axes(target, [.05, .5])
-            click_time = .05 + (.5 - .05) * .4
-            action(target, 'Add time marker…'); annotation_ready()
-            dialog = annotation_dialog()
-            origins = {}
-            for test in (fixture.A, fixture.B):
-                data = request.get(f'tests/{test}/testpoints/7/data', params={'cols': fixture.LOAD}).json()
-                origins[test] = data['series'][fixture.LOAD]['analysis']['source_centers']['first_time_s']
-            time_input = dialog.get_by_label('Time (test seconds)', exact=True)
-            # Native pointer coordinates are integer CSS pixels: compare to actual uPlot conversion with <= 1 pixel tolerance.
-            tolerance = .45 / target.locator('.u-over').bounding_box()['width'] + 1e-9
-            assert math.isclose(float(time_input.input_value()), origins[fixture.A] + click_time, abs_tol=tolerance)
-            source = dialog.get_by_role('combobox', name='Source', exact=True)
-            value = source.locator('option').evaluate_all('(els)=>els.find(e=>e.textContent.includes("plot_export_beta · TP 7")).value')
-            source.select_option(value); annotation_ready()
-            assert math.isclose(float(time_input.input_value()), origins[fixture.B] + click_time, abs_tol=tolerance)
-            expected_time = float(time_input.input_value())
-            dialog.get_by_role('textbox', name='Note', exact=True).fill('Marker created from plot menu')
-            url = api + f'/tests/{fixture.B}/annotations'
-            page.route(url, lambda r: r.fulfill(status=503, json={'detail': 'Isolated menu save failure'}) if r.request.method == 'PUT' else r.continue_())
-            dialog.get_by_role('button', name='Save annotation', exact=True).click()
-            expect(dialog.get_by_role('alert')).to_contain_text('Isolated menu save failure')
-            expect(dialog.get_by_role('textbox', name='Note', exact=True)).to_have_value('Marker created from plot menu')
-            page.unroute(url)
-            dialog.get_by_role('button', name='Save annotation', exact=True).click(); expect(dialog.get_by_role('status')).to_have_text('Annotation saved')
-            stored = request.get(f'tests/{fixture.B}/annotations').json()['annotations']
-            assert len(stored) == 1 and stored[0]['start_s'] == expected_time
-            assert request.get(f'tests/{fixture.A}/annotations').json()['annotations'] == []
-            close_notes()
-            action(target, 'Add interval note…', 'button'); annotation_ready()
-            expect(dialog.get_by_role('combobox', name='Kind', exact=True)).to_have_value('interval')
-            assert math.isclose(float(dialog.get_by_label('Start (test seconds)', exact=True).input_value()), origins[fixture.A] + .05)
-            assert math.isclose(float(dialog.get_by_label('End (test seconds)', exact=True).input_value()), origins[fixture.A] + .5)
-            dialog.get_by_role('textbox', name='Note', exact=True).fill('Visible interval from menu')
-            dialog.get_by_role('button', name='Save annotation', exact=True).click(); expect(dialog.get_by_role('status')).to_have_text('Annotation saved'); close_notes()
-            action(target, 'Add time marker…', 'key'); annotation_ready()
-            dialog.get_by_role('textbox', name='Note', exact=True).fill('Do not save this draft')
-            page.keyboard.press('Escape'); expect(dialog.get_by_role('alert')).to_contain_text('discard')
-            dialog.get_by_role('button', name='Confirm', exact=True).click(); expect(dialog).not_to_be_visible()
-            open_menu(target).get_by_role('menuitemcheckbox', name='Show time notes (all plots)', exact=True).click()
-            expect(page.get_by_role('button', name='Show time notes', exact=True)).to_have_attribute('aria-pressed', 'false')
-            page.get_by_role('button', name='Show time notes', exact=True).click()
-            print('PASS: real source-specific marker/interval, exact origin, failure/retry, draft guard and shared note visibility', flush=True)
-
-            action(target, 'Reset linked time / TP Y axes'); settle()
             export(target, 'tp')
             # Failed exports share the existing Retry/Close behavior, with no partial download.
             action(target, 'Export CSV / PNG…')
@@ -231,9 +181,6 @@ def run_checks(web, api, dataset, temporary, output):
                     page.get_by_role('button', name=f'Hide Long spike from {fixture.A}', exact=True).click()
                     page.get_by_role('button', name=re.compile('Collapse selection tray')).click(); settle()
                 if key == 'full':
-                    action(target, 'Add time marker…', 'button'); annotation_ready()
-                    assert math.isclose(float(dialog.get_by_label('Time (test seconds)', exact=True).input_value()), sum(axes(target)[:2]) / 2)
-                    close_notes()
                     action(target, 'Reset linked time zoom')
                 else:
                     open_menu(target)
@@ -280,8 +227,7 @@ def run_checks(web, api, dataset, temporary, output):
             open_menu(plots().first)
             page.get_by_role('group', name='Plot mode', exact=True).get_by_role('button', name='Spectrum', exact=True).evaluate('el=>el.click()')
             settle(); expect(menu()).not_to_be_visible(); mode('XY'); expect(menu()).not_to_be_visible()
-            # Failed trace loads still expose the menu/export explanations; no
-            # marker may be seeded from absent/stale source timing.
+            # Failed trace loads still expose the menu/export explanations.
             mode('Test points')
             page.wait_for_function('JSON.parse(localStorage.getItem("ptt.analysis-session.v1")).viewMode === "tp"')
             page.route('**/testpoints/*/data?*', lambda r: r.fulfill(status=503, json={'detail': 'Isolated missing trace'}))
@@ -290,14 +236,13 @@ def run_checks(web, api, dataset, temporary, output):
             target = plots().first
             expect(target.locator('.uplot')).not_to_be_attached()
             button(target).click(); expect(menu()).to_be_visible()
-            expect(menu().get_by_role('menuitem', name=re.compile('^Add time marker'))).to_have_attribute('aria-disabled', 'true')
             menu().get_by_role('menuitem', name='Export CSV / PNG…', exact=True).click()
             empty = page.get_by_role('dialog', name=re.compile('^Export '))
             expect(empty.get_by_role('button', name='Download PNG', exact=True)).to_be_disabled()
             page.keyboard.press('Escape')
             page.unroute('**/testpoints/*/data?*'); page.unroute('**/filter?*')
             page.reload(); settle()
-            assert fixture.dataset_hashes(dataset) == before, 'Source files changed (annotations are separately stored)'
+            assert fixture.dataset_hashes(dataset) == before, 'Source files changed'
             assert not errors, errors
             (output / 'results.json').write_text(json.dumps({'downloads': downloads, 'unchanged_source_files': sorted(before), 'errors': errors}, indent=2))
             print(f'PASS: overview reset, nine slots/all-mode desktop/maximize/restore/125%/150%, stale/failed traces/reload; {len(before)} source files unchanged, no page errors', flush=True)

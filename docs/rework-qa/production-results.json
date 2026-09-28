@@ -1,0 +1,31 @@
+{
+  "checks": [
+    "Built /ptt/ loads with local logo/font, 3 restored colored selections, 4 plots and expanded point tray",
+    "Split page renders without horizontal overflow",
+    "Edit page renders without horizontal overflow",
+    "Uploads page renders without horizontal overflow",
+    "Components page renders without horizontal overflow",
+    "Settings page renders without horizontal overflow",
+    "Desktop resize and K11C0 -> PTT -> K11C0 navigation",
+    "23 original dataset files unchanged; 2 disposable statistics caches refreshed to feature schema v2"
+  ],
+  "errors": [],
+  "external_requests": [],
+  "failed_responses": [],
+  "asset_urls": [
+    "http://127.0.0.1:8087/ptt/assets/index-C5RlpJnA.js",
+    "http://127.0.0.1:8087/ptt/assets/index-DPG26kIi.css",
+    "http://127.0.0.1:8087/ptt/assets/manrope-variable.ttf",
+    "http://127.0.0.1:8087/ptt/assets/ptt-logo.webp"
+  ],
+  "refreshed_statistics_caches": [
+    "tests/ptt_demo_run_a/tp_stats.json",
+    "tests/ptt_demo_run_b/tp_stats.json"
+  ],
+  "changed_dataset_files": [],
+  "new_runtime_files": [
+    "tests/Example_DataKiHaX_GroundTest2607161341_39/source_identity.json",
+    "tests/ptt_demo_run_a/source_identity.json",
+    "tests/ptt_demo_run_b/source_identity.json"
+  ]
+}

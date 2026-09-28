@@ -1,5 +1,10 @@
 # Phase 9 — plot context menus
 
+> **Time notes retired 2026-09-28:** The feature was removed at the user's request.
+> Legacy `annotations.json` files are retained inert. The feature checks below
+> are historical; current removal regression coverage is
+> [verify_time_notes_removal.py](../scripts/verify_time_notes_removal.py).
+
 Date: 2026-09-10. Branch `feature/resumable-multipart-upload`, baseline `873c80c`.
 
 ## Scope and action contract

@@ -2,11 +2,11 @@
   display: flex;
   align-items: baseline;
   gap: 5px;
-  margin-top: 7px;
+  margin-top: 2px;
   padding: 3px 0;
   border: 0;
   background: none;
-  color: #aab9c4;
+  color: #63748b;
   font: inherit;
   font-size: 11px;
   text-align: left;
@@ -16,13 +16,13 @@
 }
 
 .summary[data-tone='warning'] {
-  color: #e2cc8b;
+  color: #806b20;
 }
 .summary[data-tone='blocked'] {
-  color: #f6a293;
+  color: #b84343;
 }
 .summary[data-tone='ok'] {
-  color: #8bdbc4;
+  color: #237c66;
 }
 .summary:hover {
   text-decoration: underline;
@@ -30,9 +30,9 @@
 
 .details {
   padding: 16px 18px 20px;
-  border-bottom: 1px solid #45535d;
-  background: #20282e;
-  color: #ced8df;
+  border-bottom: 1px solid #d4dcea;
+  background: #f7f9fc;
+  color: #41516b;
   font-size: 12px;
   font-weight: 400;
   line-height: 1.65;
@@ -66,21 +66,21 @@
 }
 .facts h4 {
   margin: 0 0 8px;
-  color: #e2ebf1;
+  color: #344666;
   font-size: 12px;
 }
 .facts p {
   margin: 7px 0;
 }
 .note {
-  color: #a5b4bf;
+  color: #63748b;
   font-size: 11px;
 }
 .warning {
-  color: #e2cc8b;
+  color: #806b20;
 }
 .examples summary {
-  color: #b0d5ed;
+  color: #405994;
   cursor: pointer;
 }
 .examples {
@@ -105,7 +105,7 @@
 .counts th,
 .counts td {
   padding: 5px 6px;
-  border-bottom: 1px solid #3c4952;
+  border-bottom: 1px solid #dfe4ec;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -118,11 +118,11 @@
 }
 .counts small {
   display: block;
-  color: #e2cc8b;
+  color: #806b20;
 }
 .summary:focus-visible,
 .details :focus-visible {
-  outline: 2px solid #82c5ed;
+  outline: 2px solid #263685;
   outline-offset: 2px;
 }
 

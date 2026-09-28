@@ -150,6 +150,27 @@ class TestNotesTests(DataDirTestCase):
         self.assertEqual(meta["user_meta"], {"custom": "keep"})
         self.assertIn("force", meta["columns"])
 
+    def test_retired_time_notes_are_inert_and_test_findings_remain_editable(self):
+        self.upload("Original description")
+        path = self.tests / "alpha/annotations.json"
+        url = "/api/tests/alpha/annotations"
+        for method in ("GET", "PUT"):
+            response = self.client.request(method, url, json={"annotations": []})
+            self.assertEqual(response.status_code, 404, response.text)
+        self.assertFalse(path.exists())
+
+        # Even malformed legacy data is no longer read, validated or rewritten.
+        legacy = b"legacy annotation file: no longer interpreted\n"
+        path.write_bytes(legacy)
+        for method in ("GET", "PUT"):
+            response = self.client.request(method, url, json={"annotations": []})
+            self.assertEqual(response.status_code, 404, response.text)
+        saved = self.save(description="Updated description", notes="Updated findings")
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(saved.json()["description"], "Updated description")
+        self.assertEqual(saved.json()["notes"], "Updated findings")
+        self.assertEqual(path.read_bytes(), legacy)
+
     def test_busy_missing_and_disk_failure_leave_saved_notes_unchanged(self):
         self.assertEqual(self.save(notes="missing").status_code, 404)
         self.upload("Original")

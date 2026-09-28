@@ -1,11 +1,13 @@
 import { CSSProperties } from 'react';
 
 export const SelectStyle: CSSProperties = {
-  background: '#3c3c3c',
-  color: '#e0e0e0',
-  border: '1px solid #555',
+  background: '#f8f9fc',
+  color: '#202c42',
+  border: '1px solid #dfe4ec',
   padding: '4px 8px',
-  borderRadius: 3,
+  borderRadius: 5,
+  minHeight: 30,
+  fontFamily: 'Manrope, Segoe UI, sans-serif',
   fontSize: 12,
 };
 
@@ -17,11 +19,13 @@ export const noSelect: CSSProperties = {
 };
 
 export const buttonStyle: CSSProperties = {
-  background: '#3c3c3c',
-  color: '#e0e0e0',
-  border: '1px solid #555',
+  background: '#ffffff',
+  color: '#202c42',
+  border: '1px solid #dfe4ec',
   padding: '3px 10px',
-  borderRadius: 3,
+  borderRadius: 5,
+  minHeight: 30,
+  fontFamily: 'Manrope, Segoe UI, sans-serif',
   cursor: 'pointer',
   fontSize: 11,
 };

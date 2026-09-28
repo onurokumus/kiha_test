@@ -209,8 +209,6 @@ export const AxisControls: React.FC<AxisControlsProps> = ({
   return (
     <div ref={rootRef} className={styles.root}>
       <div className={styles.commandBar}>
-        <span className={styles.contextLabel}>TP mean scatter</span>
-
         <div className={styles.axisFields}>
           <div className={styles.axisField}>
             <span className={styles.axisLabel}>X</span>
@@ -257,9 +255,11 @@ export const AxisControls: React.FC<AxisControlsProps> = ({
           onKeyDown={handleMoreKeyDown}
         >
           <span>More</span>
-          <span className={styles.moreGlyph} aria-hidden="true">
-            •••
-          </span>
+          <svg className={styles.moreGlyph} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="5" cy="12" r="1.6" />
+            <circle cx="12" cy="12" r="1.6" />
+            <circle cx="19" cy="12" r="1.6" />
+          </svg>
         </button>
       </div>
 

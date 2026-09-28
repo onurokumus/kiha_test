@@ -22,14 +22,14 @@ const AnimatedDotComponent: React.FC<AnimatedDotProps> = ({
 }) => {
   const [displayColor, setDisplayColor] = useState(payload.color);
   const [displayR, setDisplayR] = useState(payload.isSelected ? 8 : 6);
-  const [displayStroke, setDisplayStroke] = useState(payload.isSelected ? '#fff' : 'transparent');
+  const [displayStroke, setDisplayStroke] = useState(payload.isSelected ? payload.color : 'transparent');
   const [isHovered, setIsHovered] = useState(false);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
       setDisplayColor(payload.color);
       setDisplayR(payload.isSelected ? 8 : 6);
-      setDisplayStroke(payload.isSelected ? '#fff' : 'transparent');
+      setDisplayStroke(payload.isSelected ? payload.color : 'transparent');
     }, 10);
     return () => clearTimeout(timeout);
   }, [payload.color, payload.isSelected]);
@@ -42,7 +42,7 @@ const AnimatedDotComponent: React.FC<AnimatedDotProps> = ({
   const pulseRadius = hoverRadius + 3;
 
   return (
-    <g>
+    <g data-scatter-hover-target="point">
       {/* Outer glow ring - only visible on hover or highlight */}
       {shouldShowEffects && (
         <>
@@ -54,6 +54,7 @@ const AnimatedDotComponent: React.FC<AnimatedDotProps> = ({
             stroke={displayColor}
             strokeWidth={1}
             opacity={0.3}
+            pointerEvents="none"
             style={{
               transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
             }}
@@ -79,6 +80,7 @@ const AnimatedDotComponent: React.FC<AnimatedDotProps> = ({
             stroke={displayColor}
             strokeWidth={1.5}
             opacity={0.5}
+            pointerEvents="none"
             style={{
               transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
             }}

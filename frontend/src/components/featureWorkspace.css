@@ -1,0 +1,57 @@
+.feature-edit,
+.feature-split,
+.feature-settings { color: #26344d; }
+.feature-edit,
+.feature-split { padding: 24px 28px 32px !important; gap: 16px !important; }
+.feature-edit > *,
+.feature-split > * { flex-shrink: 0; }
+.feature-page-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.feature-page-heading h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: -.4px; }
+.feature-page-heading p { margin: 5px 0 0; color: #66758c; font-size: 12px; line-height: 1.6; }
+.feature-edit .panel,
+.feature-split .panel { padding: 16px; border-radius: 7px; }
+.feature-edit .section-title,
+.feature-split .section-title { color: #344666; }
+.feature-edit .input,
+.feature-split .input { min-width: 0; }
+.feature-disclosure { min-width: 0; border: 1px solid #dfe4ec; border-radius: 7px; background: #fff; }
+.feature-disclosure > summary { padding: 15px 18px; color: #344666; font-size: 12px; font-weight: 650; cursor: pointer; }
+.feature-disclosure[open] > summary { border-bottom: 1px solid #e9edf4; }
+.feature-disclosure > summary > span { font-weight: 400; font-size: 11px; margin-left: 12px; color: #6d7b90; }
+.feature-disclosure > summary > .feature-field-warning { color: #ab4940; }
+.feature-disclosure > .feature-disclosure-body { padding: 18px; }
+.feature-disclosure > .panel { border: 0; }
+.feature-inline-disclosure { min-width: 0; margin: 8px 0; }
+.feature-inline-disclosure > summary { cursor: pointer; font-size: 12px; color: #405994; padding: 7px 0; font-weight: 600; }
+.feature-inline-disclosure[open] > summary { margin-bottom: 8px; }
+.feature-help { color: #66758c; font-size: 11px; line-height: 1.6; }
+.feature-help > summary { cursor: pointer; color: #60718e; }
+.feature-help > p { max-width: 78ch; margin: 8px 0 0; }
+.feature-edit .feature-edit-overview { display: flex; flex-direction: column; gap: 16px; }
+.feature-edit .feature-edit-meta { flex: auto !important; width: 100%; gap: 10px !important; }
+.feature-edit .feature-edit-meta textarea { max-width: 900px; }
+.feature-edit .feature-edit-meta label > span { font-size: 12px; color: #54647d; }
+.feature-edit .feature-meta-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.feature-edit .feature-cleanup-body { display: flex; flex-direction: column; gap: 12px; }
+.feature-edit .feature-cleanup-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.feature-edit .feature-column-grid { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) 90px 60px; align-items: center; gap: 9px 14px; font-size: 12px; max-height: 400px; overflow-y: auto; }
+.feature-split fieldset { gap: 16px !important; }
+.feature-split .feature-split-toolbar { padding: 12px 16px; }
+.feature-split .feature-split-dirty { font-size: 11px; color: #806b20; }
+.feature-split .feature-points-scroll { overflow-x: auto; }
+.feature-split .feature-points-grid { display: grid; grid-template-columns: 100px minmax(100px, 1fr) 90px 90px 50px minmax(130px, 1fr) 185px; align-items: center; gap: 9px; font-size: 12px; min-width: 850px; }
+.feature-split .feature-points-grid > span { font-size: 11px; }
+.feature-settings > .feature-settings-content { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+.feature-settings .feature-settings-section { padding: 18px; }
+.feature-settings .feature-settings-section h2 { margin: 0 0 14px; font-size: 13px; font-weight: 650; color: #344666; }
+.feature-settings .feature-settings-section > .feature-help { margin-top: 14px; }
+.feature-settings .settings-row { gap: 12px; }
+.feature-settings .settings-row > span { color: #54647d; }
+.feature-settings .settings-grid { max-width: none !important; gap: 14px !important; }
+.feature-settings .feature-grid-cell { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.feature-settings .feature-grid-cell > span { font-size: 11px; color: #6d7b90; }
+.feature-settings .feature-grid-cell > div { width: 100% !important; }
+@media (max-width: 1100px) {
+  .feature-edit,
+  .feature-split { padding: 18px 20px 28px !important; }
+}

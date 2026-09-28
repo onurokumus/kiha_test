@@ -65,7 +65,6 @@ def run_checks(web, api, dataset, temporary, output):
         session = {'version': 1, 'sources': catalog, 'currentTest': TEST, 'xAxis': 'load_N',
             'yAxis': 'position_m', 'axesUserSet': True, 'plotConfigs': COLS, 'plotsUserEdited': True,
             'plotDensity': 'quad', 'viewMode': 'tp', 'scatterCollapsed': True,
-            'annotationsVisible': False,
             'selections': [{'test': TEST, 'tpId': tp, 'hidden': False} for tp in (1, 2)]}
         page.add_init_script(f'''if(!sessionStorage.getItem('ui-polish-seeded')){{
           sessionStorage.setItem('ui-polish-seeded','1');
@@ -145,26 +144,6 @@ def run_checks(web, api, dataset, temporary, output):
         try:
             page.goto(web)
             settle()
-            notes = icon('Show time notes')
-            expect(notes).to_have_attribute('aria-pressed', 'false')
-            expect(notes).to_have_attribute('data-tooltip', 'Show or hide time notes')
-            notes.hover()
-            expect(page.get_by_role('tooltip')).to_have_text('Show or hide time notes')
-            notes.focus()
-            page.keyboard.press('Enter')
-            expect(notes).to_have_attribute('aria-pressed', 'true')
-            expect(page.get_by_role('tooltip')).to_have_text('Show or hide time notes')
-            page.mouse.move(5, 5)
-            page.get_by_role('button', name='Analyze', exact=True).focus()
-            expect(page.get_by_role('tooltip')).to_have_count(0)
-            notes.hover()
-            expect(page.get_by_role('tooltip')).to_have_text('Show or hide time notes')
-            notes.focus()
-            page.keyboard.press('Space')
-            expect(notes).to_have_attribute('aria-pressed', 'false')
-            page.mouse.move(5, 5)
-            page.get_by_role('button', name='Analyze', exact=True).focus()
-            expect(page.get_by_role('tooltip')).to_have_count(0)
             export = icon('Export selected plots')
             expect(export).to_have_attribute('data-tooltip', 'Export selected plots')
             export.hover()
@@ -177,7 +156,7 @@ def run_checks(web, api, dataset, temporary, output):
             expect(dialog).to_be_visible()
             close_dialog(dialog)
             expect(export).to_be_focused()
-            print('PASS: icon-only note/export controls, tooltips, keyboard toggles/dialog and focus return', flush=True)
+            print('PASS: icon-only export control, tooltip, keyboard dialog and focus return', flush=True)
 
             for kind in ('despike', 'bandpass', 'moving_avg', 'detrend', ''):
                 dialog, opener = filter_dialog(kind)

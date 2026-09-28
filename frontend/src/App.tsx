@@ -123,6 +123,8 @@ function App() {
   const [restoredSession] = useState(loadAnalysisSession);
   const recoveryInputRef = useRef<AnalysisSession | null>(hasSavedAnalysisSession() ? restoredSession : null);
   const [sessionEpoch, setSessionEpoch] = useState(0);
+  const [plotExportTarget, setPlotExportTarget] = useState<HTMLDivElement | null>(null);
+  const [plotDetailTarget, setPlotDetailTarget] = useState<HTMLSpanElement | null>(null);
   const [plotViewports, setPlotViewports] = useState<PlotViewports>(restoredSession.plotViewports);
   const [hasRestoredSession] = useState(hasSavedAnalysisSession);
   const [sessionRecoveryReady, setSessionRecoveryReady] = useState(false);
@@ -181,14 +183,13 @@ function App() {
     loading: boolean;
     error: string;
   }>({ key: '', points: [], loading: false, error: '' });
-  const [isEditMode, setIsEditMode] = useState(false);
   const [plotConfigs, setPlotConfigs] = useState<string[]>(
     hasRestoredSession ? restoredSession.plotConfigs : []
   );
   const [fullPlotExtraColumns, setFullPlotExtraColumns] = useState<string[][]>(
     () => restoredSession.fullPlotExtraColumns
   );
-  // True once the user picks columns via Edit Plots. While false, the grid
+  // True once the user changes a plot signal. While false, the grid
   // auto-(re)seeds from the selected test points (first-selected prioritized);
   // once true, those picks are preserved and only NEW columns fill empty cells.
   const [plotsUserEdited, setPlotsUserEdited] = useState(
@@ -239,7 +240,6 @@ function App() {
       : Array.from({ length: 9 }, () => ({ ...DEFAULT_FILTER_UI }))
   );
   // Separate display state so switching an overlay never rebuilds filter specs.
-  const [annotationsVisible, setAnnotationsVisible] = useState(restoredSession.annotationsVisible);
   const [plotShowOriginal, setPlotShowOriginal] = useState<boolean[]>(
     () => restoredSession.plotShowOriginal
   );
@@ -257,6 +257,7 @@ function App() {
     hasRestoredSession ? restoredSession.xyXCols : []
   );
   const [tab, setTab] = useState<AppTab>('analyze');
+  const [editInitialSection, setEditInitialSection] = useState<'components' | undefined>();
   const [notice, setNotice] = useState('');
   const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
   const [splitDirty, setSplitDirty] = useState(false);
@@ -276,9 +277,6 @@ function App() {
     hasRestoredSession ? restoredSession.plotDensity : 'nine'
   );
   const [isResizingWorkspace, setIsResizingWorkspace] = useState(false);
-  const [isStackedWorkspace, setIsStackedWorkspace] = useState(
-    () => window.matchMedia('(max-width: 980px)').matches
-  );
   const analyzeWorkspaceRef = useRef<HTMLDivElement>(null);
   const {
     uploads,
@@ -591,7 +589,10 @@ function App() {
           // screen forever with no error and no way to reach Uploads (1.9).
           scheduleMetaRetry();
         })
-        .finally(() => metaInFlight.current.delete(name));
+        .finally(() => {
+          // A pre-reload response must not clear the guard for its replacement.
+          if ((testGen.current.get(name) ?? 0) === gen) metaInFlight.current.delete(name);
+        });
     });
   }, [tests, metaByTest, metaRetry, scheduleMetaRetry, sourceCatalog, loading, sessionRecoveryReady]);
 
@@ -893,7 +894,6 @@ function App() {
       if (next.defaultViewMode !== prev.defaultViewMode) setViewMode(next.defaultViewMode);
       if (next.specMode !== prev.specMode) {
         setSpecMode(next.specMode);
-        if (next.specMode === 'waterfall') setSpecSource('full');
       }
       if (next.specLogY !== prev.specLogY) setSpecLogY(next.specLogY);
       if (next.clustering !== prev.clustering) setClusteringEnabled(next.clustering);
@@ -966,6 +966,7 @@ function App() {
   const handleTabChange = async (next: AppTab): Promise<boolean> => {
     if (next === tab) return true;
     if (!(await confirmDiscardActiveDraft())) return false;
+    setEditInitialSection(undefined);
     setTab(next);
     if (next === 'uploads') {
       // Fresh history immediately; the 2 s poller takes over while open.
@@ -977,8 +978,11 @@ function App() {
   };
 
   // -- Uploads tab callbacks --
-  const handleOpenTest = async (name: string, destination: 'analyze' | 'edit' = 'analyze') => {
-    if (await handleTestChange(name)) setTab(destination);
+  const handleOpenTest = async (name: string, destination: 'analyze' | 'edit' = 'analyze', section?: 'components') => {
+    if (await handleTestChange(name)) {
+      setEditInitialSection(destination === 'edit' ? section : undefined);
+      setTab(destination);
+    }
   };
 
   const handleTestDeleted = async (name: string) => {
@@ -1113,27 +1117,16 @@ function App() {
     },
   };
 
-  // Manual reload of everything shown
+  // Refresh the live workspace through the same identity-aware path as recovery.
+  // It loads the complete source catalog before invalidating metadata, so a
+  // faster test cannot replace the chosen axes while another schema is pending.
   const reloadData = async () => {
-    if (!sessionRecoveryReady) { await recoverSessionRef.current(); return; }
-    try {
-      setLoading(true);
-      setError(null);
-      // Keep the current workspace intact until the catalog request succeeds.
-      const list = await fetchTests();
-      Object.keys(metaByTest).forEach((name) => invalidateTest(name));
-      setTests(list);
-      if (!list.some((test) => test.name === currentTest && test.status === 'ready')) {
-        setFullRange(null);
-        setCurrentTest(list.find((test) => test.status === 'ready')?.name ?? '');
-      }
-    } catch (err) {
-      setTestListStatus('error');
-      setError(err instanceof Error ? err.message : 'Failed to reload');
-      console.error('Error reloading:', err);
-    } finally {
-      setLoading(false);
+    if (sessionRecoveryReady && !recoveryNeedsReview && !recoveryLegacy) {
+      // Keep unresolved saved references intact when this is a recovery retry.
+      // Otherwise use today's choices, not the snapshot from page startup.
+      recoveryInputRef.current = captureSession();
     }
+    await recoverSessionRef.current();
   };
 
   // Scatter x/y from per-TP aggregates (mean), across ALL ready tests
@@ -1174,7 +1167,7 @@ function App() {
           name: tp.name,
           label: tp.label,
           tp,
-          color: sel?.color || '#569cd6',
+          color: sel?.color || '#263685',
           isSelected: !!sel,
         });
       });
@@ -1508,6 +1501,9 @@ function App() {
     return keys;
   }, [columnsByTest, filterColumns, tpsByTest, xAxis, yAxis]);
   const visibleStatsErrors = requiredStatsKeys.filter((key) => statsErrors[key]);
+  const scatterMetaLoading = tests.some(test =>
+    test.status === 'ready' && test.name !== settings.datasheetZone &&
+    !metaByTest[test.name] && !metaErrors[test.name]);
   const scatterStatsLoading = requiredStatsKeys.some((key) => loadingStats.has(key));
   const scatterErrorText =
     visibleStatsErrors.length > 0
@@ -1617,7 +1613,6 @@ function App() {
     setFullPlotExtraColumns(session.fullPlotExtraColumns);
     setPlotFilters(session.plotFilters);
     setPlotShowOriginal(session.plotShowOriginal);
-    setAnnotationsVisible(session.annotationsVisible);
     setViewMode(session.viewMode);
     setFullPlotMode(session.fullPlotMode);
     setWaterfallWindow(session.waterfallWindow);
@@ -1764,7 +1759,6 @@ function App() {
       plotsUserEdited,
       plotFilters,
       plotShowOriginal,
-      annotationsVisible,
       xyYCols: xyYCols.slice(0, 9),
       xyXCols: xyXCols.slice(0, 9),
       scatterRatio,
@@ -1785,27 +1779,19 @@ function App() {
   }, [serializedSession, sessionSaveDisabled]);
 
   useEffect(() => {
-    const media = window.matchMedia('(max-width: 980px)');
-    const updateLayoutMode = () => setIsStackedWorkspace(media.matches);
-    updateLayoutMode();
-    media.addEventListener('change', updateLayoutMode);
-    return () => media.removeEventListener('change', updateLayoutMode);
-  }, []);
-
-  useEffect(() => {
     if (!isResizingWorkspace) return;
     const previousCursor = document.body.style.cursor;
     const previousUserSelect = document.body.style.userSelect;
-    document.body.style.cursor = isStackedWorkspace ? 'row-resize' : 'col-resize';
+    document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
 
     const resize = (event: PointerEvent) => {
       const workspace = analyzeWorkspaceRef.current;
       if (!workspace) return;
       const bounds = workspace.getBoundingClientRect();
-      const available = isStackedWorkspace ? bounds.height : bounds.width;
+      const available = bounds.width;
       if (available <= 0) return;
-      const pointer = isStackedWorkspace ? event.clientY - bounds.top : event.clientX - bounds.left;
+      const pointer = event.clientX - bounds.left;
       const ratio = (pointer / available) * 100;
       setScatterRatio(Math.min(62, Math.max(24, ratio)));
     };
@@ -1820,7 +1806,7 @@ function App() {
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
     };
-  }, [isResizingWorkspace, isStackedWorkspace]);
+  }, [isResizingWorkspace]);
 
   const handlePlotDensityChange = (density: PlotDensity) => {
     setPlotDensity(density);
@@ -1850,7 +1836,10 @@ function App() {
       setTimeYRanges([]);
       setTimeZoomResetVersion((version) => version + 1);
     }
-    else setFullRange(null);
+    else {
+      setFullRange(null);
+      setPlotViewports(previous => ({ ...previous, full: Array(9).fill(null) }));
+    }
   };
 
   const handleXAxisChange = (axis: string) => {
@@ -1961,7 +1950,7 @@ function App() {
       onAdoptServerUpload={adoptServerUpload}
       onCancelUpload={cancelUpload}
       onOpenTest={handleOpenTest}
-      onEditNotes={(name) => { void handleOpenTest(name, 'edit'); }}
+      onEditNotes={(name, section) => { void handleOpenTest(name, 'edit', section); }}
       onTestDeleted={handleTestDeleted}
       onTestsChanged={handleTestsChanged}
       onStatsRebuilt={handleStatsRebuilt}
@@ -1989,12 +1978,12 @@ function App() {
         position: 'fixed',
         inset: 0,
         zIndex: 2000,
-        background: '#1e1e1ecc',
-        border: '3px dashed #569cd6',
+        background: '#f7f8fae8',
+        border: '3px dashed #263685',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        color: '#569cd6',
+        color: '#263685',
         fontSize: 20,
         pointerEvents: 'none',
       }}
@@ -2145,7 +2134,7 @@ function App() {
       ) : tab === 'settings' ? (
         settingsView
       ) : tab === 'components' ? (
-        <ComponentStatisticsView onEditTest={name => { void handleOpenTest(name, 'edit'); }} />
+        <ComponentStatisticsView onEditTest={name => { void handleOpenTest(name, 'edit', 'components'); }} />
       ) : tab === 'split' && meta ? (
         <SplitView
           key={currentTest}
@@ -2161,6 +2150,7 @@ function App() {
       ) : tab === 'edit' && meta ? (
         <EditView
           test={currentTest}
+          initialSection={editInitialSection}
           meta={meta}
           tests={tests}
           onTestChange={handleTestChange}
@@ -2242,7 +2232,7 @@ function App() {
                   showVerticalErrorBars={showVerticalErrorBars}
                 />
                 <PlotStateOverlay
-                  loading={scatterStatsLoading || datasheetLine.loading}
+                  loading={scatterMetaLoading || scatterStatsLoading || datasheetLine.loading}
                   hasData={scatterData.length > 0 || datasheetData.length > 0}
                   error={
                     scatterData.length === 0 && datasheetData.length === 0
@@ -2269,7 +2259,7 @@ function App() {
             className="analyze-resize-rail"
             role="separator"
             aria-label="Resize scatter and plot panels"
-            aria-orientation={isStackedWorkspace ? 'horizontal' : 'vertical'}
+            aria-orientation="vertical"
             aria-valuemin={24}
             aria-valuemax={62}
             aria-valuenow={Math.round(scatterRatio)}
@@ -2281,8 +2271,8 @@ function App() {
             }}
             onKeyDown={(event) => {
               if (scatterCollapsed) return;
-              const decreaseKey = isStackedWorkspace ? 'ArrowUp' : 'ArrowLeft';
-              const increaseKey = isStackedWorkspace ? 'ArrowDown' : 'ArrowRight';
+              const decreaseKey = 'ArrowLeft';
+              const increaseKey = 'ArrowRight';
               if (event.key === decreaseKey || event.key === increaseKey) {
                 event.preventDefault();
                 const step = event.shiftKey ? 5 : 2;
@@ -2316,6 +2306,8 @@ function App() {
           {/* Right Panel - Time Series Plots */}
           <div className="analyze-plots-pane">
             <SelectedPointsPanel
+              exportTargetRef={setPlotExportTarget}
+              detailTargetRef={setPlotDetailTarget}
               selectedTPs={selectedTPs}
               hiddenTPs={hiddenTPs}
               onToggleVisibility={toggleVisibility}
@@ -2327,12 +2319,10 @@ function App() {
                 setTimeYRanges([]);
               }}
               timeZoom={activeTimeZoom}
-              hasYZoom={viewMode === 'tp' && activeTimeYRanges.some(Boolean)}
+              hasYZoom={viewMode === 'tp' ? activeTimeYRanges.some(Boolean) : viewMode === 'full' && plotViewports.full.some(v => v?.y)}
               onResetTimeZoom={resetActiveTimeZoom}
               maxPoints={MAX_SELECTED_TEST_POINTS}
               loadingTestPointIds={loadingTestPointIds}
-              isEditMode={isEditMode}
-              onToggleEditMode={() => setIsEditMode(!isEditMode)}
               viewMode={viewMode}
               onViewModeChange={setViewMode}
               waterfallWindow={waterfallWindow}
@@ -2344,10 +2334,7 @@ function App() {
               onWaterfallOverlapChange={setWaterfallOverlap}
               onWaterfallResolutionChange={setWaterfallResolution}
               onWaterfallBandChange={setWaterfallBand}
-              onSpecModeChange={(mode) => {
-                setSpecMode(mode);
-                if (mode === 'waterfall') setSpecSource('full');
-              }}
+              onSpecModeChange={setSpecMode}
               specXAxis={specXAxis}
               onSpecXAxisChange={setSpecXAxis}
               specRpmCol={specRpmCol}
@@ -2369,6 +2356,8 @@ function App() {
             />
             <TimeSeriesGrid
               key={sessionEpoch}
+              exportTarget={plotExportTarget}
+              detailTarget={plotDetailTarget}
               viewports={plotViewports}
               sourceCatalog={sourceCatalog}
               onViewportChange={(kind, index, value) => setPlotViewports(previous => ({...previous,
@@ -2402,11 +2391,10 @@ function App() {
               specLogY={specLogY}
               specSource={specSource}
               fs={meta?.fs_hz ?? null}
+              sampleRatesByTest={Object.fromEntries(Object.entries(metaByTest).map(([name, source]) => [name, source.fs_hz]))}
               plotFilters={plotFilters}
               plotFilterSpecs={plotFilterSpecs}
               plotShowOriginal={plotShowOriginal}
-              annotationsVisible={annotationsVisible}
-              onAnnotationsVisibleChange={setAnnotationsVisible}
               onPlotShowOriginalChange={(i, show) =>
                 setPlotShowOriginal((prev) => prev.map((value, index) => index === i ? show : value))
               }
@@ -2441,11 +2429,10 @@ function App() {
               statsErrors={statsErrors}
               onRetryStatistics={retryStatistics}
               onBrowseFullTest={() => {
-                if (viewMode === 'spectrum') setSpecSource('full');
-                else if (viewMode === 'xy') setXYSource('full');
-                else setViewMode('full');
+                setSpecSource('full');
+                setXYSource('full');
+                if (viewMode === 'tp') setViewMode('full');
               }}
-              isEditMode={isEditMode}
               plotConfigs={plotConfigs}
               fullPlotExtraColumns={fullPlotExtraColumns}
               onFullPlotExtraColumnsChange={(index, columns) => {

@@ -1,3 +1,5 @@
+import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
+import { AxisRange } from '../../utils/timePlotRanges';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
@@ -26,6 +28,7 @@ interface Props {
   onRemove: () => void;
   syncKey: string;
   range: TimeRange;
+  zoomResetVersion: number;
   onRangeChange: (r: TimeRange) => void;
   tps: TestPoint[];
   selectedId: number | null;
@@ -67,11 +70,16 @@ export function effectiveEnd(tp: TestPoint, tps: TestPoint[], dataEnd: number): 
  *  click a TP label to select it, then drag its start/end handles. */
 export default function SplitPlot(props: Props) {
   const { test, column, columns, plotNumber, canRemove, onColumnChange, onRemove,
-          syncKey, range, onRangeChange, tps, selectedId, onSelect,
+          syncKey, range, zoomResetVersion, onRangeChange, tps, selectedId, onSelect,
           onChangeTp, dataStart, dataEnd } = props;
   const wrapperRef = useRef<HTMLDivElement>(null); // positioning reference
   const containerRef = useRef<HTMLDivElement>(null); // uPlot mount target
   const plotRef = useRef<uPlot | null>(null);
+  const yRangeRef = useRef<AxisRange | null>(null);
+  useEffect(() => {
+    yRangeRef.current = null;
+    plotRef.current?.setScale('y', { min: null, max: null } as unknown as { min: number; max: number });
+  }, [zoomResetVersion]);
   const [windowState, setWindowState] = useState<WindowState | null>(null);
   const [box, setBox] = useState<OverlayBox | null>(null);
   const [chartTick, setChartTick] = useState(0); // bumps when chart rebuilt
@@ -179,7 +187,7 @@ export default function SplitPlot(props: Props) {
         width, height: PLOT_HEIGHT, series, bands,
         scales: {
           x: { time: false, min: xMin, max: xMax, range: [xMin, xMax] },
-          y: { range: visibleYRange },
+          y: { range: (u, min, max) => yRangeRef.current ?? visibleYRange(u, min, max) },
         },
         // Fixed axis and outer padding keep absolute X/TP positions aligned
         // even when variables have very different numerical magnitudes.
@@ -198,6 +206,10 @@ export default function SplitPlot(props: Props) {
             filters: { pub: (type) => type === 'mousemove', sub: (type) => type === 'mousemove' },
           },
         },
+        plugins: [xPanZoomPlugin(r => {
+          const context = contextRef.current;
+          if (context.ready && context.requestKey === requestKey) context.onRangeChange(r);
+        }, r => { yRangeRef.current = r; })],
         hooks: {
           setSelect: [
             (u2) => {
@@ -322,7 +334,6 @@ export default function SplitPlot(props: Props) {
   return (
     <section className={`panel ${styles.card}`} role="region" aria-label={`Split plot ${plotNumber}`} data-split-plot>
       <div className={styles.header}>
-        <span className={styles.plotNumber}>Plot {plotNumber}</span>
         <SearchableSelect
           value={column}
           options={columns.map((value) => ({ value, label: value }))}
@@ -335,16 +346,23 @@ export default function SplitPlot(props: Props) {
           className={styles.variable}
         />
         {win && (
-          <span className="badge">
-            {win.mode === 'raw' ? 'raw' : `envelope 1:${win.level}`}
+          <span className={styles.displayDetail} tabIndex={0}
+            title={win.mode === 'raw' ? 'Full-resolution display. CSV exports all stored samples.'
+              : `Min/max display: one group per ${win.level} stored samples. Zoom in for finer detail. CSV exports all stored samples.`}>
+            1:{win.mode === 'raw' ? 1 : win.level}
           </span>
         )}
         <div className={styles.actions}>
-          <button type="button" className="btn" title="Reset time zoom for all split plots"
-            onClick={() => onRangeChange(null)}>Reset zoom</button>
-          <button type="button" className="btn" aria-label={`Remove split plot ${plotNumber}`}
+          <button type="button" className={`btn ${styles.iconButton}`} aria-label="Reset zoom"
+            title="Reset time and Y zoom for all split plots"
+            onClick={() => onRangeChange(null)}>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 5a5.5 5.5 0 1 1-.4 5M3 1.5V5h3.5" /></svg>
+          </button>
+          <button type="button" className={`btn ${styles.iconButton}`} aria-label={`Remove split plot ${plotNumber}`}
             title={canRemove ? 'Remove this plot' : 'Keep at least one split plot'}
-            disabled={!canRemove} onClick={onRemove}>Remove</button>
+            disabled={!canRemove} onClick={onRemove}>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" /></svg>
+          </button>
         </div>
       </div>
       <div ref={wrapperRef} className={styles.viewport} style={{ height: PLOT_HEIGHT }}>
@@ -379,9 +397,9 @@ export default function SplitPlot(props: Props) {
                   style={{
                     position: 'absolute', left: x0, top: 0,
                     width: x1 - x0, height: '100%',
-                    background: sel ? '#569cd630' : '#569cd614',
-                    borderLeft: '1px solid #569cd6',
-                    borderRight: tp.end_s !== null ? '1px solid #569cd6' : '1px dashed #4a6b8a',
+                    background: sel ? '#527bd32b' : '#527bd310',
+                    borderLeft: '1px solid #263685',
+                    borderRight: tp.end_s !== null ? '1px solid #263685' : '1px dashed #4a6b8a',
                   }}
                 />
                 <button
@@ -397,8 +415,8 @@ export default function SplitPlot(props: Props) {
                     overflow: 'hidden', whiteSpace: 'nowrap',
                     pointerEvents: 'auto', cursor: 'pointer',
                     fontSize: 10, fontWeight: 600,
-                    color: sel ? '#569cd6' : '#a0a0a0',
-                    background: sel ? '#1e3a52' : '#25252699',
+                    color: sel ? '#263685' : '#626f83',
+                    background: sel ? '#e5edff' : '#ffffffeb',
                     padding: '1px 4px', borderRadius: 2, border: 0,
                   }}
                 >
@@ -417,7 +435,7 @@ export default function SplitPlot(props: Props) {
                         display: 'flex', justifyContent: 'center',
                       }}
                     >
-                      <div style={{ width: 3, height: '100%', background: '#569cd6' }} />
+                      <div style={{ width: 3, height: '100%', background: '#263685' }} />
                     </div>
                     {tp.end_s !== null && (
                       <div
@@ -431,7 +449,7 @@ export default function SplitPlot(props: Props) {
                           display: 'flex', justifyContent: 'center',
                         }}
                       >
-                        <div style={{ width: 3, height: '100%', background: '#569cd6' }} />
+                        <div style={{ width: 3, height: '100%', background: '#263685' }} />
                       </div>
                     )}
                   </>
@@ -456,9 +474,6 @@ export default function SplitPlot(props: Props) {
           updatingLabel="Updating split preview"
           errorTitle="Could not load the split preview"
         />
-      </div>
-      <div className={styles.hint}>
-        drag to zoom · double-click reset · click TP label to select · drag handles to move edges
       </div>
     </section>
   );

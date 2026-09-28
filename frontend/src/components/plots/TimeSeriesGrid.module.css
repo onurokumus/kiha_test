@@ -9,8 +9,8 @@
   padding: 32px;
   overflow-y: auto;
   text-align: center;
-  background: #222425;
-  border: 1px solid #3c4246;
+  background: #f8f9fc;
+  border: 1px solid #dfe4ec;
   border-radius: 5px;
 }
 
@@ -18,30 +18,35 @@
   width: min(280px, 80%);
   flex-shrink: 0;
   margin-bottom: 28px;
-  color: #b5d5e9;
+  color: #405994;
 }
 .emptyWorkspace h2 {
-  color: #dce7ee;
+  color: #202c42;
   font-size: 20px;
   font-weight: 600;
-  letter-spacing: -0.25px;
+  letter-spacing: normal;
 }
 .emptyWorkspace p {
   max-width: 45ch;
   margin: 12px 0 22px;
-  color: #a1adb5;
+  color: #626f83;
   font-size: 13px;
   line-height: 1.7;
 }
-.emptyWorkspace button {
+.emptyWorkspace > button {
   min-height: 36px;
   padding: 7px 16px;
   font-size: 12px;
 }
+.emptySignals { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); width: min(100%, 760px); gap: 5px 14px; margin-top: 22px; text-align: left; }
+.emptySignal { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 3px 0; border-bottom: 1px solid #e6eaf1; }
+.emptyPicker { flex: 1 1 0; min-width: 0; }
+.slotNumber { flex: 0 0 18px; color: #929bab; font-size: 10px; font-variant-numeric: tabular-nums; }
+.axisLabel { color: #707b8c; font-size: 10px; }
 .emptyHint {
   max-width: 42ch;
   margin-top: 14px;
-  color: #909da6;
+  color: #626f83;
   font-size: 11px;
   line-height: 1.6;
 }
@@ -66,13 +71,20 @@
   overflow: hidden;
 }
 
-.exportToolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  flex: 0 0 auto;
-  padding-bottom: 5px;
+.displayDetail {
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: #626f83;
+  background: #f2f4f8;
+  font-size: 10px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.displayDetail:focus-visible {
+  outline: 2px solid #263685;
+  outline-offset: 1px;
 }
 
 .gridContainer {
@@ -82,34 +94,32 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  overflow-y: auto;
 }
 
 .gridSingle {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(220px, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 
-/* A wide but short pane also occurs at desktop browser zoom when the scatter
-   stacks above the signals. Keep usable plot heights and scroll extra rows;
-   width-only container queries otherwise squeeze every canvas below 40px. */
+/* The selected layout always divides the available viewport, including on
+   resize and restore. Canvas dimensions must not set a minimum track size. */
 .gridQuad {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(220px, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
 }
 
 .gridNine {
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-template-rows: repeat(3, minmax(220px, 1fr));
+  grid-template-rows: repeat(3, minmax(0, 1fr));
 }
 
 .gridExpanded {
   grid-template-columns: minmax(0, 1fr);
-  /* Expanded plots also reserve space for filter controls and a live legend. */
-  grid-template-rows: minmax(320px, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .plotWrapper {
+  container: plot-slot / size;
   opacity: 1;
   /* 1fr grid tracks are minmax(auto, 1fr): without these the uPlot canvas's
      intrinsic pixel size becomes the track minimum, so after minimizing an
@@ -143,25 +153,8 @@
   }
 }
 
-@container (max-width: 820px) {
-  .gridQuad,
-  .gridNine {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: none;
-    grid-auto-rows: minmax(220px, 1fr);
-    align-content: start;
-    overflow-y: auto;
-  }
-}
-
-@container (max-width: 520px) {
-  .gridQuad,
-  .gridNine {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-.unavailable { padding: 12px; display: flex; flex-direction: column; gap: 8px; overflow: auto; color: #c9d1d9; }
-.unavailable p { font-size: 12px; color: #adb4bf; }
+.unavailable { padding: 12px; display: flex; flex-direction: column; gap: 8px; overflow: auto; color: #202c42; }
+.unavailable p { font-size: 12px; color: #626f83; }
 .unavailable label { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .unavailable select { min-width: 0; max-width: 100%; flex: 1; }
 .unavailable strong { overflow-wrap: anywhere; }

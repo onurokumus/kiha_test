@@ -1,5 +1,116 @@
 # TODO
 
+## Requested scatter reload fix (2026-09-28)
+
+- [x] Keep scatter variables and test-point selections when More > Reload data refreshes tests in a different order. Reuse live session recovery, retain the complete source catalog before cache reload, and ignore obsolete request cleanup. Build/lint, 44 frontend tests and delayed/overlapping browser reload checks pass; see IMPLEMENTATION.md.
+
+## Requested consistency across sections (2026-09-28)
+
+- [x] Extend Analyze's compact, stable controls and quieter information hierarchy to Split, Edit, Uploads, Components and Settings. Preserve every existing workflow, draft guard and export; verify desktop resizing, browser zoom and keyboard access with isolated fixtures.
+
+Completed ahead of independent Phase 11 work. Build/lint, 44 frontend tests,
+52 production integration checks, 16 Analyze regression groups and isolated
+Split/upload/component/Edit/Settings workflows pass. See IMPLEMENTATION.md and
+[verification](docs/SECTION_CONSISTENCY_QA.md).
+
+## Requested viewport-fitting plots (2026-09-28)
+
+- [x] Make 1x1, 2x2 and 3x3 plot layouts fit the page without grid scrolling, including labels and axis titles. Build/lint, 62 desktop grid checks, actual 125%/150% zoom, Waterfall sizing and PNG label checks pass. See IMPLEMENTATION.md.
+
+## Requested stable analysis controls (2026-09-28)
+
+Follow-up: added a matching divider between the view buttons and test dropdown
+in the single-row layout; build/lint and scoped review pass.
+The shared display-detail badge now sits immediately beside the layout buttons;
+build/lint and focused wide/narrow browser checks pass.
+
+- [x] Keep the analysis control panel steady across source/view/method changes, use the same Options button to open and close settings, and prevent selected-point chips from resizing the panel. Follow-up: fit test/method controls in the first row, shorten the test field with a full-name tooltip, and use an icon-only Options button. Remove repeated source/Test labels, group spectrum/options at the right, and tighten the selection tray. Build/lint and 16 read-only desktop browser groups pass; see IMPLEMENTATION.md.
+
+## Requested compact waterfall color controls (2026-09-28)
+
+- [x] Move waterfall color-bar Min/Max/Apply/Auto under a compact header button, like Time statistics. Narrow cards show a color-scale icon. Build/lint, 13 waterfall session checks and six read-only browser groups pass; see IMPLEMENTATION.md.
+
+## Requested Spectrum and XY scope-text removal (2026-09-28)
+
+- [x] Remove the Original data / complete TP banner from Spectrum and XY plots. Shared banner and spacing removed; build/lint and focused browser checks pass.
+
+## Requested shared display-detail indicator (2026-09-28)
+
+- [x] Show a compact ratio such as 1:16 once beside the shared layout controls, with sampling details on hover/focus. Remove repeated resolution rows and original + filtered statuses from plot headers. Build/lint and seven focused browser groups pass; see IMPLEMENTATION.md.
+
+## Requested drag-box stability (2026-09-28)
+
+- [x] Fix the selection jumping to plot borders when reversing near its starting point, including the initial threshold crossing. Preview now follows the pointer from its first movement; thin horizontal/vertical drags stay visible and activated axes remain latched for commit. Build/lint, 44 frontend tests and 28 focused browser groups across seven plot modes pass.
+
+## Requested scatter control styling (2026-09-28)
+
+- [x] Clean up the X/Y, More and Filters controls above the scatter plot, remove nested borders and replace the Filters glyph with a funnel icon. Build/lint and desktop keyboard/resize/125%/150% browser checks pass.
+- [x] Align the More label and three-dot icon optically. Scoped 1px icon adjustment; build/lint and normal/125%/150% browser zoom, resize and menu keyboard checks pass.
+
+## Requested compact variable legend (2026-09-28)
+
+- [x] Replace the generic legend tooltip with colored variable names, fit each legend entry on one row, and show Original/Filtered labels only for overlays. Build/lint and six focused browser checks pass.
+
+## Requested export button placement (2026-09-28)
+
+- [x] Move Export selected plots to the right of the selected-point chips, below Clear, and remove its separate toolbar row. Build/lint and desktop browser checks pass; see IMPLEMENTATION.md.
+
+## Requested zoom on every non-scatter plot (2026-09-28)
+
+- [x] Extend axis-selective left-drag zoom to Full test, FFT/PSD, Waterfall, XY and Split previews. Preserve independent Y bounds, linked time ranges, session restore, resets and Split boundary editing; leave the main scatter unchanged. Build/lint, 44 frontend checks and read-only browser verification pass.
+
+## Requested time-notes removal (2026-09-28)
+
+- [x] Remove time notes throughout PTT: toolbar/menu controls, dialogs, overlays, background requests, PNG metadata, session state and backend endpoints. Old sessions still reopen; legacy files remain inert. Build/lint, frontend helpers, backend tests and focused browser checks pass; see IMPLEMENTATION.md.
+
+## Requested selection tooltip simplification (2026-09-28)
+
+- [x] Remove the Click to hide/show suffix from selected test-point tooltips, retaining point details. Frontend build/lint pass.
+
+## Requested left-drag Y zoom (2026-09-28)
+
+- [x] Extend selected-point Time plot left-drag to X, Y or both axes, keeping X linked and Y independent. Preserve Alt gestures, panning, cancellation, reset and session ranges. Build/lint and nine focused browser checks pass; see IMPLEMENTATION.md.
+
+## Requested TP toolbar text removal (2026-09-28)
+
+- [x] Remove the Statistics / original data / complete TP text above test-point plots. Build/lint and built-preview browser check pass.
+
+## Requested integrated mean display (2026-09-28)
+
+- [x] Integrate mean values into the plot title row with quiet styling; preserve readable precision, exact-value hover within the statistics popup, and a compact header tooltip. Build/lint and desktop browser checks pass; see IMPLEMENTATION.md.
+
+## Requested quieter plot context (2026-09-27)
+
+- [x] Show shared scope once; open statistics from mean values, keep analysis details on demand, and shorten repeated unavailable-signal messages without losing diagnostics. Build/lint and 15 focused browser checks pass; see IMPLEMENTATION.md.
+
+## Requested direct analysis controls (2026-09-27)
+
+- [x] Fix sticky scatter hover cards and remove the TP mean scatter heading.
+- [x] Remove Edit plots mode; edit signals from plot titles. Keep one variable per test-point plot; retain existing Full-test comparisons.
+- [x] Separate Source and View, expose FFT/PSD/Waterfall, and put secondary controls under Options.
+- [x] Keep colored selections and their hide/remove/Clear actions visible.
+- [x] Unify numeric field styling, select-all, units and inline validation across filters, ranges and test-point editing; reduce repeated explanatory text using Details.
+
+This explicit user request takes priority over the independent Phase 11 backlog.
+Completed against the migrated feature source. See [verification](docs/INTERACTION_QA.md).
+The final working copy remains `D:/okumus/work_v2/kiha_test`; existing datasets
+and Full-test comparisons are preserved.
+
+## Requested feature-branch UI migration (2026-09-27)
+
+- [x] Carry the K11C0 light rework onto `feature/resumable-multipart-upload` without losing its newer features. Preserve the original propeller logo, blue unselected scatter points, non-blue selection colors, all 20 selection slots, offline local assets and `/ptt/` routing.
+
+This explicit request takes priority over the remaining Phase 11 backlog.
+Use commit `1f0793380d0bad43f88e2c4d384ad05f7a0421e2` as the functional base;
+do not transplant older `main` components over its current features. Current
+progress and acceptance checks are in `IMPLEMENTATION.md`.
+
+Completed in `work_v2/kiha_test` on `codex/ptt-feature-light`. Final install,
+build/lint, 32 frontend tests, 497 backend tests/477 subtests, 63 browser groups
+and the production-path preview pass. Prior main UI is preserved; existing
+datasets remain intact. See [verification](docs/REWORK_QA.md). Offline Linux
+deployment/load testing remains a separate step.
+
 Open items below are listed in recommended implementation order. Complete each phase before moving to the next, except for independent small fixes.
 
 ## Requested full-test variable comparison (2026-09-16)

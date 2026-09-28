@@ -4,6 +4,7 @@
 // processed trace from its own spec. There is no shared/broadcast control.
 
 import { FilterKind, FilterSpec } from '../types';
+import { parseFiniteNumber } from '../utils/numericField';
 
 export const FILTER_LABELS: Record<FilterKind, string> = {
   lowpass: 'Low-pass',
@@ -47,15 +48,15 @@ export const buildFilterSpec = (ui: FilterUi): FilterSpec | null => {
   if (!ui.kind) return null;
   if (ui.kind === 'detrend') return { kind: ui.kind };
   if (ui.kind === 'despike') {
-    const windowMs = Number(ui.despikeWindowMs);
-    const maxSpikeMs = Number(ui.maxSpikeMs);
-    const threshold = Number(ui.threshold);
-    const absFloor = Number(ui.absFloor);
+    const windowMs = parseFiniteNumber(ui.despikeWindowMs);
+    const maxSpikeMs = parseFiniteNumber(ui.maxSpikeMs);
+    const threshold = parseFiniteNumber(ui.threshold);
+    const absFloor = parseFiniteNumber(ui.absFloor);
     if (
-      !Number.isFinite(windowMs) ||
-      !Number.isFinite(maxSpikeMs) ||
-      !Number.isFinite(threshold) ||
-      !Number.isFinite(absFloor) ||
+      windowMs === null ||
+      maxSpikeMs === null ||
+      threshold === null ||
+      absFloor === null ||
       windowMs <= 0 ||
       maxSpikeMs <= 0 ||
       windowMs <= 2 * maxSpikeMs ||
@@ -74,13 +75,26 @@ export const buildFilterSpec = (ui: FilterUi): FilterSpec | null => {
     };
   }
   if (ui.kind === 'moving_avg') {
-    const w = Number(ui.winS);
-    return w > 0 ? { kind: ui.kind, windowS: w } : null;
+    const w = parseFiniteNumber(ui.winS);
+    return w !== null && w > 0 ? { kind: ui.kind, windowS: w } : null;
   }
-  const o = Math.min(Math.max(Math.round(Number(ui.order) || 4), 1), 10);
-  const a = Number(ui.f1);
-  if (!(a > 0)) return null;
+  const o = parseFiniteNumber(ui.order);
+  const a = parseFiniteNumber(ui.f1);
+  if (o === null || !Number.isInteger(o) || o < 1 || o > 10 || a === null || !(a > 0)) return null;
   if (ui.kind === 'lowpass' || ui.kind === 'highpass') return { kind: ui.kind, order: o, f1: a };
-  const b = Number(ui.f2);
-  return b > a ? { kind: ui.kind, order: o, f1: a, f2: b } : null;
+  const b = parseFiniteNumber(ui.f2);
+  return b !== null && b > a ? { kind: ui.kind, order: o, f1: a, f2: b } : null;
 };
+
+/** One plot filter must be valid for every visible source that supplies its
+ * variable. Unknown sample rates retain server validation; never infer a rate
+ * from display-decimated trace spacing or silently clamp a cutoff. */
+export function filterForSampleRates(spec: FilterSpec | null, rates: readonly (number | null | undefined)[]) {
+  const known = rates.filter((rate): rate is number => typeof rate === 'number' && Number.isFinite(rate) && rate > 0);
+  const fs = known.length ? Math.min(...known) : null;
+  if (spec && fs !== null && ['lowpass', 'highpass', 'bandpass', 'bandstop'].includes(spec.kind)) {
+    const cutoffs = spec.kind === 'bandpass' || spec.kind === 'bandstop' ? [spec.f1, spec.f2] : [spec.f1];
+    if (cutoffs.some(cutoff => typeof cutoff === 'number' && cutoff >= fs / 2)) return { fs, spec: null };
+  }
+  return { fs, spec };
+}

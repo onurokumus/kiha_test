@@ -4,6 +4,8 @@ import styles from './PlotState.module.css';
 export interface PlotEmptyState {
   title: string;
   detail?: string;
+  /** Quiet one-line state; keep the full explanation accessible. */
+  compact?: boolean;
 }
 
 export interface PlotStateOverlayProps {
@@ -115,11 +117,12 @@ export const PlotStateOverlay: React.FC<PlotStateOverlayProps> = ({
       )}
 
       {empty && emptyState && (
-        <div className={styles.fullState} role="status" aria-live="polite">
-          <div className={styles.emptyCard}>
-            <EmptyMark />
+        <div className={styles.fullState} role="status" aria-live="polite"
+          aria-label={emptyState.compact && emptyState.detail ? `${emptyState.title}. ${emptyState.detail}` : undefined}>
+          <div className={`${styles.emptyCard} ${emptyState.compact ? styles.emptyCompact : ''}`}>
+            {!emptyState.compact && <EmptyMark />}
             <div className={styles.stateTitle}>{emptyState.title}</div>
-            {emptyState.detail && <div className={styles.stateDetail}>{emptyState.detail}</div>}
+            {!emptyState.compact && emptyState.detail && <div className={styles.stateDetail}>{emptyState.detail}</div>}
           </div>
         </div>
       )}

@@ -2,6 +2,8 @@ import { FormEvent, useEffect, useId, useRef, useState } from 'react';
 import { fetchSplitCandidates, previewAutoSplit } from '../../services/api';
 import type { AutoSplitProposal, IdCandidate, TestPoint } from '../../types';
 import { SearchableSelect } from '../controls/SearchableSelect';
+import { NumericField } from '../controls/NumericField';
+import { parseFiniteNumber } from '../../utils/numericField';
 import styles from './AutoSplitPanel.module.css';
 
 interface Props {
@@ -94,11 +96,10 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
   const headingId = useId();
   const explanationId = useId();
   const durationId = useId();
-  const durationErrorId = useId();
   const exclusionsId = useId();
   const selectedColumns = rows.map((row) => row.column);
-  const duration = Number(minDuration);
-  const validDuration = minDuration.trim() !== '' && Number.isFinite(duration) && duration >= 0;
+  const duration = parseFiniteNumber(minDuration);
+  const validDuration = duration !== null && duration >= 0;
   const validColumns = rows.length > 0 && rows.length <= MAX_VARIABLES &&
     selectedColumns.every((column) => columns.includes(column)) &&
     new Set(selectedColumns).size === rows.length;
@@ -207,7 +208,7 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
 
   const runPreview = async (event: FormEvent) => {
     event.preventDefault();
-    if (!validColumns || !validDuration || disabled || busy) return;
+    if (!validColumns || !validDuration || duration === null || disabled || busy) return;
     requestRef.current?.abort();
     const controller = new AbortController();
     requestRef.current = controller;
@@ -334,11 +335,6 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
             </>}
           </div>
 
-          <p className={styles.methodNote}>
-            Best for IDs, modes and stepped setpoints. Values must match exactly in at least two
-            consecutive samples. No tolerance or smoothing is applied.
-          </p>
-
           <div className={styles.filters}>
             <label className={styles.checkbox}>
               <input type="checkbox" checked={ignoreZero} disabled={disabled}
@@ -347,16 +343,19 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
               Exclude zero values
             </label>
             <div className={styles.duration}>
-              <label htmlFor={durationId}>Minimum duration (s)</label>
-              <input id={durationId} className="input" type="number" step="any" min="0"
-                value={minDuration} disabled={disabled} aria-invalid={!validDuration || undefined}
-                aria-describedby={!validDuration ? durationErrorId : undefined}
+              <label htmlFor={durationId}>Minimum duration</label>
+              <NumericField id={durationId} className="input" step="any" min="0" unit="s"
+                aria-label="Minimum duration (s)"
+                value={minDuration} disabled={disabled}
                 onChange={(event) => { invalidate(); setMinDuration(event.target.value); }} />
             </div>
           </div>
-          {!validDuration && <p id={durationErrorId} className={styles.error} role="alert">
-            Enter a finite duration of 0 seconds or more.
-          </p>}
+          <details className={styles.methodDetails}>
+          <summary>Details</summary>
+          <p className={styles.methodNote}>
+            Best for IDs, modes and stepped setpoints. Values must match exactly in at least two
+            consecutive samples. No tolerance or smoothing is applied.
+          </p>
           <p id={exclusionsId} className={styles.help}>
             Missing or non-finite values in any selected variable always break a run and are excluded.
             {ignoreZero && ' Any zero in a selected variable is excluded too.'}
@@ -364,6 +363,7 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
             {' '}Isolated samples are excluded even when the minimum duration is zero.
             {' '}Duration is the number of samples in a run divided by the sample rate.
           </p>
+          </details>
           <div className={styles.previewAction}>
             <button type="submit" className="btn-toggle active"
               disabled={disabled || busy || !validColumns || !validDuration}>

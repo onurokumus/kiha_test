@@ -1,0 +1,196 @@
+.workspace:global(.feature-split) {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 12px 16px 20px !important;
+  gap: 10px !important;
+}
+
+.workspace > .editor {
+  gap: 10px !important;
+}
+
+.workspace .toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px 7px;
+}
+
+.toolbar h1 {
+  margin: 0;
+  color: #344666;
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sourceControls,
+.editControls,
+.saveControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sourceControls {
+  gap: 12px;
+}
+
+.editControls {
+  border-left: 1px solid #dfe4ec;
+  padding-left: 12px;
+}
+
+.saveControls {
+  margin-left: auto;
+}
+
+.toolbarStatus {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 16px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.saved,
+.unsaved {
+  flex: 0 0 132px;
+}
+
+.saved {
+  color: #66758c;
+}
+
+.unsaved {
+  color: #806b20;
+}
+
+.statusMessage {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #263685;
+}
+
+.files {
+  position: relative;
+}
+
+.files > button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.files svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.files > button[aria-expanded='true'] {
+  border-color: #a6b4d8;
+  background: #eef1fb;
+  color: #263685;
+}
+
+.filesPanel {
+  position: fixed;
+  z-index: 1000;
+  display: grid;
+  gap: 6px;
+  width: 224px;
+  padding: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #fff;
+  border: 1px solid #d4dcea;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px #26344d1a;
+}
+
+.filesPanel > button {
+  text-align: left;
+}
+
+.filesPanel p {
+  margin: 4px 0 0;
+  color: #66758c;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.workspace .points {
+  padding: 12px;
+}
+
+.pointsHeading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 10px;
+}
+
+.pointsHeading h2 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.statusMessage:focus-visible {
+  outline: 2px solid #405994;
+  outline-offset: 2px;
+}
+
+.exportHelp {
+  max-width: 600px;
+}
+
+@media (max-width: 1000px) {
+  .workspace:global(.feature-split) {
+    padding: 10px 12px 16px !important;
+  }
+
+  .workspace .toolbar {
+    gap: 8px;
+  }
+
+  .sourceControls {
+    gap: 8px;
+  }
+
+  .editControls {
+    padding-left: 8px;
+  }
+}
+
+@media (max-height: 650px) {
+  .workspace:global(.feature-split) {
+    padding-top: 8px !important;
+  }
+}
+
+@media (max-height: 400px) {
+  /* A wrapped sticky toolbar would cover the editing controls at high zoom. */
+  .workspace .toolbar {
+    position: static;
+  }
+}

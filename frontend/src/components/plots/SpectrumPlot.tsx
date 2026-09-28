@@ -13,7 +13,8 @@ import {
   SpectrumExportSource,
 } from '../../types';
 import { noSelect } from '../../constants/styles';
-import { ACCENT, AXIS_STYLE, safeRange } from '../../constants/uplotTheme';
+import { ACCENT, AXIS_STYLE, PLOT_PADDING, safeRange } from '../../constants/uplotTheme';
+import { axisTitlesPlugin } from '../../utils/uplotAxisTitle';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
 import { visibleYAutoFitPlugin, visibleYRange } from '../../utils/visibleYRange';
 import { syncPlot, clearPlot, facetedSeriesValue, sortedFacetedDataIdx } from '../../utils/uplotSync';
@@ -25,7 +26,7 @@ import { downloadPlotCsv, plotExportRange } from '../../utils/plotExport';
 import { capturePlotPng, downloadPlotPng } from '../../utils/plotPngExport';
 import { usePlotExportRegistration, type RegisterPlotExport } from '../../utils/plotExportRegistry';
 import { PlotActionMenu } from './PlotActionMenu';
-import { PlotHeader } from './PlotHeader';
+import { PlotHeader, PlotDetailsButton } from './PlotHeader';
 import styles from './TimePlot.module.css';
 
 export type PanelSource = 'tp' | 'full';
@@ -131,7 +132,6 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   logY,
   isExpanded,
   onToggleExpand,
-  isEditMode = false,
   allConfigs = [],
   onConfigChange,
   registerExport,
@@ -141,7 +141,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   const analysisActions = useRef<SpectrumAnalysisActions>(null);
   const exportActions = useRef<PlotExportActions>(null);
   const plotRef = useRef<uPlot | null>(null);
-  const viewportControl = usePlotViewport(plotRef, {viewport, viewportContext, onViewportChange}, false);
+  const viewportControl = usePlotViewport(plotRef, {viewport, viewportContext, onViewportChange}, 'manual');
   const structKeyRef = useRef('');
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [result, setResult] = useState<SpectrumResultState>({
@@ -277,9 +277,10 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
       mode: 2,
       width: box.w,
       height: box.h,
+      padding: PLOT_PADDING,
       scales: {
         x: { time: false, range: safeRange as uPlot.Scale.Range },
-        y: { range: visibleYRange },
+        y: { range: (u, min, max) => viewportControl.yRange() ?? visibleYRange(u, min, max) },
       },
       axes: [
         {
@@ -289,10 +290,10 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
         { ...AXIS_STYLE, label: `${specMode === 'welch' ? 'PSD (U²/Hz)' : 'Magnitude (U)'}${logY ? ' · log10' : ''}` },
       ],
       legend: { show: isExpanded, live: true },
-      // uPlot default drag = client-side x zoom; dblclick resets it.
+      // Left-drag selects X/Y/both; manual Y survives auto-fitting and restore.
       // Wheel-zoom / shift-drag pan are client-side too (no commit target).
       cursor: { dataIdx: sortedFacetedDataIdx, drag: { x: true, y: false } },
-      plugins: [visibleYAutoFitPlugin(), xPanZoomPlugin(), viewportControl.plugin],
+      plugins: [axisTitlesPlugin(`${specMode === 'welch' ? 'PSD (U²/Hz)' : 'Magnitude (U)'}${logY ? ' · log10' : ''}`), visibleYAutoFitPlugin(() => viewportControl.yRange() !== null), xPanZoomPlugin(undefined, viewportControl.setY), viewportControl.plugin],
       series,
     });
 
@@ -355,8 +356,9 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
     };
   } else if (source === 'tp' && eligibleTpCount === 0) {
     emptyState = {
-      title: `${cfg.label} is not available`,
-      detail: 'None of the visible test points contain this signal.',
+      title: 'Signal unavailable',
+      detail: `None of the visible test points contain ${cfg.label}.`,
+      compact: true,
     };
   } else if (logY && traces.length > 0 && !hasData) {
     emptyState = {
@@ -373,11 +375,8 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
     };
   }
 
-  const sampleCount = traces.reduce((total, trace) => total + trace.data.n_samples, 0);
   const missingCount = traces.reduce((total, trace) => total + trace.data.nan_count, 0);
-  const reduced = traces.some((trace) => trace.data.reduction?.method === 'max-bin');
-  const summary = traces.length ? `${specMode.toUpperCase()} · ${source === 'tp'
-    ? `${traces.length} TP${traces.length === 1 ? '' : 's'}` : `${sampleCount.toLocaleString()} samples`}${missingCount ? ` · ${missingCount.toLocaleString()} missing` : ''}${reduced ? ' · reduced' : ''}` : '';
+  const summary = `${missingCount.toLocaleString()} missing samples`;
 
   const exportScope = `${specMode.toUpperCase()} from stored data, including saved edits; no time-plot filter. Only visible legend traces are exported. ${source === 'tp' ? 'Each saved TP uses its own complete interval.' : 'Uses the loaded Full-test time interval.'}`;
   const exportReason = pending ? 'Wait for Spectrum to finish.' : error || partialMessage ||
@@ -442,12 +441,19 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   return (
     <div className={containerClass} style={{ ...noSelect }} role="group" aria-label={`${cfg.label} spectrum plot`}>
       <PlotHeader label={cfg.label} isExpanded={isExpanded} onToggleExpand={onToggleExpand}
+        identityControl={allConfigs.length > 0 && onConfigChange ? <SearchableSelect
+          value={cfg.key} onChange={onConfigChange}
+          options={allConfigs.map(config => ({ value: config.key, label: config.label, keywords: [config.key] }))}
+          ariaLabel="Plot variable" title="Change plot variable"
+          searchPlaceholder="Search plot variables..." optionNoun="variable" appearance="title" /> : undefined}
 
-        summary={summary && <span title={summary} style={{ color: missingCount ? '#dcdcaa' : undefined }}>{summary}</span>}
+        summary={missingCount > 0 ? <><span style={{ color: '#806b20' }}>{summary}</span>
+          <PlotDetailsButton label={cfg.label} disabled={pending || (!traces.length && !failures.length)}
+            onClick={() => analysisActions.current?.open()} /></> : undefined}
 
         actions={<>
           <PlotActionMenu label={cfg.label} targetRef={chartRef} contextKey={contextKey}
-            getPlot={() => plotRef.current} exportActions={exportActions} onAnalysisDetails={() => analysisActions.current?.open()} onReset={viewportControl.reset} />
+            exportActions={exportActions} onAnalysisDetails={() => analysisActions.current?.open()} onReset={viewportControl.reset} />
 
 
           <PlotExportControls hideTrigger actionsRef={exportActions} label={cfg.label} contextKey={`${contextKey}:${logY}`} scope={exportScope}
@@ -459,31 +465,6 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
           <SpectrumAnalysisDetails hideTrigger actionsRef={analysisActions} label={cfg.label} traces={traces} failures={failures}
             contextKey={contextKey} axisMode={axisMode} logY={logY} loading={pending} />
         </>}>
-        {isEditMode && allConfigs.length > 0 && (
-          <SearchableSelect
-            value={cfg.key}
-            onChange={(nextKey) => onConfigChange?.(nextKey)}
-            options={allConfigs.map((config) => ({
-              value: config.key,
-              label: config.label,
-              keywords: [config.key],
-            }))}
-            ariaLabel="Plot variable"
-            title="Change the variable shown in this plot"
-            searchPlaceholder="Search plot variables..."
-            optionNoun="variable"
-            appearance="plot"
-            size="compact"
-            style={{
-              position: 'absolute',
-              left: 0,
-              top: -2,
-              width: 180,
-              maxWidth: 'calc(100% - 76px)',
-              zIndex: 5,
-            }}
-          />
-        )}
       </PlotHeader>
       <div className={styles.plotViewport}>
         <div ref={chartRef} tabIndex={0} aria-label={`Plot canvas for ${cfg.label}`} className={styles.plotCanvas} />

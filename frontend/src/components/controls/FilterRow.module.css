@@ -5,8 +5,8 @@
   align-items: end;
   gap: 16px;
   min-width: 0;
-  color: #c7cdd2;
-  font-family: 'Segoe UI', sans-serif;
+  color: #202c42;
+  font-family: Manrope, 'Segoe UI', sans-serif;
 }
 
 .field {
@@ -16,7 +16,7 @@
 }
 
 .field > span {
-  color: #b7c3cc;
+  color: #626f83;
   font-size: 12px;
   font-weight: 500;
   line-height: 1.4;
@@ -28,14 +28,14 @@
   box-sizing: border-box;
   height: 36px;
   min-width: 0;
-  color: #e2e7ea;
-  background: #373a3d;
-  border: 1px solid #555d63;
+  color: #202c42;
+  background: #f8f9fc;
+  border: 1px solid #dfe4ec;
   border-radius: 4px;
   outline: 0;
   font: inherit;
   font-size: 13px;
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 .field input {
@@ -55,7 +55,7 @@
 
 .nyquist {
   grid-column: 1 / -1;
-  color: #aab8c2;
+  color: #626f83;
   font-size: 12px;
 }
 
@@ -68,35 +68,37 @@
 }
 
 .explanation {
-  color: #aab8c2;
+  color: #626f83;
 }
 
 .validation {
-  color: #e7c16f;
+  color: #806b20;
 }
 
 .clearButton {
   grid-column: 1 / -1;
   justify-self: end;
   padding: 0 14px;
-  color: #c7d3dc;
+  color: #41516b;
   cursor: pointer;
 }
 
 .field input:hover,
 .field select:hover,
 .clearButton:hover {
-  background: #404448;
-  border-color: #69747b;
+  background: #f8f9fc;
+  border-color: #dfe4ec;
 }
 
 .field input:focus-visible,
 .field select:focus-visible,
 .clearButton:focus-visible {
-  border-color: #74c0ed;
-  box-shadow: 0 0 0 2px rgba(86, 156, 214, 0.24);
+  border-color: #263685;
+  box-shadow: none;
 }
 
 .field input[aria-invalid='true'] {
-  border-color: #b6924d;
+  border-color: #e9b6b0;
 }
+.explanation summary { cursor: pointer; }
+.explanation p { margin: 7px 0 0; }

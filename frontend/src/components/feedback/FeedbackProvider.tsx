@@ -15,10 +15,30 @@ interface ConfirmRequest {
 
 const TOOLTIP_ID = 'page-hover-tooltip';
 
+interface TooltipLegendEntry {
+  label: string;
+  color: string;
+}
+
+function readTooltipLegend(target: HTMLElement): TooltipLegendEntry[] | undefined {
+  const value = target.dataset.tooltipLegend;
+  if (!value) return;
+  try {
+    const entries: unknown = JSON.parse(value);
+    if (Array.isArray(entries) && entries.length && entries.every((entry): entry is TooltipLegendEntry =>
+      typeof entry === 'object' && entry !== null &&
+      typeof entry.label === 'string' && entry.label.trim().length > 0 &&
+      typeof entry.color === 'string' && CSS.supports('color', entry.color))) return entries;
+  } catch {
+    // Keep ordinary tooltip text when optional legend metadata is malformed.
+  }
+}
+
 function PageTooltip() {
   const [tooltip, setTooltip] = useState<{
     target: HTMLElement;
     text: string;
+    legend?: TooltipLegendEntry[];
     rect: DOMRect;
   } | null>(null);
   const [position, setPosition] = useState<{
@@ -99,20 +119,21 @@ function PageTooltip() {
         setTooltip(null);
         setPosition(null);
       }
-      const text = prepareTarget(target);
-      if (!text) return;
+      if (!prepareTarget(target)) return;
 
       const reveal = () => {
         showTimerRef.current = null;
         if (targetRef.current !== target || !target.isConnected) return;
+        const text = target.getAttribute('title') ?? target.dataset.tooltip ?? target.dataset.pageTooltipTitle ?? '';
+        if (!text.trim()) { hide(); return; }
         setPosition(null);
-        setTooltip({ target, text, rect: target.getBoundingClientRect() });
+        setTooltip({ target, text, legend: readTooltipLegend(target), rect: target.getBoundingClientRect() });
       };
 
       if (immediate) reveal();
       else showTimerRef.current = window.setTimeout(reveal, 320);
     },
-    [clearTimer, prepareTarget]
+    [clearTimer, prepareTarget, hide]
   );
 
   useEffect(() => {
@@ -140,6 +161,7 @@ function PageTooltip() {
     const handleFocusIn = (event: FocusEvent) => {
       const target = findTarget(event.target);
       if (target) show(target, true);
+      else hide();
     };
 
     const handleFocusOut = (event: FocusEvent) => {
@@ -223,14 +245,19 @@ function PageTooltip() {
       ref={tooltipRef}
       id={TOOLTIP_ID}
       role="tooltip"
-      className={`page-tooltip page-tooltip--${position?.placement ?? 'bottom'}`}
+      aria-label={tooltip.legend ? tooltip.text : undefined}
+      className={`page-tooltip page-tooltip--${position?.placement ?? 'bottom'}${tooltip.legend ? ' page-tooltip--legend' : ''}`}
       style={{
         left: position?.left ?? tooltip.rect.left,
         top: position?.top ?? tooltip.rect.bottom,
         visibility: position ? 'visible' : 'hidden',
       }}
     >
-      {tooltip.text}
+      {tooltip.legend ? tooltip.legend.map((entry, index) =>
+        <span className="page-tooltip__legend-item" key={`${index}-${entry.label}`}>
+          <i className="page-tooltip__legend-line" style={{ borderColor: entry.color }} aria-hidden="true" />
+          <span>{entry.label}</span>
+        </span>) : tooltip.text}
     </div>
   );
 }

@@ -1,9 +1,11 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import type { SelectedTestPoint, TimePlotConfig, WaterfallData, WaterfallExportRequest } from '../../types';
 import { fetchWaterfall, isAbortError } from '../../services/api';
 import { AXIS_STYLE } from '../../constants/uplotTheme';
+import { axisTitlesPlugin } from '../../utils/uplotAxisTitle';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
 import { usePlotViewport, type ViewportProps } from '../../utils/plotViewport';
 import { validWaterfallColorRange, waterfallColorTicks } from '../../utils/waterfallColorRange';
@@ -13,8 +15,10 @@ import { downloadPlotCsv } from '../../utils/plotExport';
 import { usePlotExportRegistration, type RegisterPlotExport } from '../../utils/plotExportRegistry';
 import { PlotExportControls, type PlotExportActions } from '../controls/PlotExportControls';
 import { SearchableSelect } from '../controls/SearchableSelect';
+import { NumericField } from '../controls/NumericField';
+import { numericError, parseFiniteNumber } from '../../utils/numericField';
 import { PlotActionMenu } from './PlotActionMenu';
-import { PlotHeader } from './PlotHeader';
+import { PlotHeader, PlotDetailsButton } from './PlotHeader';
 import common from './TimePlot.module.css';
 import styles from './WaterfallPlot.module.css';
 
@@ -44,46 +48,110 @@ function cellAt(edges: number[], value: number) {
   return Math.min(low, edges.length - 2);
 }
 
-function ColorRangeControls({ scale, manual, logColor, onChange }: {
-  scale: [number, number]; manual: boolean; logColor: boolean;
+function ColorRangeControls({ label, scale, manual, logColor, onChange }: {
+  label: string; scale: [number, number]; manual: boolean; logColor: boolean;
   onChange: (range: [number, number] | null) => void;
 }) {
   const id = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const minimumInput = useRef<HTMLInputElement>(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ left: 0, top: 0 });
   const [draft, setDraft] = useState<{ min: string; max: string } | null>(null);
-  const [error, setError] = useState('');
+  const close = () => { setOpen(false); trigger.current?.focus({ preventScroll: true }); };
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      if (!trigger.current || !panel.current) return;
+      const anchor = trigger.current.getBoundingClientRect(), box = panel.current.getBoundingClientRect();
+      setPosition({
+        left: Math.max(8, Math.min(anchor.left, window.innerWidth - box.width - 8)),
+        top: Math.max(8, Math.min(anchor.bottom + 6, window.innerHeight - box.height - 8)),
+      });
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    if (panel.current) observer.observe(panel.current);
+    if (trigger.current) observer.observe(trigger.current);
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    minimumInput.current?.focus({ preventScroll: true });
+    const outside = (event: MouseEvent | FocusEvent) => {
+      if (!panel.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', outside);
+    document.addEventListener('focusin', outside);
+    return () => {
+      document.removeEventListener('mousedown', outside);
+      document.removeEventListener('focusin', outside);
+    };
+  }, [open]);
   const manualMin = manual ? scale[0] : null, manualMax = manual ? scale[1] : null;
-  useEffect(() => { setDraft(null); setError(''); }, [manualMin, manualMax]);
+  useEffect(() => { setDraft(null); }, [manualMin, manualMax]);
   // Untouched Auto fields follow the current grid. Preserve both draft values
   // while typing, even if a viewport refinement finishes in the background.
   const values = draft ?? { min: String(scale[0]), max: String(scale[1]) };
+  const minimum = parseFiniteNumber(values.min), maximum = parseFiniteNumber(values.max);
+  const range = minimum !== null && maximum !== null ? [minimum, maximum] : null;
+  const error = range && !validWaterfallColorRange(range, logColor)
+    ? 'Maximum must exceed minimum with a finite span.' : '';
+  const invalid = !!numericError(values.min, { min: logColor ? undefined : 0 }) ||
+    !!numericError(values.max) || !!error;
   const apply = () => {
-    const range = [Number(values.min), Number(values.max)];
-    if (!values.min.trim() || !values.max.trim() || !range.every(Number.isFinite)) {
-      setError('Enter a finite minimum and maximum.');
-    } else if (!logColor && range[0] < 0) {
-      setError('Linear color minimum must be zero or greater.');
-    } else if (!validWaterfallColorRange(range, logColor)) {
-      setError('Maximum must be greater than minimum, with a finite span.');
-    } else {
-      onChange(range); setDraft(null); setError('');
-    }
+    if (invalid || !range || !validWaterfallColorRange(range, logColor)) return;
+    onChange(range); setDraft(null);
   };
-  return <form className={styles.colorControls} aria-label="Waterfall color range" noValidate
-    onSubmit={event => { event.preventDefault(); apply(); }}>
-    <span className={styles.colorLabel} title={logColor ? 'Limits use log10 of magnitude in U, not dB. For example, -3 means 0.001 U.' : 'Limits use linear magnitude in the signal unit U.'}>
-      Color ({logColor ? 'log10(U)' : 'U'})
-    </span>
-    {(['min', 'max'] as const).map(bound => <label key={bound}>
-      {bound === 'min' ? 'Min' : 'Max'}
-      <input type="number" step="any" min={!logColor && bound === 'min' ? 0 : undefined}
-        aria-label={`Color ${bound}`} aria-invalid={!!error} aria-describedby={error ? `${id}-error` : undefined}
-        value={values[bound]} onChange={event => { setDraft({ ...values, [bound]: event.target.value }); setError(''); }} />
-    </label>)}
-    <button type="submit">Apply</button>
-    <button type="button" aria-pressed={!manual} title="Fit the color range to the loaded magnitudes"
-      onClick={() => { onChange(null); setDraft(null); setError(''); }}>Auto</button>
-    {error && <span id={`${id}-error`} role="alert" className={styles.colorError}>{error}</span>}
-  </form>;
+  const units = logColor ? 'log10(U)' : 'U';
+  return <>
+    <button ref={trigger} type="button" className={styles.colorTrigger}
+      aria-label={`Color range for ${label}`} aria-haspopup="dialog" aria-expanded={open}
+      aria-controls={open ? id : undefined} data-manual={manual || undefined}
+      title={`Color range: ${manual ? 'Manual' : 'Auto'} · ${scale.map(String).join(' to ')} ${units}`}
+      onClick={() => open ? close() : setOpen(true)}>
+      <span className={styles.colorSwatch} aria-hidden="true" />
+      <span className={styles.colorTriggerLabel}>Color</span>
+      <svg className={styles.colorChevron} viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3" /></svg>
+    </button>
+    {open && createPortal(<div ref={panel} id={id} role="dialog"
+      aria-label={`Color range for ${label}`} aria-describedby={`${id}-units`}
+      className={styles.colorPanel} style={position}
+      onKeyDown={event => {
+        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
+      }}>
+      <div className={styles.colorHeading}>
+        <strong>Color range</strong>
+        <button type="button" aria-label="Close color range" onClick={close}>×</button>
+      </div>
+      <p id={`${id}-units`} title={logColor ? 'Limits use log10 of magnitude in U, not dB. For example, -3 means 0.001 U.' : 'Limits use linear magnitude in the signal unit U.'}>
+        {manual ? 'Manual' : 'Auto'} · {units}
+      </p>
+      <form className={styles.colorControls} aria-label="Waterfall color range" noValidate
+        onSubmit={event => { event.preventDefault(); apply(); }}>
+        {(['min', 'max'] as const).map(bound => <label key={bound}>
+          {bound === 'min' ? 'Min' : 'Max'}
+          <NumericField ref={bound === 'min' ? minimumInput : undefined} step="any" style={{ width: '100%' }}
+            min={bound === 'min' ? !logColor ? 0 : undefined : minimum ?? undefined}
+            exclusiveMin={bound === 'max'} error={bound === 'max' ? error : undefined}
+            aria-label={`Color ${bound}`}
+            value={values[bound]} onChange={event => { setDraft({ ...values, [bound]: event.target.value }); }} />
+        </label>)}
+        <div className={styles.colorActions}>
+          <button type="submit" disabled={invalid}>Apply</button>
+          <button type="button" aria-pressed={!manual} title="Fit the color range to the loaded magnitudes"
+            onClick={() => { onChange(null); setDraft(null); }}>Auto</button>
+        </div>
+      </form>
+    </div>, document.body)}
+  </>;
 }
 
 function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, viewportContext, onViewportChange, register }: {
@@ -94,8 +162,8 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
   const host = useRef<HTMLDivElement>(null);
   const plot = useRef<uPlot | null>(null);
   const [box, setBox] = useState({ width: 0, height: 0 });
-  const [hover, setHover] = useState('Hover to inspect frequency, elapsed time and magnitude.');
-  const control = usePlotViewport(plot, { viewport, viewportContext, onViewportChange }, true);
+  const [hover, setHover] = useState('');
+  const control = usePlotViewport(plot, { viewport, viewportContext, onViewportChange }, 'manual');
   const reg = useRef(register); reg.current = register;
   const data = trace.data;
   // Reset domains describe the source, never the most recently refined tiles.
@@ -109,14 +177,14 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
     observer.observe(el); return () => observer.disconnect();
   }, []);
   useEffect(() => {
-    if (!host.current || box.width < 100 || box.height < 100) return;
-    setHover('Hover to inspect frequency, elapsed time and magnitude.');
+    if (!host.current || box.width < 40 || box.height < 40) return;
+    setHover('');
     const f = data.frequency_edges_hz, t = data.time_edges_s;
     const rows = data.magnitude.length, cols = data.magnitude[0]?.length ?? 0;
     const bitmap = document.createElement('canvas'); bitmap.width = Math.max(1, cols); bitmap.height = Math.max(1, rows);
     const ctx = bitmap.getContext('2d')!;
     const colorTicks = waterfallColorTicks([lo, hi]);
-    ctx.font = '9px Segoe UI';
+    ctx.font = '9px Manrope';
     const colorGutter = Math.max(66, Math.ceil(Math.max(...colorTicks.map(tick => ctx.measureText(tick.label).width))) + 27);
     const pixels = ctx.createImageData(bitmap.width, bitmap.height);
     data.magnitude.forEach((row, y) => row.forEach((v, x) => {
@@ -144,23 +212,23 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
       const gradient = c.createLinearGradient(0, b.top + b.height, 0, b.top);
       stops.forEach((rgb, i) => gradient.addColorStop(i / (stops.length-1), `rgb(${rgb.join(',')})`));
       c.fillStyle = gradient; c.fillRect(x, b.top, w, b.height);
-      c.fillStyle = '#bbc3cc'; c.font = `${9 * ratio}px Segoe UI`; c.textAlign = 'left';
+      c.fillStyle = '#626f83'; c.font = `${9 * ratio}px Manrope`; c.textAlign = 'left';
       colorTicks.forEach(({ fraction: v, label }) => c.fillText(label, x+w+3*ratio, b.top + b.height*(1-v) + (v===0 ? 0 : 7*ratio)));
     };
     control.sync(() => {
       const u = new uPlot({ width: box.width, height: box.height,
         padding: [12, colorGutter, 0, 0], legend: { show: false },
-        scales: { x: { time: false, range: (_u, min, max) => [min ?? 0, max ?? defaultXMax] }, y: { range: () => [defaultYMin, defaultYMax] } },
-        axes: [{ ...AXIS_STYLE, label: 'Frequency (Hz)', size: 35, labelSize: 16 },
-          { ...AXIS_STYLE, label: 'Elapsed time (s)', size: 48, labelSize: 16 }],
+        scales: { x: { time: false, range: (_u, min, max) => [min ?? 0, max ?? defaultXMax] }, y: { range: () => control.yRange() ?? [defaultYMin, defaultYMax] } },
+        axes: [{ ...AXIS_STYLE, label: 'Frequency (Hz)' },
+          { ...AXIS_STYLE, label: 'Elapsed time (s)' }],
         series: [{}, { label: trace.label, paths: () => null, points: { show: false } }],
         cursor: { drag: { x: true, y: true } },
-        plugins: [xPanZoomPlugin(undefined, () => {}), control.plugin],
+        plugins: [axisTitlesPlugin('Elapsed time (s)'), xPanZoomPlugin(undefined, control.setY), control.plugin],
         hooks: { draw: [draw], setCursor: [(u) => {
-          if (!rows || !cols) return;
-          if (u.cursor.left == null || u.cursor.top == null || u.cursor.left < 0 || u.cursor.top < 0) return;
+          if (!rows || !cols) { setHover(''); return; }
+          if (u.cursor.left == null || u.cursor.top == null || u.cursor.left < 0 || u.cursor.top < 0) { setHover(''); return; }
           const x = cellAt(f, u.posToVal(u.cursor.left, 'x')), y = cellAt(t, u.posToVal(u.cursor.top, 'y'));
-          if (x < 0 || y < 0) return;
+          if (x < 0 || y < 0) { setHover(''); return; }
           setHover(`${fmt(f[x])}–${fmt(f[x+1])} Hz · ${fmt(t[y])}–${fmt(t[y+1])} s · ${fmt(data.magnitude[y][x])} U${data.reduction.method === 'max' ? ' (cell max)' : ''} · source frame centers ${fmt(data.source_frame_start_s[y])}–${fmt(data.source_frame_end_s[y])} s`);
         }] },
       }, [[0, defaultXMax], [defaultYMin, defaultYMax]], host.current!);
@@ -180,6 +248,7 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
   return <section className={styles.facet} aria-label={`Waterfall source ${trace.label}`}>
     <div className={styles.source} title={trace.label}>{trace.label}</div>
     <div ref={host} className={styles.chart} tabIndex={0} aria-label={`Waterfall canvas for ${trace.label}`}
+      onMouseLeave={() => setHover('')}
       onKeyDown={e => { if (e.key === 'Home') { e.preventDefault(); control.reset(); } }} />
     <div className={styles.readout}>{data.magnitude.length ? hover : 'No FFT cells in this view. Press Home to reset axes.'}</div>
   </section>;
@@ -272,7 +341,7 @@ export function WaterfallPlot(props: Props) {
       const width = Math.max(...captures.map(c => c.canvas.width)), height = Math.max(...captures.map(c => c.canvas.height));
       if (width*columns > 8192 || height*rows > 8192 || width*columns*height*rows > 16_000_000) throw new Error('Too many sources for one image. Select fewer test points.');
       const canvas = document.createElement('canvas'); canvas.width = width*columns; canvas.height = height*rows;
-      const context = canvas.getContext('2d')!; context.fillStyle = '#252526'; context.fillRect(0,0,canvas.width,canvas.height);
+      const context = canvas.getContext('2d')!; context.fillStyle = '#ffffff'; context.fillRect(0,0,canvas.width,canvas.height);
       captures.forEach((c,i) => context.drawImage(c.canvas, i%columns*width, Math.floor(i/columns)*height));
       const ratio = captures[0].pixelRatio;
       return { canvas, cssWidth: canvas.width/ratio, cssHeight: canvas.height/ratio, pixelRatio: ratio,
@@ -285,7 +354,15 @@ export function WaterfallPlot(props: Props) {
   useEffect(() => { dialog.current?.close(); }, [key]);
   return <div className={`${common.plotContainer} ${isExpanded ? styles.expanded : ''}`} role="group" aria-label={`${cfg.label} waterfall plot`}>
     <PlotHeader label={cfg.label} isExpanded={isExpanded} onToggleExpand={onToggleExpand}
-      summary={`Waterfall FFT${traces.length > 1 ? ` · ${traces.length} selected TPs` : ''} · ${traces.length ? `Δf ${[...new Set(traces.map(tr => fmt(tr.data.method.bin_spacing_hz)))].join(' / ')} Hz` : resolutionHz ? `Target Δf ${resolutionHz} Hz` : `Hann ${nperseg}`} · ${overlap}% overlap${traces.some(tr => tr.data.reduction.method === 'max') ? ' · reduced grid' : ''}${traces.some(tr => tr.data.nan_count) ? ' · missing samples interpolated' : ''}`}
+      identityControl={(props.allConfigs?.length ?? 0) > 0 && props.onConfigChange ?
+        <SearchableSelect value={cfg.key} options={(props.allConfigs ?? []).map(c => ({ value: c.key, label: c.label, keywords: [c.key] }))}
+          onChange={props.onConfigChange} ariaLabel="Plot variable" title="Change plot variable"
+          appearance="title" searchPlaceholder="Search plot variables..." optionNoun="variable" /> : undefined}
+      summaryInline
+      summary={<ColorRangeControls key={`${cfg.key}:${logColor}`} label={cfg.label}
+        scale={scale} manual={colorRange !== null} logColor={logColor} onChange={onColorRangeChange} />}
+      status={traces.some(tr => tr.data.nan_count) ? <><span style={{ color: '#806b20' }}>Missing samples</span>
+        <PlotDetailsButton label={cfg.label} onClick={() => dialog.current?.showModal()} /></> : undefined}
       actions={<>
         <PlotActionMenu label={cfg.label} targetRef={body} contextKey={key} onReset={reset}
           exportActions={exportActions} onAnalysisDetails={() => dialog.current?.showModal()} />
@@ -295,17 +372,13 @@ export function WaterfallPlot(props: Props) {
           onCsv={(_data, signal, includeMetadata) => downloadPlotCsv({ ...request(), include_metadata: includeMetadata }, signal)}
           onPng={async (signal, includeMetadata) => { const c = capture(); try { await encodeAndDownload(c.canvas, `${cfg.key}_waterfall.png`, signal, includeMetadata ? imageMetadata([c.metadata]) : undefined); } finally { c.dispose(); } }} />
       </>}>
-      {props.isEditMode && <SearchableSelect value={cfg.key} options={(props.allConfigs ?? []).map(c => ({ value:c.key,label:c.label }))}
-        onChange={v => props.onConfigChange?.(v)} ariaLabel="Plot variable" appearance="plot" size="compact" />}
     </PlotHeader>
-    <div className={styles.body} ref={body} tabIndex={0}>
-      <ColorRangeControls key={`${cfg.key}:${logColor}`}
-        scale={scale} manual={colorRange !== null} logColor={logColor} onChange={onColorRangeChange} />
+    <div className={`${styles.body} ${traces.length === 1 ? styles.singleSource : ''}`} ref={body} tabIndex={0}>
       {pending && !traces.length && <p role="status" className={styles.failure}>Calculating waterfall FFT…</p>}
       {!pending && !sources.length && <p className={styles.failure}>Select test points to compare, or choose Full test.</p>}
       {errors.map(message => <p role="alert" className={styles.failure} key={message}>{message}</p>)}
       {!!errors.length && <button className="btn" onClick={() => setRetry(v=>v+1)}>Retry waterfall</button>}
-      {!!traces.length && <div className={styles.hint} role="status">{pending ? 'Refining visible grid… · ' : ''}Color: {traces.length > 1 ? 'shared ' : ''}{colorDescription} · drag to zoom · Shift-drag to pan · Home / double-click to reset axes</div>}
+      {!!traces.length && pending && <div className={styles.hint} role="status">Refining visible grid…</div>}
       <div className={styles.facets}>
         {traces.map(tr => <Heatmap key={`${baseKey}:${tr.label}`} trace={tr} scale={scale} logColor={logColor} expanded={isExpanded} frequencyBand={frequencyBand}
           viewport={viewport} viewportContext={viewportContext} onViewportChange={onViewportChange}

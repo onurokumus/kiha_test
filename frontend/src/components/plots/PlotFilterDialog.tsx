@@ -21,7 +21,6 @@ export function PlotFilterDialog({ label, onClose, children }: {
       <strong>Filter · {label}</strong>
       <button type="button" onClick={onClose} aria-label="Close filter settings">×</button>
     </div>
-    <p>Changes apply to this plot as you edit.</p>
     <div className={styles.fields}>{children}</div>
   </dialog>, document.body);
 }

@@ -1,10 +1,18 @@
 import type { ReactNode } from 'react';
 import styles from './PlotHeader.module.css';
 
+export function PlotDetailsButton({ label, onClick, disabled = false }: {
+  label: string; onClick: () => void; disabled?: boolean;
+}) {
+  return <button type="button" className={styles.details} aria-label={`Details for ${label}`}
+    aria-haspopup="dialog" disabled={disabled} onClick={onClick}>Details</button>;
+}
+
 interface Props {
   label: string;
   identityControl?: ReactNode;
   summary?: ReactNode;
+  summaryInline?: boolean;
   status?: ReactNode;
   isExpanded: boolean;
   onToggleExpand: () => void;
@@ -15,12 +23,14 @@ interface Props {
 
 /** Keep every grid mode's controls in a fixed-width pair, leaving the rest of
  * the header for source labels (including any units) and scientific context. */
-export function PlotHeader({ label, identityControl, summary, status, isExpanded, onToggleExpand,
+export function PlotHeader({ label, identityControl, summary, summaryInline = false, status, isExpanded, onToggleExpand,
   expandLabel = label, actions, children }: Props) {
   return <div className={styles.header} data-plot-header>
-    <div className={styles.identity}>
-      {identityControl ?? <div className={styles.title} title={label}>{label}</div>}
-      {summary && <div className={styles.summary}>{summary}</div>}
+    <div className={`${styles.identity} ${summaryInline ? styles.identityInline : ''}`}>
+      <div className={styles.identityLabel}>
+        {identityControl ?? <div className={styles.title} title={label}>{label}</div>}
+      </div>
+      {summary && <div className={summaryInline ? styles.inlineSummary : styles.summary}>{summary}</div>}
       {status && <div className={styles.status}>{status}</div>}
     </div>
     <div className={styles.actions} data-plot-toolbar>

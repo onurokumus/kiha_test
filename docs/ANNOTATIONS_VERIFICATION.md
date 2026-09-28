@@ -1,5 +1,10 @@
 # Persistent time annotations — Phase 7b
 
+> **Retired 2026-09-28:** Time notes were removed at the user's request. Legacy
+> `annotations.json` files are retained inert. The feature checks below are
+> historical; current regression coverage is
+> [verify_time_notes_removal.py](../scripts/verify_time_notes_removal.py).
+
 Verified 2026-09-10 on Windows, Python3.13 backend and isolated desktop Chromium.
 
 ## Storage and time identity

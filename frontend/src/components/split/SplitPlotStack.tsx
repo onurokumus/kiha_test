@@ -6,6 +6,7 @@ import {
   saveSplitColumns,
 } from '../../utils/splitPlotPreferences';
 import SplitPlot from './SplitPlot';
+import styles from './SplitPlot.module.css';
 
 type Props = Omit<ComponentProps<typeof SplitPlot>,
   'column' | 'plotNumber' | 'canRemove' | 'onColumnChange' | 'onRemove' | 'syncKey'>;
@@ -57,15 +58,17 @@ export default function SplitPlotStack({ columns, ...shared }: Props) {
   };
 
   return (
-    <div ref={stackRef} style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px 12px', padding: '2px 4px' }}>
+    <div ref={stackRef} className={styles.stack}>
+      <div className={styles.stackHeader}>
         <span className="section-title" style={{ margin: 0 }}>Line plots</span>
         <span className="badge" role="status" aria-live="polite">
           {selected.length} / {Math.min(columns.length, MAX_SPLIT_PLOTS)}
         </span>
-        <span style={{ fontSize: 11, color: '#a0a0a0', flex: 1 }}>
-          Time range and test-point boundaries are linked across plots.
-        </span>
+        <details className={styles.help}>
+          <summary>Details</summary>
+          <p>Time range and test-point boundaries are linked across plots. Drag to zoom X, Y or both;
+            double-click to reset. Select a test-point label, then drag its handles to adjust the interval.</p>
+        </details>
         <button ref={addRef} className="btn" aria-label="Add line plot" onClick={addPlot}
           disabled={!canAdd}
           title={canAdd ? 'Add another variable below' : selected.length >= MAX_SPLIT_PLOTS

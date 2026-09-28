@@ -130,7 +130,7 @@ def run_checks(web, api, dataset, temporary, output):
                 panel().get_by_role('button', name=re.compile(r'^\+? ?Add variable$')).focus()
                 page.keyboard.press('Enter')
             choose(2, 'state_id')
-            panel().get_by_role('spinbutton', name='Minimum duration (s)', exact=True).fill('1')
+            panel().get_by_role('textbox', name='Minimum duration (s)', exact=True).fill('1')
             panel().get_by_role('checkbox', name=re.compile('Exclude.*zero')).check()
 
         def same_saved():
@@ -203,7 +203,7 @@ def run_checks(web, api, dataset, temporary, output):
             apply = preview(5)
             same_saved()
             expect(page.get_by_role('textbox', name='Name for TP 99', exact=True)).to_have_value('Existing saved interval')
-            expect(page.get_by_role('button', name='save', exact=True)).to_be_disabled()
+            expect(page.get_by_role('button', name='Save test points', exact=True)).to_be_disabled()
             preview_table = panel().get_by_role('table')
             expect(preview_table.get_by_role('row')).to_have_count(6)
             expect(preview_table).to_contain_text('run_id=1')
@@ -221,10 +221,10 @@ def run_checks(web, api, dataset, temporary, output):
             apply.focus(); page.keyboard.press('Enter')
             expect(page.get_by_role('textbox', name='Name for TP 99', exact=True)).to_have_count(0)
             for index, (start, end) in enumerate(EXPECTED, 1):
-                assert abs(float(page.get_by_role('spinbutton', name=f'Start seconds for TP {index}', exact=True).input_value()) - start / 10) < 1e-9
-                assert abs(float(page.get_by_role('spinbutton', name=f'End seconds for TP {index}', exact=True).input_value()) - end / 10) < 1e-9
+                assert abs(float(page.get_by_role('textbox', name=f'Start seconds for TP {index}', exact=True).input_value()) - start / 10) < 1e-9
+                assert abs(float(page.get_by_role('textbox', name=f'End seconds for TP {index}', exact=True).input_value()) - end / 10) < 1e-9
             same_saved()
-            expect(page.get_by_role('button', name='save *', exact=True)).to_be_enabled()
+            expect(page.get_by_role('button', name='Save test points', exact=True)).to_be_enabled()
             with page.expect_download() as event:
                 page.get_by_role('link', name='Download draft CSV for TP 1', exact=True).click()
             draft_download = event.value
@@ -235,8 +235,8 @@ def run_checks(web, api, dataset, temporary, output):
             assert {row['test_point_id'] for row in rows} == {'1'}
             assert_native_csv(output / 'draft-tp1.csv', ALPHA, 1, 5, 15, ['run_id', 'state_id'])
             same_saved()
-            page.get_by_role('button', name='save *', exact=True).click()
-            expect(page.get_by_role('button', name='save', exact=True)).to_be_disabled()
+            page.get_by_role('button', name='Save test points', exact=True).click()
+            expect(page.get_by_role('button', name='Save test points', exact=True)).to_be_disabled()
             actual_saved = request.get(f'tests/{ALPHA}/testpoints').json()
             assert [(point['start_idx'], point['end_idx']) for point in actual_saved['test_points']] == EXPECTED
             assert saved_path.read_bytes() != saved_bytes
@@ -251,7 +251,7 @@ def run_checks(web, api, dataset, temporary, output):
             if panel().count() == 0:
                 open_panel()
             configure_pair(); preview(5)
-            minimum = panel().get_by_role('spinbutton', name='Minimum duration (s)', exact=True)
+            minimum = panel().get_by_role('textbox', name='Minimum duration (s)', exact=True)
             minimum.fill('0.2')
             expect(panel().get_by_role('button', name=re.compile('^Use '))).to_be_disabled()
             preview(7)
@@ -340,10 +340,10 @@ def run_checks(web, api, dataset, temporary, output):
             # when minimum duration is explicitly zero. Existing saved TPs stay.
             close_panel(); choose_test(ALPHA); open_panel(); configure_pair()
             choose(2, 'load_N')
-            panel().get_by_role('spinbutton', name='Minimum duration (s)', exact=True).fill('0')
+            panel().get_by_role('textbox', name='Minimum duration (s)', exact=True).fill('0')
             native_cases['high_rate_ramp_min_zero'] = empty_preview(67)
             assert request.get(f'tests/{ALPHA}/testpoints').json() == actual_saved
-            expect(page.get_by_role('button', name='save', exact=True)).to_be_disabled()
+            expect(page.get_by_role('button', name='Save test points', exact=True)).to_be_disabled()
             capture_browser_view(cdp, output / 'ramp-min-zero.png')
             checks.append('A selected continuously changing signal produces no test points at minimum 0; excluded isolated samples are visible and saved TPs remain unchanged')
             print('PASS:', checks[-1], flush=True)
@@ -352,7 +352,7 @@ def run_checks(web, api, dataset, temporary, output):
             choose(1, 'control_a')
             panel().get_by_role('button', name=re.compile(r'^\+? ?Add variable$')).click()
             choose(2, 'ramp_N')
-            expect(panel().get_by_role('spinbutton', name='Minimum duration (s)', exact=True)).to_have_value('1')
+            expect(panel().get_by_role('textbox', name='Minimum duration (s)', exact=True)).to_have_value('1')
             native_cases['one_hz_ramp_default'] = empty_preview(26)
             assert native_cases['one_hz_ramp_default']['fs_hz'] == 1
             assert gamma_path.read_bytes() == gamma_saved_bytes
@@ -373,7 +373,7 @@ def run_checks(web, api, dataset, temporary, output):
                                               'isolated_samples': 11, 'short_runs': 0}, staggered
             assert gamma_path.read_bytes() == gamma_saved_bytes
             capture_browser_view(cdp, output / 'staggered-constant-preview.png')
-            panel().get_by_role('spinbutton', name='Minimum duration (s)', exact=True).fill('0')
+            panel().get_by_role('textbox', name='Minimum duration (s)', exact=True).fill('0')
             with page.expect_response(lambda response: response.url.endswith('/split/preview')) as event:
                 apply = preview(4)
             native_cases['staggered_min_zero'] = event.value.json()
@@ -381,8 +381,8 @@ def run_checks(web, api, dataset, temporary, output):
             apply.click()
             assert gamma_path.read_bytes() == gamma_saved_bytes
             for point_id, (start, end) in enumerate(STAGGERED_EXPECTED, 1):
-                assert float(page.get_by_role('spinbutton', name=f'Start seconds for TP {point_id}', exact=True).input_value()) == start
-                assert float(page.get_by_role('spinbutton', name=f'End seconds for TP {point_id}', exact=True).input_value()) == end
+                assert float(page.get_by_role('textbox', name=f'Start seconds for TP {point_id}', exact=True).input_value()) == start
+                assert float(page.get_by_role('textbox', name=f'End seconds for TP {point_id}', exact=True).input_value()) == end
                 with page.expect_download() as event:
                     page.get_by_role('link', name=f'Download draft CSV for TP {point_id}', exact=True).click()
                 assert event.value.suggested_filename == f'{GAMMA}_tp{point_id}_draft.csv'
@@ -390,8 +390,8 @@ def run_checks(web, api, dataset, temporary, output):
                 event.value.save_as(path)
                 assert_native_csv(path, GAMMA, point_id, start, end, ['control_a', 'control_b'])
             assert gamma_path.read_bytes() == gamma_saved_bytes
-            page.get_by_role('button', name='save *', exact=True).click()
-            expect(page.get_by_role('button', name='save', exact=True)).to_be_disabled()
+            page.get_by_role('button', name='Save test points', exact=True).click()
+            expect(page.get_by_role('button', name='Save test points', exact=True)).to_be_disabled()
             persisted = request.get(f'tests/{GAMMA}/testpoints').json()
             assert [(point['start_idx'], point['end_idx']) for point in persisted['test_points']] == STAGGERED_EXPECTED
             for point_id, (start, end) in enumerate(STAGGERED_EXPECTED, 1):

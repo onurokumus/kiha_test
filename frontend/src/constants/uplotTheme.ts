@@ -1,16 +1,39 @@
-// Shared uPlot styling to match the FMS dark theme.
+import type uPlot from 'uplot';
+
+// Shared uPlot styling for the light engineering workspace.
 
 /** Cursor-sync groups: all plots in a mode track the same x position. */
 export const TP_SYNC_KEY = 'ptt-tp-x'; // TP-overlay plots (relative time)
 export const FULL_SYNC_KEY = 'ptt-full-x'; // full-test plots (absolute time)
 
-export const ACCENT = '#569cd6';
+export const ACCENT = '#263685';
+
+export const PLOT_PADDING: [number, number, number, number] = [6, 20, 0, 0];
+
+const AXIS_FONT = '11px Manrope';
+
+const axisSize = (plot: uPlot, values: string[] | null, axisIndex: number) => {
+  const side = plot.axes[axisIndex].side ?? (axisIndex === 0 ? 2 : 3);
+  if (side === 0 || side === 2) return 22;
+
+  // Numeric gutters follow the actual tick text, including scientific notation.
+  const context = plot.ctx;
+  context.save();
+  context.font = AXIS_FONT;
+  const width = Math.max(0, ...(values ?? []).map(value => context.measureText(value ?? '').width));
+  context.restore();
+  return Math.max(28, Math.ceil(width) + 9);
+};
 
 export const AXIS_STYLE = {
-  stroke: '#a0a0a0',
-  grid: { stroke: '#3c3c3c', width: 1 },
-  ticks: { stroke: '#3c3c3c', width: 1 },
-  font: '11px Segoe UI',
+  stroke: '#626f83',
+  grid: { stroke: '#dfe4ec', width: 1 },
+  ticks: { stroke: '#dfe4ec', width: 1, size: 4 },
+  font: AXIS_FONT,
+  labelFont: AXIS_FONT,
+  gap: 3,
+  size: axisSize,
+  labelSize: 16,
 } as const;
 
 export const TIME_AXIS_STYLE = {
@@ -44,14 +67,14 @@ export const safeRange = (
 };
 
 const PALETTE = [
-  '#569cd6',
-  '#ce9178',
-  '#6a9955',
-  '#c586c0',
-  '#dcdcaa',
-  '#4ec9b0',
-  '#f48771',
-  '#9cdcfe',
+  '#263685',
+  '#ae673b',
+  '#5c7d34',
+  '#945da8',
+  '#806b20',
+  '#237c66',
+  '#b84343',
+  '#187c9f',
 ];
 
 export const colorFor = (i: number): string => PALETTE[i % PALETTE.length];

@@ -1,28 +1,44 @@
 .plotContainer {
-  background: #252526;
-  border-radius: 4px;
-  border: 1px solid #3c3c3c;
-  padding: 6px;
+  background: #ffffff;
+  border-radius: 7px;
+  border: 1px solid #dfe4ec;
+  padding: 8px;
   display: flex;
   flex-direction: column;
   height: 100%;
   /* uPlot caches the canvas's viewport rectangle for pointer coordinates.
      Animate decoration only: scaling the plot leaves that rectangle stale
      when the mouse enters during maximize/restore. */
-  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  transition: border-color 120ms ease;
+
+  min-width: 0;
+
+  min-height: 0;
 }
 
 .plotContainer:hover {
-  border-color: #4a4a4a;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+  border-color: #c7d1e2;
+  box-shadow: none;
 }
 
 .plotContainerExpanded {
-  animation: expandPlot 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: none;
 }
 
 .plotContainerCollapsed {
-  animation: collapsePlot 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: none;
+}
+
+@container plot-slot (max-height: 220px) {
+  .plotContainer {
+    padding: 5px;
+  }
+}
+
+@container plot-slot (max-height: 130px) {
+  .plotContainer {
+    padding: 3px;
+  }
 }
 
 .plotViewport {
@@ -53,12 +69,12 @@
   margin: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  color: #e0e0e0;
+  color: #202c42;
   font-size: 11px;
   line-height: 1.25;
   text-align: left;
   white-space: nowrap;
-  scrollbar-color: #5a5a5a #252526;
+  scrollbar-color: #b8c4d7 #f8f9fc;
   scrollbar-width: thin;
 }
 
@@ -67,38 +83,16 @@
 }
 
 .plotCanvas :global(.u-legend::-webkit-scrollbar-track) {
-  background: #252526;
+  background: #ffffff;
 }
 
 .plotCanvas :global(.u-legend::-webkit-scrollbar-thumb) {
-  background: #5a5a5a;
-  border-radius: 3px;
+  background: #f8f9fc;
+  border-radius: 5px;
 }
 
 .plotCanvas :global(.u-legend .u-series > *) {
   padding: 2px 4px;
-}
-
-.filteredStatus {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: #dcdcaa;
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.filteredStatus::before {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 5px rgb(220 220 170 / 55%);
-  content: '';
 }
 
 @keyframes expandPlot {

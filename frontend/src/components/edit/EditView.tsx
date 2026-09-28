@@ -1,3 +1,5 @@
+import '../featureWorkspace.css';
+import styles from './EditView.module.css';
 import { useEffect, useRef, useState } from 'react';
 import {
   deleteFormulaRecipe,
@@ -21,6 +23,8 @@ import {
   TestMeta,
 } from '../../types';
 import { SearchableSelect } from '../controls/SearchableSelect';
+import { NumericField } from '../controls/NumericField';
+import { numericError, parseFiniteNumber } from '../../utils/numericField';
 import { TestSelect } from '../controls/TestSelect';
 import { useConfirm } from '../feedback/confirm';
 import { MAX_DESCRIPTION_LENGTH, MAX_NOTES_LENGTH, normalizeTestText, testTextError, textLength } from '../../utils/testNotes';
@@ -43,6 +47,8 @@ interface Props {
   onDirtyChange?: (isDirty: boolean) => void;
   /** Reports an accepted mutation request that must finish before navigation. */
   onBusyChange?: (isBusy: boolean) => void;
+  /** Reveal the requested editor when arriving from another workspace. */
+  initialSection?: 'components';
 }
 
 interface MetaRow {
@@ -317,12 +323,22 @@ export default function EditView({
   onMetaSaved,
   onDirtyChange,
   onBusyChange,
+  initialSection,
 }: Props) {
   const confirmAction = useConfirm();
   const [status, setStatus] = useState('');
   const [pendingAction, setPendingAction] = useState('');
   const columnSignature = meta.columns.join('\u0000');
   const firstColumn = meta.columns[0] ?? '';
+  const componentsSectionRef = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    if (initialSection !== 'components' || !componentsSectionRef.current) return;
+    const section = componentsSectionRef.current;
+    section.open = true;
+    section.scrollIntoView({ block: 'nearest' });
+    section.querySelector('summary')?.focus({ preventScroll: true });
+  }, [initialSection]);
 
   useEffect(() => {
     onBusyChange?.(Boolean(pendingAction));
@@ -973,12 +989,9 @@ export default function EditView({
   };
 
   const applyTrim = () => {
-    const a = Number(trim0);
-    const b = Number(trim1);
-    if (!Number.isFinite(a) || !Number.isFinite(b) || b - a < 1) {
-      setStatus('trim needs numeric t0 < t1 keeping at least 1 s');
-      return;
-    }
+    const a = parseFiniteNumber(trim0);
+    const b = parseFiniteNumber(trim1);
+    if (a === null || b === null || b - a < 1) return;
     if (a <= tStart + 1e-9 && b >= tEnd - 1e-9) {
       setStatus('trim range covers all data — nothing to cut');
       return;
@@ -1006,10 +1019,13 @@ export default function EditView({
   const normalizedNewName = newName.trim();
   const renameDirty = normalizedNewName.length > 0 && normalizedNewName !== test;
   const nanPolicyDirty = nanPolicy !== savedNanPolicy;
-  const trimValues = [Number(trim0), Number(trim1)];
+  const trimValues = [parseFiniteNumber(trim0), parseFiniteNumber(trim1)];
+  const trimRangeError = trimValues[0] !== null && trimValues[1] !== null && trimValues[1] - trimValues[0] < 1
+    ? 'Keep at least 1 s.' : '';
+  const trimError = numericError(trim0) || numericError(trim1) || trimRangeError;
   const savedTrimValues = [Number(savedTrim.start), Number(savedTrim.end)];
   const trimDirty =
-    trimValues.every(Number.isFinite) && savedTrimValues.every(Number.isFinite)
+    trimValues.every((value): value is number => value !== null) && savedTrimValues.every(Number.isFinite)
       ? trimValues.some(
           (value, index) => Math.abs(value - savedTrimValues[index]) > 1e-9
         )
@@ -1150,7 +1166,7 @@ export default function EditView({
 
   return (
     <fieldset
-      className="edit-view"
+      className={`edit-view feature-edit ${styles.workspace}`}
       disabled={Boolean(pendingAction)}
       aria-busy={Boolean(pendingAction)}
       style={{
@@ -1166,35 +1182,42 @@ export default function EditView({
         border: 0,
       }}
     >
+      <header className={styles.toolbar}>
+        <h1>Edit test</h1>
+        <TestSelect
+          tests={tests}
+          value={test}
+          onChange={changeTest}
+          ariaLabel="Active test"
+          className={styles.testSelect}
+          size="compact"
+        />
+        <span className={styles.draftStatus} aria-live="polite">
+          {dirty ? 'Unsaved changes' : ''}
+        </span>
+        <div className={styles.actions}>
+          <button className="btn" onClick={discardDrafts} disabled={!dirty}>
+            Reset drafts
+          </button>
+          <button className="btn btn-primary" onClick={saveMeta}
+            disabled={!metadataDirty || !!descriptionError || !!notesError || componentDraft || !!setsError}>Save notes and metadata</button>
+        </div>
+      </header>
       {pendingAction && (
-        <div role="status" aria-live="polite" style={{ fontSize: 11, color: '#9fc7df' }}>
+        <div role="status" aria-live="polite" style={{ fontSize: 11, color: '#405994' }}>
           {pendingAction}…
         </div>
       )}
-      {status && <div role="status" aria-live="polite" style={{ fontSize: 11, color: '#9fc7df', padding: '0 4px' }}>{status}</div>}
+      {status && <div role="status" aria-live="polite" style={{ fontSize: 11, color: '#405994', padding: '0 4px' }}>{status}</div>}
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+      <div className="feature-edit-overview">
         {/* test info + metadata */}
-        <div className="panel" style={{ flex: '1 1 380px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div className="section-title" style={{ margin: 0 }}>Test</div>
-            <TestSelect
-              tests={tests}
-              value={test}
-              onChange={changeTest}
-              ariaLabel="Active test"
-              style={{ width: 190 }}
-            />
-            <span style={{ flex: 1 }} />
-            <button className="btn" onClick={discardDrafts} disabled={!dirty}>
-              reset drafts
-            </button>
-          </div>
-          <div style={{ fontSize: 11, color: '#909090' }}>
-            {meta.n_rows.toLocaleString()} rows × {meta.n_columns} columns · {meta.fs_hz} Hz ·{' '}
-            {meta.duration_s.toFixed(1)} s · source {meta.source_file || '—'}
+        <div className="panel feature-edit-meta" style={{ flex: '1 1 380px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div className={styles.testSummary}>
+            {meta.n_rows.toLocaleString()} rows × {meta.n_columns} columns · <span title={`Sample rate: ${meta.fs_hz} Hz`}>{Number(meta.fs_hz.toPrecision(6))} Hz</span> ·{' '}
+            {meta.duration_s.toFixed(1)} s
             {(meta.missing_rows_inserted ?? 0) > 0 ? (
-              <span style={{ color: '#dcdcaa' }}>
+              <span style={{ color: '#806b20' }}>
                 {' '}· ⚠ {meta.missing_rows_inserted?.toLocaleString()} missing
                 {' '}row{meta.missing_rows_inserted === 1 ? '' : 's'} preserved
                 {' '}as NaN across {meta.time_gap_count?.toLocaleString()}
@@ -1202,25 +1225,30 @@ export default function EditView({
               </span>
             ) : (
               meta.jitter_warning && (
-                <span style={{ color: '#dcdcaa' }}>
+                <span style={{ color: '#806b20' }}>
                   {' '}· ⚠ time jitter &gt;1%
                 </span>
               )
             )}
           </div>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input className="input" style={{ width: 200 }} value={newName}
+          <details className="feature-inline-disclosure">
+            <summary>Manage test{renameDirty && <>{' '}<span className={styles.sectionDraft}>Unsaved name</span></>}</summary>
+          <p className={styles.sourceFile}>Source: {meta.source_file || '—'}</p>
+          <div className="feature-cleanup-row">
+            <input className="input" style={{ width: 200 }} aria-label="Test name" value={newName}
                    onChange={(e) => setNewName(e.target.value)} />
             <button className="btn" onClick={doRename} disabled={!newName.trim() || newName.trim() === test}>
               rename test
             </button>
             <span style={{ flex: 1 }} />
-            <button className="btn" style={{ borderColor: '#a04040', color: '#f48771' }} onClick={doDelete}>
+            <button className="btn" style={{ borderColor: '#a04040', color: '#b84343' }} onClick={doDelete}>
               delete test
             </button>
           </div>
+          </details>
 
-          <div className="section-title" style={{ marginTop: 8 }}>Test notes</div>
+          <div className={styles.notesGrid}>
+          <div className={styles.noteField}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span>Description</span>
             <textarea className="input" rows={2} value={description}
@@ -1229,10 +1257,12 @@ export default function EditView({
               aria-invalid={!!descriptionError} aria-describedby="edit-description-help"
               onChange={(event) => { setDescription(event.target.value); setStatus(''); }} />
           </label>
-          <span id="edit-description-help" style={{ fontSize: 10, color: '#aaa' }}>
+          <span id="edit-description-help" style={{ fontSize: 10, color: '#626f83' }}>
             Shown in Uploads. {textLength(description).toLocaleString()} / {MAX_DESCRIPTION_LENGTH.toLocaleString()}
           </span>
-          {descriptionError && <span role="alert" style={{ color: '#f48771' }}>{descriptionError}</span>}
+          {descriptionError && <span role="alert" style={{ color: '#b84343' }}>{descriptionError}</span>}
+          </div>
+          <div className={styles.noteField}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span>Findings / notes</span>
             <textarea className="input" rows={5} value={notes}
@@ -1241,79 +1271,90 @@ export default function EditView({
               aria-invalid={!!notesError} aria-describedby="edit-notes-help"
               onChange={(event) => { setNotes(event.target.value); setStatus(''); }} />
           </label>
-          <span id="edit-notes-help" style={{ fontSize: 10, color: '#aaa' }}>
+          <span id="edit-notes-help" style={{ fontSize: 10, color: '#626f83' }}>
             Test-level observations. {textLength(notes).toLocaleString()} / {MAX_NOTES_LENGTH.toLocaleString()}
           </span>
-          {notesError && <span role="alert" style={{ color: '#f48771' }}>{notesError}</span>}
+          {notesError && <span role="alert" style={{ color: '#b84343' }}>{notesError}</span>}
+          </div>
+          </div>
 
-          <div className="section-title" style={{ marginTop: 8 }}>Components</div>
-          {savedSetsError && <p role="alert" style={{ color: '#f48771', fontSize: 11, lineHeight: 1.5 }}>
+          {savedSetsError && <p role="alert" style={{ color: '#b84343', fontSize: 11, lineHeight: 1.5 }}>
             {savedSetsError}. Add replacement sets and save to repair them. Saving notes alone preserves the saved component settings.
           </p>}
+          <details className="feature-inline-disclosure" ref={componentsSectionRef}>
+            <summary>Component sets and telemetry{' '}<span className={styles.sectionHint}>{sets.length} {sets.length === 1 ? 'set' : 'sets'}</span>{(componentDraft || !sameComponentSets(sets, savedSets)) && <>{' '}<span className={styles.sectionDraft}>Unsaved changes</span></>}</summary>
           <ComponentSetsPicker key={`${test}:${componentPickerVersion}`} value={sets} onChange={setSets}
             catalog={catalog} onDraftChange={setComponentDraft} columns={dataColumns} />
+          </details>
 
-          <div className="section-title" style={{ marginTop: 8 }}>Additional metadata</div>
-          <div style={{ fontSize: 10, color: '#909090' }}>
+          <details className="feature-inline-disclosure">
+            <summary>Additional metadata{' '}<span className={styles.sectionHint}>{rows.length} {rows.length === 1 ? 'field' : 'fields'}</span>{!sameMetaRows(rows, savedRows) && <>{' '}<span className={styles.sectionDraft}>Unsaved changes</span></>}</summary>
+          <div style={{ fontSize: 10, color: '#626f83' }}>
             Other descriptors, such as ambient conditions. Legacy fields remain separate from component associations.
           </div>
           {rows.map((r, i) => (
             <div key={i} style={{ display: 'flex', gap: 6 }}>
-              <input className="input" style={{ width: 140 }} placeholder="key" value={r.key}
+              <input className="input" style={{ width: 140 }} placeholder="Field name" aria-label={`Metadata field ${i + 1}`} value={r.key}
                      onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)))} />
-              <input className="input" placeholder="value" value={r.value}
+              <input className="input" placeholder="Value" aria-label={`Metadata value ${i + 1}`} value={r.value}
                      onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))} />
-              <button className="btn" onClick={() => setRows(rows.filter((_, j) => j !== i))}>✕</button>
+              <button className="btn" aria-label={`Remove metadata field ${i + 1}`} onClick={() => setRows(rows.filter((_, j) => j !== i))}>✕</button>
             </div>
           ))}
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button className="btn" onClick={() => setRows([...rows, { key: '', value: '' }])}>+ field</button>
-            <button className="btn" onClick={saveMeta}
-              disabled={!metadataDirty || !!descriptionError || !!notesError || componentDraft || !!setsError}>Save notes and metadata</button>
+            <button className="btn" onClick={() => setRows([...rows, { key: '', value: '' }])}>Add field</button>
+          </details>
+          <div className="feature-meta-actions">
             <button className="btn" onClick={() => void reloadMetadata()}>Reload saved metadata</button>
           </div>
         </div>
 
         {/* NaN policy + trim */}
-        <div className="panel" style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <details className="feature-disclosure">
+          <summary>Data cleanup{' '}<span>{nanTotal > 0 ? `${nanTotal.toLocaleString()} missing values` : 'Missing values and trim'}</span>{(nanPolicyDirty || trimDirty) && <>{' '}<span className={styles.sectionDraft}>Unsaved changes</span></>}</summary>
+          <div className="feature-disclosure-body feature-cleanup-body">
           <div className="section-title">NaN policy</div>
-          <div style={{ fontSize: 11, color: '#909090' }}>
+          <div style={{ fontSize: 11, color: '#626f83' }}>
             {nanTotal > 0
               ? `${nanTotal.toLocaleString()} missing values across ${Object.keys(meta.nan_counts ?? {}).length} column(s)`
               : 'no missing values in this test'}
             {' · current: '}{meta.nan_policy ?? 'keep_gaps'}
           </div>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <select className="input" style={{ width: 140 }} value={nanPolicy}
+          <div className="feature-cleanup-row">
+            <select className="input" aria-label="Missing-value policy" style={{ width: 140 }} value={nanPolicy}
                     onChange={(e) => setNanPolicy(e.target.value)}>
               {Object.keys(NAN_POLICY_HELP).map((p) => (
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>
-            <span style={{ fontSize: 10, color: '#909090' }}>{NAN_POLICY_HELP[nanPolicy]}</span>
+            <span style={{ fontSize: 10, color: '#626f83' }}>{NAN_POLICY_HELP[nanPolicy]}</span>
             <span style={{ flex: 1 }} />
             <button className="btn" onClick={applyNanPolicy} disabled={!nanPolicyDirty}>apply</button>
           </div>
-          <div style={{ fontSize: 10, color: '#909090' }}>
+          <div style={{ fontSize: 10, color: '#626f83' }}>
             ('drop rows' is not offered — it would break the uniform sample rate)
           </div>
 
           <div className="section-title" style={{ marginTop: 8 }}>Trim</div>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span style={{ fontSize: 11, color: '#909090' }}>keep</span>
-            <input className="input" style={{ width: 90 }} type="number" step="0.1"
+          <div className="feature-cleanup-row">
+            <span style={{ fontSize: 11, color: '#626f83' }}>keep</span>
+            <NumericField className="input" style={{ width: 110 }} step="0.1" unit="s"
+                   aria-label="Trim start (s)" error={trimRangeError}
                    value={trim0} onChange={(e) => setTrim0(e.target.value)} />
-            <span style={{ fontSize: 11, color: '#909090' }}>–</span>
-            <input className="input" style={{ width: 90 }} type="number" step="0.1"
+            <span style={{ fontSize: 11, color: '#626f83' }}>–</span>
+            <NumericField className="input" style={{ width: 110 }} step="0.1" unit="s"
+                   aria-label="Trim end (s)" error={trimRangeError}
                    value={trim1} onChange={(e) => setTrim1(e.target.value)} />
-            <span style={{ fontSize: 11, color: '#909090' }}>s (data: {tStart.toFixed(1)}–{tEnd.toFixed(1)})</span>
+            <span style={{ fontSize: 11, color: '#626f83' }}>Data: {tStart.toFixed(1)}–{tEnd.toFixed(1)} s</span>
             <span style={{ flex: 1 }} />
-            <button className="btn" onClick={applyTrim} disabled={!trimDirty}>apply</button>
+            <button className="btn" onClick={applyTrim} disabled={!trimDirty || !!trimError}>apply</button>
           </div>
-        </div>
+          </div>
+        </details>
       </div>
 
       {/* derived variables */}
+      <details className="feature-disclosure">
+        <summary>Derived variables{' '}<span>{savedEquations.length} applied{formulasDirty ? ' · unsaved changes' : ''}</span></summary>
       <div className="panel edit-formula-panel">
         <div className="edit-formula-heading">
           <div>
@@ -1803,21 +1844,25 @@ export default function EditView({
         )}
       </div>
 
+      </details>
+
       {/* column table */}
-      <div className="panel">
+      <details className="feature-disclosure">
+        <summary>Rename or remove columns{' '}<span>{dataColumns.length} columns{columnsDirty ? ' · unsaved changes' : ''}</span></summary>
+      <div className="feature-disclosure-body">
         <div className="section-title">
           Rename or remove existing columns{' '}
           <span className="badge">{dataColumns.length}</span>
         </div>
-        <div style={{ marginBottom: 7, fontSize: 10, color: '#909090' }}>
+        <div style={{ marginBottom: 7, fontSize: 10, color: '#626f83' }}>
           Type a new name beside any existing column. Leave it blank to keep the
           current name; check remove only when the column should be deleted.
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 90px 60px', gap: 4, fontSize: 11, maxHeight: 300, overflowY: 'auto' }}>
-          <span style={{ color: '#909090' }}>existing column name</span>
-          <span style={{ color: '#909090' }}>new column name (optional)</span>
-          <span style={{ color: '#909090' }}>missing</span>
-          <span style={{ color: '#909090' }}>remove</span>
+        <div className="feature-column-grid">
+          <span style={{ color: '#626f83' }}>existing column name</span>
+          <span style={{ color: '#626f83' }}>new column name (optional)</span>
+          <span style={{ color: '#626f83' }}>missing</span>
+          <span style={{ color: '#626f83' }}>remove</span>
           {dataColumns.map((c) => (
             <ColumnRow key={c} name={c}
               nanCount={meta.nan_counts?.[c] ?? 0}
@@ -1834,11 +1879,12 @@ export default function EditView({
         </div>
         <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
           <button className="btn" onClick={applyColumns} disabled={!columnsDirty}>apply renames / removals</button>
-          <span style={{ fontSize: 10, color: '#909090' }}>
+          <span style={{ fontSize: 10, color: '#626f83' }}>
             time column '{meta.time_column}' is protected; units live in the column name (e.g. thrust_n)
           </span>
         </div>
       </div>
+      </details>
     </fieldset>
   );
 }
@@ -1853,13 +1899,13 @@ function ColumnRow({ name, nanCount, rename, dropped, onRename, onDrop }: {
 }) {
   return (
     <>
-      <span style={{ color: dropped ? '#666' : '#e0e0e0', textDecoration: dropped ? 'line-through' : 'none', lineHeight: '24px' }}>
+      <span style={{ color: dropped ? '#707b8c' : '#202c42', textDecoration: dropped ? 'line-through' : 'none', lineHeight: '24px' }}>
         {name}
       </span>
       <input className="input" placeholder="enter a new name" value={rename}
              aria-label={`Rename column ${name}`}
              disabled={dropped} onChange={(e) => onRename(e.target.value)} />
-      <span style={{ color: nanCount > 0 ? '#dcdcaa' : '#666', lineHeight: '24px' }}>
+      <span style={{ color: nanCount > 0 ? '#806b20' : '#707b8c', lineHeight: '24px' }}>
         {nanCount > 0 ? nanCount.toLocaleString() : '—'}
       </span>
       <input type="checkbox" checked={dropped} aria-label={`Remove column ${name}`}

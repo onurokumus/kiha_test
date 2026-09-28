@@ -3,13 +3,13 @@
   min-height: 0;
   min-width: 0;
   overflow: auto;
-  padding: 26px 28px;
+  padding: 16px 20px 24px;
 }
 
 .content {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 12px;
   max-width: 1400px;
   margin: 0 auto;
 }
@@ -29,23 +29,23 @@
 }
 
 .pageHeader h1 {
-  margin: 0 0 6px;
-  color: #e8eef2;
-  font-size: 23px;
+  margin: 0;
+  color: #202c42;
+  font-size: 16px;
   font-weight: 600;
-  letter-spacing: -0.5px;
+  letter-spacing: -0.2px;
 }
 
 .pageHeader p {
   margin: 0;
-  color: #9ca9b2;
-  font-size: 12px;
+  color: #66758c;
+  font-size: 11px;
   line-height: 1.5;
 }
 
 .storageSummary {
   flex-shrink: 0;
-  color: #9eacb7;
+  color: #66758c;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -53,96 +53,94 @@
 .page .dropZone {
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 25px;
-  border: 1px dashed #516777;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px dashed #b9c7de;
   border-radius: 7px;
-  background: #222a30;
+  background: #f7f9fd;
   text-align: left;
   font-family: inherit;
 }
 
 .page .dropZone:focus-visible {
-  outline: 2px solid #82c5ed;
+  outline: 2px solid #263685;
   outline-offset: 3px;
 }
 
 .uploadIcon {
   display: grid;
-  flex: 0 0 48px;
-  width: 48px;
-  height: 48px;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
   place-items: center;
-  border: 1px solid #3d5869;
-  border-radius: 9px;
-  color: #88c5e9;
-  background: #273b49;
+  border: 0;
+  border-radius: 5px;
+  color: #405994;
+  background: #edf2fb;
 }
 
 .uploadIcon svg {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
 }
 
 .dropCopy {
   display: grid;
   flex: 1;
-  gap: 7px;
+  gap: 3px;
   min-width: 0;
   line-height: 1.5;
 }
 
 .dropCopy strong {
-  color: #e4eef5;
-  font-size: 16px;
+  color: #263685;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .dropCopy > span {
-  color: #b8c6d0;
-  font-size: 12px;
+  color: #63748b;
+  font-size: 11px;
 }
 
 .dropCopy small {
-  color: #91a3b1;
+  color: #738299;
   font-size: 11px;
 }
 
 .browseButton {
   flex-shrink: 0;
-  padding: 10px 15px;
-  border: 1px solid #568baa;
+  padding: 7px 11px;
+  border: 1px solid #263685;
   border-radius: 5px;
-  color: #e2f1fa;
-  background: #254d66;
-  font-size: 12px;
+  color: #ffffff;
+  background: #263685;
+  font-size: 11px;
   font-weight: 600;
 }
 
 .historyHeader {
   flex-wrap: wrap;
-  gap: 14px;
-  padding: 15px 16px;
-  border-bottom: 1px solid #3c454d;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #dfe4ec;
 }
 
 .historyTitle h2 {
   margin: 0;
-  color: #dde6ec;
-  font-size: 14px;
+  color: #344666;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .historyTitle > span {
-  padding: 3px 7px;
-  border-radius: 4px;
-  color: #a4b8c6;
-  background: #2b363e;
+  padding: 0;
+  color: #63748b;
   font-size: 11px;
 }
 
 .historyFilters {
-  flex: 0 1 450px;
+  flex: 0 1 520px;
   min-width: 0;
   gap: 8px;
 }
@@ -158,19 +156,19 @@
 }
 
 .historyFilters :global(.input) {
-  height: 34px;
-  padding: 6px 9px;
-  font-size: 12px;
+  height: 30px;
+  padding: 5px 8px;
+  font-size: 11px;
 }
 
 .tableScroll {
   overflow-x: auto;
-  scrollbar-color: #596772 #25292c;
+  scrollbar-color: #bbc5d5 #ffffff;
   scrollbar-width: thin;
 }
 
 .tableScroll:focus-visible {
-  outline: 2px solid #82c5ed;
+  outline: 2px solid #263685;
   outline-offset: -2px;
 }
 
@@ -181,7 +179,7 @@
 }
 
 .tableScroll tbody tr:hover {
-  background: #292f34;
+  background: #f8faff;
 }
 
 .testName,
@@ -193,12 +191,16 @@
 }
 
 .testName {
-  color: #dde9f0;
+  color: #26344d;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .sourceFile {
-  margin-top: 4px;
-  color: #97a5af;
+  margin-top: 2px;
+  color: #6d7b90;
   font-size: 10px;
   font-weight: 400;
 }
@@ -211,7 +213,7 @@
 .page :global(.upload-history-metrics-secondary),
 .page :global(.upload-history-uploaded-secondary),
 .page :global(.upload-history-error) {
-  color: #9aa8b2;
+  color: #66758c;
   font-size: 10px;
   line-height: 1.6;
   white-space: normal;
@@ -219,7 +221,7 @@
 }
 
 .page :global(.upload-history-error) {
-  color: #f6a293;
+  color: #b84343;
 }
 
 .page :global(.upload-history-test-uploader) {
@@ -245,18 +247,20 @@
 
 .page :global(.btn):focus-visible,
 .page :global(.input):focus-visible {
-  outline: 2px solid #82c5ed;
+  outline: 2px solid #263685;
   outline-offset: 2px;
 }
 
 .page .analyzeButton {
-  border-color: #4e7b98;
-  color: #cdeaff;
-  background: #244357;
+  border-color: #bdcbe4;
+  color: #263685;
+  background: #edf2fd;
 }
 
 .page :global(.upload-setup-files) {
   gap: 7px;
+  max-height: 90px;
+  overflow-y: auto;
 }
 
 .page :global(.upload-setup-files .badge) {
@@ -275,11 +279,11 @@
 
 .page :global(.upload-setup-files .badge) > small {
   flex-shrink: 0;
-  color: #98acba;
+  color: #738299;
 }
 
 .page :global(.upload-setup-field > span) {
-  color: #b4c0c9;
+  color: #54647d;
   font-size: 11px;
   letter-spacing: 0;
   text-transform: none;
@@ -312,14 +316,14 @@
   justify-items: center;
   gap: 9px;
   padding: 38px 20px;
-  color: #9aaab5;
+  color: #66758c;
   text-align: center;
   font-size: 12px;
   line-height: 1.6;
 }
 
 .emptyState strong {
-  color: #d0dce5;
+  color: #344666;
   font-size: 14px;
   font-weight: 600;
 }
@@ -334,40 +338,65 @@
 }
 
 .actionError {
-  color: #f6a293;
-  background: #3c2928;
+  color: #b84343;
+  background: #fff1f0;
 }
 
 .actionNote {
-  color: #8bdbc4;
-  background: #203931;
+  color: #237c66;
+  background: #e7f4ee;
 }
 
 .historyNote {
-  color: #8f9ea9;
+  color: #6d7b90;
   font-size: 11px;
   line-height: 1.6;
 }
 
-@media (max-width: 760px) {
+.historyNote > summary { cursor: pointer; width: fit-content; }
+.historyNote > p { margin: 5px 0 0; }
+.historyNote > summary:focus-visible,
+.metadataDisclosure > summary:focus-visible { outline: 2px solid #7284c3; outline-offset: 2px; border-radius: 3px; }
+.page .clearFilters { flex: 0 0 auto; padding: 4px 8px; font-size: 11px; }
+.page .clearFilters:disabled { opacity: .45; }
+
+.page .setupPanel { padding: 12px; border-top: 1px solid #dfe4ec; }
+.page :global(.upload-setup-heading) { align-items: center; margin-bottom: 10px; }
+.page :global(.upload-setup-heading .section-title) { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.page :global(.upload-uploader) { margin-bottom: 10px; padding-bottom: 10px; gap: 10px; }
+.page :global(.upload-uploader-help) { min-height: 0; padding-bottom: 0; font-size: 10px; }
+.page :global(.upload-setup-grid) { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.page :global(.upload-setup-field > .input) { height: 32px; }
+.page :global(.upload-setup-field > input[readonly]) { color: #6d7b90; background: #f5f7fa; }
+.page :global(.upload-time-preview) { margin-top: 10px; padding: 8px 0; background: transparent; border: 0; border-bottom: 1px solid #edf0f5; }
+.page :global(.upload-time-preview-label) { font-size: 10px; font-weight: 500; letter-spacing: 0; text-transform: none; color: #626f83; }
+.page :global(.upload-time-preview code) { font-family: inherit; font-size: 11px; font-variant-numeric: tabular-nums; }
+.page :global(.upload-setup-footer) { flex-wrap: wrap; gap: 8px; }
+.page :global(.upload-setup-actions) { margin-left: auto; }
+.metadataDisclosure { margin-top: 2px; min-width: 0; font-size: 11px; }
+.metadataDisclosure > summary { cursor: pointer; padding: 9px 0; color: #41516b; font-weight: 600; }
+.metadataDisclosure > summary > span { margin-left: 12px; color: #66758c; font-weight: 400; }
+.metadataDisclosure > summary > .metadataWarning { color: #ab4940; }
+.metadataBody { padding: 2px 0 8px; min-width: 0; }
+
+@media (max-width: 900px) {
   .page {
-    padding: 18px 14px;
+    padding: 12px 14px 20px;
   }
 
   .pageHeader {
-    align-items: flex-start;
-    flex-direction: column;
+    flex-wrap: wrap;
     gap: 9px;
   }
 
   .page .dropZone {
     flex-wrap: wrap;
     gap: 14px;
-    padding: 20px;
+    padding: 12px;
   }
 
   .browseButton {
-    margin-left: 62px;
+    margin-left: auto;
   }
 
   .historyFilters {
@@ -375,30 +404,23 @@
   }
 
   .page :global(.upload-transfer-row) {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .page :global(.upload-transfer-actions) {
-    justify-content: flex-start;
+    justify-content: flex-end;
   }
 }
 
-@media (max-width: 420px) {
-  .pageHeader h1 {
-    font-size: 21px;
-  }
-
-  .uploadIcon {
-    display: none;
-  }
-
-  .browseButton {
-    margin-left: 0;
-  }
-
-  .page :global(.upload-time-preview) {
-    grid-template-columns: 1fr;
-  }
+/* These fallbacks also cover narrow desktop windows at high browser zoom. */
+@media (max-width: 640px) {
+  .page :global(.upload-setup-grid) { grid-template-columns: 1fr; }
+  .page :global(.upload-uploader) { grid-template-columns: 1fr; }
+  .page :global(.upload-time-preview) { grid-template-columns: auto minmax(0, 1fr); }
+  .page :global(.upload-setup-actions) { flex-wrap: wrap; }
+  .metadataDisclosure > summary > span { display: block; margin: 4px 0 0 14px; }
+  .historyFilters { flex-wrap: wrap; }
+  .historyFilters input { flex-basis: 100%; }
 }
 .descriptionField {
   margin: 10px 0;
@@ -418,7 +440,7 @@
   white-space: nowrap;
   font-size: 11px;
   font-weight: 400;
-  color: #b8c6d0;
+  color: #63748b;
   margin: 3px 0;
 }
 .notesLink {
@@ -434,9 +456,17 @@
   font: inherit;
   font-size: 11px;
   font-weight: 400;
-  color: #9fc7df;
+  color: #405994;
   cursor: pointer;
 }
 
 .notesLink:hover { text-decoration: underline; }
-.notesLink:focus-visible { outline: 2px solid #9fc7df; outline-offset: -2px; }
+.notesLink:focus-visible { outline: 2px solid #405994; outline-offset: -2px; }
+.metadataLinks { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.metadataLinks .notesLink { width: auto; max-width: 55%; min-width: 0; }
+.metadataLinks .notesLink + .notesLink { flex: 1; }
+
+.manageActions { width: 100%; color: #66758c; text-align: right; font-size: 11px; }
+.manageActions > summary { cursor: pointer; padding: 5px 0; }
+.manageActions > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 5px; }
+.manageActions > summary:focus-visible { outline: 2px solid #405994; outline-offset: 2px; }

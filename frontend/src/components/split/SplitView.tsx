@@ -1,4 +1,6 @@
-import { CSSProperties, useEffect, useRef, useState } from 'react';
+import '../featureWorkspace.css';
+import { CSSProperties, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   testPointCsvUrl,
   fetchTestPoints,
@@ -10,9 +12,12 @@ import { AutoSplitProposal, TestInfo, TestMeta, TestPoint, TestPointsFile } from
 import { round3 } from '../../utils/formatters';
 import { draftTestPointRange, indexTestPoints, patchTestPoint } from '../../utils/testPointExport';
 import { TestSelect } from '../controls/TestSelect';
+import { NumericField } from '../controls/NumericField';
+import { parseFiniteNumber } from '../../utils/numericField';
 import { effectiveEnd, TimeRange } from './SplitPlot';
 import SplitPlotStack from './SplitPlotStack';
 import AutoSplitPanel from './AutoSplitPanel';
+import styles from './SplitView.module.css';
 
 interface Props {
   test: string;
@@ -68,16 +73,85 @@ export default function SplitView({
   const [tpLoadRetry, setTpLoadRetry] = useState(0);
   const [saving, setSaving] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [range, setRange] = useState<TimeRange>(null);
+  const [range, setRangeState] = useState<TimeRange>(null);
+  const [zoomResetVersion, setZoomResetVersion] = useState(0);
+  const setRange = useCallback((value: TimeRange) => {
+    if (value === null) setZoomResetVersion(version => version + 1);
+    setRangeState(value);
+  }, []);
   const [autoSplitOpen, setAutoSplitOpen] = useState(false);
   const autoSplitTrigger = useRef<HTMLButtonElement>(null);
   const [status, setStatus] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const filesRef = useRef<HTMLDivElement>(null);
+  const filesPanelRef = useRef<HTMLDivElement>(null);
+  const filesTrigger = useRef<HTMLButtonElement>(null);
+  const filesId = useId();
+  const showFiles = filesOpen && tpLoadState === 'ready' && !saving;
 
   const dataStart = meta.t_start ?? 0;
   const dataEnd = dataStart + meta.duration_s;
   const dirty = savedTps !== null && !sameTestPoints(tps, savedTps);
   const indexedTps = indexTestPoints(tps, meta);
+
+  useEffect(() => {
+    setFilesOpen(false);
+    setStatus('');
+  }, [test]);
+
+  useEffect(() => {
+    if (!showFiles) return;
+    const dismissOutside = (event: Event) => {
+      const target = event.target as Node;
+      if (!filesRef.current?.contains(target) && !filesPanelRef.current?.contains(target)) setFilesOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      setFilesOpen(false);
+      filesTrigger.current?.focus({ preventScroll: true });
+    };
+    document.addEventListener('pointerdown', dismissOutside);
+    document.addEventListener('focusin', dismissOutside);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', dismissOutside);
+      document.removeEventListener('focusin', dismissOutside);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [showFiles]);
+
+  useLayoutEffect(() => {
+    if (!showFiles || !filesTrigger.current || !filesPanelRef.current) return;
+    const trigger = filesTrigger.current;
+    const panel = filesPanelRef.current;
+    const position = () => {
+      const anchor = trigger.getBoundingClientRect();
+      const viewportWidth = document.documentElement.clientWidth;
+      const viewportHeight = document.documentElement.clientHeight;
+      const width = Math.min(224, viewportWidth - 24);
+      panel.style.width = `${width}px`;
+      panel.style.left = `${Math.max(12, Math.min(anchor.right - width, viewportWidth - width - 12))}px`;
+      const below = viewportHeight - anchor.bottom - 20;
+      const above = anchor.top - 20;
+      const openAbove = below < Math.min(panel.scrollHeight + 2, 180) && above > below;
+      panel.style.maxHeight = `${Math.max(0, Math.min(viewportHeight - 24, openAbove ? above : below))}px`;
+      panel.style.top = `${Math.max(12, Math.min(viewportHeight - panel.offsetHeight - 12,
+        openAbove ? anchor.top - panel.offsetHeight - 8 : anchor.bottom + 8))}px`;
+    };
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(trigger);
+    observer.observe(panel);
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', position);
+      window.removeEventListener('scroll', position, true);
+    };
+  }, [showFiles]);
 
   // Load saved test points. Auto-split candidates are loaded on demand.
   useEffect(() => {
@@ -104,7 +178,7 @@ export default function SplitView({
     return () => {
       dead = true;
     };
-  }, [test, tpLoadRetry]);
+  }, [test, tpLoadRetry, setRange]);
 
   useEffect(() => {
     onBusyChange?.(saving);
@@ -249,9 +323,9 @@ export default function SplitView({
   };
 
   return (
-    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto', padding: 12 }}>
+    <div className={`feature-split ${styles.workspace}`}>
       {tpLoadState === 'loading' && (
-        <div className="panel" role="status" aria-live="polite" style={{ color: '#9fc7df' }}>
+        <div className="panel" role="status" aria-live="polite" style={{ color: '#405994' }}>
           Loading saved test-point definitions…
         </div>
       )}
@@ -259,7 +333,7 @@ export default function SplitView({
         <div
           className="panel"
           role="alert"
-          style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#f4a08e' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#b84343' }}
         >
           <span style={{ flex: 1 }}>
             Could not load saved test-point definitions. Editing is disabled to protect the
@@ -278,6 +352,7 @@ export default function SplitView({
         </div>
       )}
       <fieldset
+        className={styles.editor}
         disabled={tpLoadState !== 'ready' || saving}
         aria-busy={tpLoadState === 'loading' || saving}
         style={{
@@ -294,49 +369,86 @@ export default function SplitView({
       >
       {/* toolbar */}
       <div
-        className="panel"
-        style={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 5,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          flexWrap: 'wrap',
-        }}
+        className={`panel feature-split-toolbar ${styles.toolbar}`}
       >
-        <span style={{ fontSize: 11, color: '#909090' }}>test:</span>
+        <div className={styles.sourceControls}>
+        <h1>Split test</h1>
         <TestSelect
           tests={tests}
           value={test}
           onChange={changeTest}
           ariaLabel="Active test"
-          style={{ width: 180 }}
+          style={{ width: 180, maxWidth: '100%' }}
         />
-        <span style={{ color: '#555' }}>|</span>
+        </div>
+        <div className={styles.editControls}>
         <button ref={autoSplitTrigger} className={'btn-toggle' + (autoSplitOpen ? ' active' : '')}
           aria-label="Configure auto-split" aria-expanded={autoSplitOpen}
           onClick={() => autoSplitOpen ? closeAutoSplit() : setAutoSplitOpen(true)}>
-          Auto-split…
+          Auto-split
         </button>
-        <span style={{ flex: 1 }} />
-        <button className="btn" onClick={addTp}>+ new TP</button>
-        <button className="btn" onClick={() => fileRef.current?.click()}>
-          load file
-        </button>
-        <button className="btn" onClick={download} disabled={tps.length === 0}>
-          download
+        <button className="btn" onClick={addTp}>Add test point</button>
+        </div>
+        <div className={styles.saveControls}>
+        <div className={styles.files} ref={filesRef}>
+          <button ref={filesTrigger} type="button" className="btn"
+            aria-label="Test-point files" aria-expanded={showFiles}
+            aria-controls={showFiles ? filesId : undefined}
+            onClick={() => setFilesOpen(open => !open)}
+            onKeyDown={event => {
+              if (event.key === 'Tab' && !event.shiftKey && showFiles) {
+                const first = filesPanelRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)');
+                if (first) { event.preventDefault(); first.focus(); }
+              }
+            }}>
+            Files <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+          </button>
+          {showFiles && createPortal(<div ref={filesPanelRef} id={filesId} className={styles.filesPanel}
+            role="region" aria-label="Test-point files"
+            onKeyDown={event => {
+              if (event.key !== 'Tab') return;
+              const fields = filesPanelRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
+              if (!fields?.length) return;
+              if (event.shiftKey && event.target === fields[0]) {
+                event.preventDefault();
+                filesTrigger.current?.focus();
+              } else if (!event.shiftKey && event.target === fields[fields.length - 1]) {
+                filesTrigger.current?.focus();
+                setFilesOpen(false);
+              }
+            }}>
+            <button type="button" className="btn" onClick={() => {
+              setFilesOpen(false);
+              fileRef.current?.click();
+              filesTrigger.current?.focus({ preventScroll: true });
+            }}>Import JSON</button>
+            <button type="button" className="btn" onClick={() => {
+              download();
+              setFilesOpen(false);
+              filesTrigger.current?.focus({ preventScroll: true });
+            }} disabled={tps.length === 0}>Export JSON</button>
+            <p>Import replaces the saved definitions. Export includes your current draft.</p>
+          </div>, document.body)}
+        </div>
+        <button className="btn" onClick={() => discardChanges()} disabled={!dirty}>
+          Discard changes
         </button>
         <button
-          className={'btn-toggle' + (dirty ? ' active' : '')}
+          className="btn btn-primary"
           onClick={save}
           disabled={!dirty}
         >
-          {saving ? 'saving…' : `save${dirty ? ' *' : ''}`}
+          {saving ? 'Saving…' : 'Save test points'}
         </button>
-        <button className="btn" onClick={() => discardChanges()} disabled={!dirty}>
-          reset
-        </button>
+        </div>
+        <div className={styles.toolbarStatus}>
+          <span className={dirty ? styles.unsaved : styles.saved}>
+            {tpLoadState === 'loading' ? 'Loading test points…' : tpLoadState === 'error' ? 'Test points unavailable'
+              : dirty ? 'Unsaved changes' : `${tps.length} saved test point${tps.length === 1 ? '' : 's'}`}
+          </span>
+          <span className={styles.statusMessage} role="status" aria-live="polite"
+            tabIndex={status ? 0 : undefined} title={status || undefined}>{status}</span>
+        </div>
         <input
           ref={fileRef} type="file" accept=".json"
           style={{ display: 'none' }}
@@ -347,7 +459,6 @@ export default function SplitView({
           }}
         />
       </div>
-      {status && <div style={{ fontSize: 11, color: '#569cd6', padding: '0 4px' }}>{status}</div>}
 
       {autoSplitOpen && (
         <AutoSplitPanel
@@ -359,6 +470,7 @@ export default function SplitView({
       )}
 
       <SplitPlotStack
+        zoomResetVersion={zoomResetVersion}
         key={test}
         test={test}
         columns={columns}
@@ -373,21 +485,24 @@ export default function SplitView({
       />
 
       {/* TP table */}
-      <div className="panel">
-        <div className="section-title">
+      <div className={`panel ${styles.points}`}>
+        <div className={styles.pointsHeading}>
+        <h2 className="section-title">
           Test points <span className="badge">{tps.length}</span>
+        </h2>
+        <details className={`feature-help ${styles.exportHelp}`}>
+          <summary>CSV details</summary><p>
+          Full-resolution stored data with test_point_id. Unsaved edits export as a draft;
+          plot zoom and filters do not affect CSV.
+        </p></details>
         </div>
-        <p style={{ fontSize: 11, color: '#909090', margin: '4px 0 8px' }}>
-          CSV includes full-resolution stored data and test_point_id. Unsaved changes download
-          as a draft; plot zoom and filters do not affect the export.
-        </p>
-        <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 90px 90px 60px 1fr 130px', gap: 4, fontSize: 11 }}>
-          <span style={{ color: '#909090' }}>name</span>
-          <span style={{ color: '#909090' }}>label</span>
-          <span style={{ color: '#909090' }}>start (s)</span>
-          <span style={{ color: '#909090' }}>end (s)</span>
-          <span style={{ color: '#909090' }}>open</span>
-          <span style={{ color: '#909090' }}>notes</span>
+        <div className="feature-points-scroll"><div className="feature-points-grid">
+          <span style={{ color: '#626f83' }}>Name</span>
+          <span style={{ color: '#626f83' }}>Label</span>
+          <span style={{ color: '#626f83' }}>Start (s)</span>
+          <span style={{ color: '#626f83' }}>End (s)</span>
+          <span style={{ color: '#626f83' }}>Open</span>
+          <span style={{ color: '#626f83' }}>Notes</span>
           <span />
           {indexedTps.map((tp) => {
             const sel = tp.id === selectedId;
@@ -402,13 +517,13 @@ export default function SplitView({
                 onPatch={(p) => patchTp(tp.id, p)}
                 onZoom={() => zoomTo(tp)}
                 onRemove={() => removeTp(tp.id)}
-                onSelect={() => setSelectedId(sel ? null : tp.id)} />
+                onSelect={() => setSelectedId(tp.id)} />
             );
           })}
-        </div>
+        </div></div>
         {tps.length === 0 && (
-          <div style={{ color: '#909090', fontSize: 11, padding: 8 }}>
-            no test points — auto-split from an ID column or “+ new TP”
+          <div style={{ color: '#626f83', fontSize: 11, padding: 8 }}>
+            No test points yet. Add a test point or configure Auto-split.
           </div>
         )}
       </div>
@@ -422,13 +537,15 @@ export default function SplitView({
  *  (Number('') === 0) would teleport the row to the top mid-edit (bug 1.20).
  *  Holding the edit locally until blur keeps the committed value — and thus the
  *  sort order — stable while typing; an empty/invalid value reverts. */
-function NumberCell({ value, disabled, style, onFocus, onCommit, ariaLabel }: {
+function NumberCell({ value, disabled, style, onFocus, onCommit, ariaLabel, min, max }: {
   value: number | null;
   disabled?: boolean;
   style?: CSSProperties;
   onFocus?: () => void;
   onCommit: (v: number) => void;
   ariaLabel?: string;
+  min?: number;
+  max?: number;
 }) {
   const [text, setText] = useState(value === null ? '' : String(value));
   const [editing, setEditing] = useState(false);
@@ -437,11 +554,15 @@ function NumberCell({ value, disabled, style, onFocus, onCommit, ariaLabel }: {
     if (!editing) setText(value === null ? '' : String(value));
   }, [value, editing]);
   return (
-    <input
+    <NumericField
       className="input"
       aria-label={ariaLabel}
       style={style}
-      type="number"
+      unit="s"
+      min={min}
+      max={max}
+      exclusiveMin
+      exclusiveMax
       step="0.01"
       disabled={disabled}
       value={text}
@@ -450,10 +571,18 @@ function NumberCell({ value, disabled, style, onFocus, onCommit, ariaLabel }: {
         onFocus?.();
       }}
       onChange={(e) => setText(e.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setText(value === null ? '' : String(value));
+          event.currentTarget.select();
+        }
+        if (event.key === 'Enter') event.currentTarget.blur();
+      }}
       onBlur={() => {
         setEditing(false);
-        const v = Number(text);
-        if (text.trim() !== '' && Number.isFinite(v)) onCommit(v);
+        const v = parseFiniteNumber(text);
+        if (v !== null) onCommit(v);
         else setText(value === null ? '' : String(value)); // revert empty/invalid
       }}
     />
@@ -472,7 +601,7 @@ function FragmentRow({ tp, sel, exportHref, isDraft, onPatch, onZoom, onRemove, 
   onSelect: () => void;
 }) {
   const cellStyle = {
-    background: sel ? '#1e3a52' : undefined,
+    background: sel ? '#e5edff' : undefined,
     borderRadius: 2,
   };
   return (
@@ -482,9 +611,11 @@ function FragmentRow({ tp, sel, exportHref, isDraft, onPatch, onZoom, onRemove, 
              onFocus={onSelect}
              onChange={(e) => onPatch({ name: e.target.value })} />
       <input className="input" style={cellStyle} value={tp.label}
+             aria-label={`Label for TP ${tp.id}`}
              onFocus={onSelect}
              onChange={(e) => onPatch({ label: e.target.value })} />
       <NumberCell style={cellStyle} value={tp.start_s} onFocus={onSelect}
+             max={tp.end_s ?? undefined}
              ariaLabel={`Start seconds for TP ${tp.id}`}
              onCommit={(v) =>
                onPatch({
@@ -493,6 +624,7 @@ function FragmentRow({ tp, sel, exportHref, isDraft, onPatch, onZoom, onRemove, 
                    : v,
                })} />
       <NumberCell style={cellStyle} value={tp.end_s} disabled={tp.end_s === null}
+             min={tp.start_s}
              ariaLabel={`End seconds for TP ${tp.id}`}
              onFocus={onSelect}
              onCommit={(v) =>
@@ -505,11 +637,12 @@ function FragmentRow({ tp, sel, exportHref, isDraft, onPatch, onZoom, onRemove, 
                  onPatch({ end_s: e.target.checked ? null : tp.start_s + 5 })} />
       </label>
       <input className="input" style={cellStyle} value={tp.notes ?? ''}
+             aria-label={`Notes for TP ${tp.id}`}
              onFocus={onSelect}
              onChange={(e) => onPatch({ notes: e.target.value })} />
       <span style={{ display: 'flex', gap: 4 }}>
-        <button className="btn" onClick={onZoom} title="zoom to test point">🔍</button>
-        <span style={{ alignSelf: 'center', color: '#909090' }} title={`Test-point ID ${tp.id}`}>#{tp.id}</span>
+        <button className="btn" onClick={onZoom} title="zoom to test point">Zoom</button>
+        <span style={{ alignSelf: 'center', color: '#626f83' }} title={`Test-point ID ${tp.id}`}>#{tp.id}</span>
         <a className="btn" href={exportHref} download
            aria-label={`Download ${isDraft ? 'draft ' : ''}CSV for TP ${tp.id}`}
            aria-disabled={!exportHref || undefined}
@@ -517,7 +650,7 @@ function FragmentRow({ tp, sel, exportHref, isDraft, onPatch, onZoom, onRemove, 
            style={{ textDecoration: 'none' }}
            title={!exportHref ? 'No samples in this range, or save in progress' :
              `Download ${isDraft ? 'unsaved draft' : 'saved TP'} CSV with test_point_id`}>⬇</a>
-        <button className="btn" onClick={onRemove} title="delete">✕</button>
+        <button className="btn" onClick={onRemove} title="Delete test point" aria-label={`Delete TP ${tp.id}`}>×</button>
       </span>
     </>
   );

@@ -1,4 +1,6 @@
-import React, { useId } from 'react';
+import React from 'react';
+import { NumericField } from './NumericField';
+import { parseFiniteNumber } from '../../utils/numericField';
 import { FilterKind } from '../../types';
 import { DEFAULT_FILTER_UI, FILTER_LABELS, FilterUi } from '../../constants/filters';
 import styles from './FilterRow.module.css';
@@ -14,23 +16,16 @@ interface FilterRowProps {
 
 /** Labelled DSP controls laid out for the on-demand plot filter dialog. */
 export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title }) => {
-  const hintId = useId();
-  const windowMs = Number(ui.despikeWindowMs);
-  const maxSpikeMs = Number(ui.maxSpikeMs);
-  const threshold = Number(ui.threshold);
-  const absFloor = Number(ui.absFloor);
-  const windowValueValid = Number.isFinite(windowMs) && windowMs > 0;
-  const maxSpikeValueValid = Number.isFinite(maxSpikeMs) && maxSpikeMs > 0;
-  const thresholdValid = Number.isFinite(threshold) && threshold > 0;
-  const absFloorValid = Number.isFinite(absFloor) && absFloor >= 0;
-  const despikeNumbersValid =
-    windowValueValid && maxSpikeValueValid && thresholdValid && absFloorValid;
-  const despikeWindowValid = despikeNumbersValid && windowMs > 2 * maxSpikeMs;
-  const despikeMessage = !despikeNumbersValid
-    ? 'Use positive values; minimum jump may be zero.'
-    : !despikeWindowValid
-      ? 'Window must be longer than twice the maximum spike.'
-      : 'Removes short runs that depart from the local median.';
+  const windowMs = parseFiniteNumber(ui.despikeWindowMs);
+  const maxSpikeMs = parseFiniteNumber(ui.maxSpikeMs);
+  const f1 = parseFiniteNumber(ui.f1);
+  const f2 = parseFiniteNumber(ui.f2);
+  const nyquist = fs && fs > 0 ? fs / 2 : undefined;
+  const isBand = ui.kind === 'bandpass' || ui.kind === 'bandstop';
+  const bandError = isBand && f1 !== null && f2 !== null && f2 <= f1
+    ? 'Keep the high cutoff above the low cutoff.' : '';
+  const despikeError = windowMs !== null && maxSpikeMs !== null && windowMs > 0 && maxSpikeMs > 0 && windowMs <= 2 * maxSpikeMs
+    ? 'Window must exceed twice the max spike.' : '';
 
   return (
     <div className={styles.row}>
@@ -57,48 +52,59 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
         <>
           <label className={styles.field}>
             <span>Order</span>
-            <input
-              type="number"
+            <NumericField
               min="1"
               max="10"
               step="1"
+              integer
               inputMode="numeric"
               value={ui.order}
+              aria-label="Order"
               onChange={(event) => onChange({ order: event.target.value })}
               title="Butterworth filter order, from 1 to 10"
             />
           </label>
           <label className={styles.field}>
             <span>
-              {ui.kind === 'bandpass' || ui.kind === 'bandstop' ? 'Low cutoff (Hz)' : 'Cutoff (Hz)'}
+              {isBand ? 'Low cutoff' : 'Cutoff'}
             </span>
-            <input
-              type="number"
+            <NumericField
               min="0"
               step="any"
               inputMode="decimal"
               value={ui.f1}
+              aria-label={isBand ? 'Low cutoff (Hz)' : 'Cutoff (Hz)'}
+              unit="Hz"
+              exclusiveMin
+              max={nyquist}
+              exclusiveMax
+              error={bandError}
               onChange={(event) => onChange({ f1: event.target.value })}
               title="Cutoff frequency in hertz"
             />
           </label>
           {(ui.kind === 'bandpass' || ui.kind === 'bandstop') && (
             <label className={styles.field}>
-              <span>High cutoff (Hz)</span>
-              <input
-                type="number"
+              <span>High cutoff</span>
+              <NumericField
                 min="0"
                 step="any"
                 inputMode="decimal"
                 value={ui.f2}
+                aria-label="High cutoff (Hz)"
+                unit="Hz"
+                exclusiveMin
+                max={nyquist}
+                exclusiveMax
+                error={bandError}
                 onChange={(event) => onChange({ f2: event.target.value })}
                 title="Upper cutoff frequency in hertz"
               />
             </label>
           )}
           {fs && (
-            <span className={styles.nyquist} title="Cutoff frequencies must stay below this value">
-              Nyquist {fs / 2} Hz
+            <span className={styles.nyquist} title={`Cutoff frequencies must stay below ${fs / 2} Hz`}>
+              Nyquist {Number((fs / 2).toPrecision(7))} Hz
             </span>
           )}
         </>
@@ -106,13 +112,15 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
 
       {ui.kind === 'moving_avg' && (
         <label className={styles.field}>
-          <span>Window (s)</span>
-          <input
-            type="number"
+          <span>Window</span>
+          <NumericField
             min="0"
             step="any"
             inputMode="decimal"
             value={ui.winS}
+            aria-label="Window (s)"
+            unit="s"
+            exclusiveMin
             onChange={(event) => onChange({ winS: event.target.value })}
             title="Averaging window duration in seconds"
           />
@@ -122,58 +130,59 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
       {ui.kind === 'despike' && (
         <>
           <label className={styles.field}>
-            <span>Window (ms)</span>
-            <input
-              type="number"
+            <span>Window</span>
+            <NumericField
               min="0"
               step="any"
               inputMode="decimal"
               value={ui.despikeWindowMs}
+              aria-label="Window (ms)"
+              unit="ms"
+              exclusiveMin
+              error={despikeError}
               onChange={(event) => onChange({ despikeWindowMs: event.target.value })}
-              aria-describedby={hintId}
-              aria-invalid={!despikeWindowValid}
               title="Local-median window in milliseconds; must exceed twice the maximum spike duration"
             />
           </label>
           <label className={styles.field}>
-            <span>Max spike (ms)</span>
-            <input
-              type="number"
+            <span>Max spike</span>
+            <NumericField
               min="0"
               step="any"
               inputMode="decimal"
               value={ui.maxSpikeMs}
+              aria-label="Max spike (ms)"
+              unit="ms"
+              exclusiveMin
+              error={despikeError}
               onChange={(event) => onChange({ maxSpikeMs: event.target.value })}
-              aria-describedby={hintId}
-              aria-invalid={!despikeWindowValid}
               title="Longest consecutive spike to replace, in milliseconds"
             />
           </label>
           <label className={styles.field}>
-            <span>Threshold (MAD)</span>
-            <input
-              type="number"
+            <span>Threshold</span>
+            <NumericField
               min="0"
               step="any"
               inputMode="decimal"
               value={ui.threshold}
+              aria-label="Threshold (MAD)"
+              unit="MAD"
+              exclusiveMin
               onChange={(event) => onChange({ threshold: event.target.value })}
-              aria-describedby={hintId}
-              aria-invalid={!thresholdValid}
               title="Deviation threshold in robust MAD sigmas; lower values detect more spikes"
             />
           </label>
           <label className={styles.field}>
-            <span>Min jump (units)</span>
-            <input
-              type="number"
+            <span>Min jump</span>
+            <NumericField
               min="0"
               step="any"
               inputMode="decimal"
               value={ui.absFloor}
+              aria-label="Min jump (units)"
+              unit="units"
               onChange={(event) => onChange({ absFloor: event.target.value })}
-              aria-describedby={hintId}
-              aria-invalid={!absFloorValid}
               title="Ignore deviations smaller than this value in the plotted signal's units"
             />
           </label>
@@ -192,13 +201,10 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
               <option value="median">Local median</option>
             </select>
           </label>
-          <span
-            id={hintId}
-            className={despikeWindowValid ? styles.explanation : styles.validation}
-            role={despikeWindowValid ? undefined : 'alert'}
-          >
-            {despikeMessage}
-          </span>
+          <details className={styles.explanation}>
+            <summary>Details</summary>
+            <p>Removes short runs that depart from the local median. Threshold uses robust MAD sigmas; minimum jump uses the signal's units.</p>
+          </details>
         </>
       )}
 

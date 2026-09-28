@@ -47,8 +47,8 @@ const MAX_PIXELS = 16_000_000;
 const MAX_TEXT_CHARACTERS = 64_000;
 const MIN_CSS_WIDTH = 640;
 const PADDING = 24;
-const BACKGROUND = '#252526';
-const FONT_FAMILY = '"Segoe UI", Arial, sans-serif';
+const BACKGROUND = '#ffffff';
+const FONT_FAMILY = 'Manrope, "Segoe UI", Arial, sans-serif';
 
 interface TextRow {
   text: string;
@@ -119,7 +119,7 @@ function legendSnapshot(plot: uPlot): LegendEntry[] {
       label: typeof series.label === 'string'
         ? series.label
         : series.label?.textContent || `Series ${offset + 1}`,
-      stroke: stroke || '#d7dde3',
+      stroke: stroke || '#41516b',
       width: Number.isFinite(series.width) ? Math.max(1, series.width!) : 1.5,
       dash: [...(series.dash ?? [])],
       alpha: Number.isFinite(series.alpha) ? Math.max(0, Math.min(1, series.alpha!)) : 1,
@@ -228,17 +228,17 @@ export function capturePlotPng(plot: uPlot, options: PlotPngContent): PlotPngCap
     }
   };
 
-  addText(title, `600 18px ${FONT_FAMILY}`, '#edf2f5', 25);
+  addText(title, `600 18px ${FONT_FAMILY}`, '#202c42', 25);
   y += 7;
-  scope.forEach((line) => addText(line, `12px ${FONT_FAMILY}`, '#c7d3dc', 18));
+  scope.forEach((line) => addText(line, `12px ${FONT_FAMILY}`, '#41516b', 18));
   if (scope.length > 0) y += 6;
-  details.forEach((line) => addText(line, `11px ${FONT_FAMILY}`, '#aab7c1', 17));
+  details.forEach((line) => addText(line, `11px ${FONT_FAMILY}`, '#626f83', 17));
   const chartTop = Math.ceil((y + 12) * pixelRatio) / pixelRatio;
   y = chartTop + chartHeight + 16;
-  addText('Visible traces', `600 12px ${FONT_FAMILY}`, '#c7d3dc', 21);
+  addText('Visible traces', `600 12px ${FONT_FAMILY}`, '#41516b', 21);
   legend.forEach((entry) => {
     legendRows.push({ entry, y });
-    addText(entry.label, `12px ${FONT_FAMILY}`, '#d7dde3', 18, PADDING + 42);
+    addText(entry.label, `12px ${FONT_FAMILY}`, '#41516b', 18, PADDING + 42);
     y += 5;
   });
   const pixelHeight = Math.ceil((y + PADDING) * pixelRatio);
@@ -387,15 +387,15 @@ export async function downloadPlotLayoutPng(options: PlotLayoutPngOptions): Prom
         checkSize(width, y + columns * cellHeight);
       }
     };
-    heading(title || 'Time plot layout', 20, 600, '#edf2f5', 28);
+    heading(title || 'Time plot layout', 20, 600, '#202c42', 28);
     heading(`${columns}×${columns} layout · ${captures.length} selected plot${captures.length === 1 ? '' : 's'} · Original grid slot numbers`,
-      12, 400, '#b7c7d2', 20);
+      12, 400, '#626f83', 20);
     const gridTop = y + padding;
     const height = gridTop + columns * cellHeight + (columns - 1) * gap + padding;
     checkSize(width, height);
     output.width = width;
     output.height = height;
-    context.fillStyle = '#1c1f22';
+    context.fillStyle = '#f7f8fa';
     context.fillRect(0, 0, width, height);
     context.textBaseline = 'top';
     headingRows.forEach((row) => {
@@ -411,7 +411,7 @@ export async function downloadPlotLayoutPng(options: PlotLayoutPngOptions): Prom
       const capture = captures[index];
       if (!capture) continue; // Intentionally blank unused cells.
       context.font = `600 ${12 * pixelRatio}px ${FONT_FAMILY}`;
-      context.fillStyle = '#bdd6e6';
+      context.fillStyle = '#41516b';
       context.fillText(`Plot ${capture.slot}`, left + padding, top + Math.ceil(10 * pixelRatio));
       context.drawImage(capture.image.canvas,
         left + Math.floor((cellWidth - capture.image.canvas.width) / 2), top + slotHeight);

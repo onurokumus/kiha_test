@@ -8,15 +8,13 @@ import styles from './FullTestVariables.module.css';
 interface Props {
   configs: TimePlotConfig[];
   allConfigs: TimePlotConfig[];
-  isEditMode: boolean;
-  showingFiltered: boolean;
   showingOverlay: boolean;
   onPrimaryChange?: (column: string) => void;
   onAdditionalColumnsChange?: (columns: string[]) => void;
 }
 
 /** The same swatches accompany selection and the folded-away trace legend. */
-export function FullTestVariables({ configs, allConfigs, isEditMode, showingFiltered,
+export function FullTestVariables({ configs, allConfigs,
   showingOverlay, onPrimaryChange, onAdditionalColumnsChange }: Props) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ left: 0, top: 0, width: 300, maxHeight: 360 });
@@ -28,6 +26,8 @@ export function FullTestVariables({ configs, allConfigs, isEditMode, showingFilt
   const selected = new Set(configs.map(config => config.key));
   const options = allConfigs.map(config => ({ value: config.key, label: config.label,
     color: fullTestVariableColor(config.key, allConfigs), keywords: [config.key] }));
+  const legendEntries = configs.map(config => ({ label: config.label,
+    color: fullTestVariableColor(config.key, allConfigs) }));
   const canAdd = configs.length < 6 && allConfigs.some(config => !selected.has(config.key));
   const place = useCallback(() => {
     const bounds = trigger.current?.getBoundingClientRect();
@@ -62,12 +62,11 @@ export function FullTestVariables({ configs, allConfigs, isEditMode, showingFilt
   }, [open, place, close]);
   if (!primary) return null;
   return <div className={styles.controls} data-full-test-variables>
-    {isEditMode && <>
       <SearchableSelect value={primary.key} onChange={key => {
         onPrimaryChange?.(key);
       }} options={options.map(option => ({ ...option, disabled: extras.includes(option.value) }))}
         ariaLabel="Plot variable" title="Change the primary variable" searchPlaceholder="Search plot variables..."
-        optionNoun="variable" appearance="plot" size="compact" className={styles.primary} />
+        optionNoun="variable" appearance="title" className={styles.primary} />
       <SearchableSelect value="" onChange={key => {
         onAdditionalColumnsChange?.([...extras, key]);
         // SearchableSelect normally restores focus to + after choosing. At
@@ -82,15 +81,15 @@ export function FullTestVariables({ configs, allConfigs, isEditMode, showingFilt
         searchPlaceholder="Search variables to add..." optionNoun="variable" appearance="plot" size="compact"
         className={styles.add} disabled={!canAdd}
         triggerContent={<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>} />
-    </>}
-    <button ref={trigger} type="button" className={`${styles.legendButton} ${!isEditMode ? styles.titleButton : ''}`}
+    <button ref={trigger} type="button" className={styles.legendButton}
       aria-label={`Variable legend for ${configs.map(config => config.label).join(', ')}`}
       aria-expanded={open} aria-controls={open ? id : undefined} aria-haspopup="dialog"
-      title="Variable colors and original / filtered styles" onClick={() => { if (open) close(); else { place(); setOpen(true); } }}>
-      <span className={styles.dots} aria-hidden="true">{configs.slice(0, isEditMode ? 1 : 3).map(config =>
+      data-tooltip={open ? undefined : legendEntries.map(entry => entry.label).join(' · ')}
+      data-tooltip-legend={open ? undefined : JSON.stringify(legendEntries)}
+      onClick={() => { if (open) close(); else { place(); setOpen(true); } }}>
+      <span className={styles.dots} aria-hidden="true">{configs.slice(0, 3).map(config =>
         <i key={config.key} className={styles.dot} style={{ background: fullTestVariableColor(config.key, allConfigs) }} />)}</span>
-      {!isEditMode && <span className={styles.name}>{primary.label}</span>}
-      {(isEditMode || configs.length > 1) && <span className={styles.count}>{isEditMode ? configs.length : `+${configs.length - 1}`}</span>}
+      <span className={styles.count}>{configs.length}</span>
       <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" aria-hidden="true"><path d="m2 4 4 4 4-4" /></svg>
     </button>
     {open && createPortal(<div ref={panel} id={id} className={styles.legend} style={position} role="dialog"
@@ -115,17 +114,17 @@ export function FullTestVariables({ configs, allConfigs, isEditMode, showingFilt
       <div className={styles.heading}>{configs.length} variable{configs.length === 1 ? '' : 's'}</div>
       {configs.map((config, index) => <div key={config.key} className={styles.row}>
         <div className={styles.variable}>
-          <span>{config.label}</span>
-          <div className={styles.samples}>
-            {showingOverlay && <span className={styles.sample}><i className={`${styles.line} ${styles.original}`} style={{ borderColor: fullTestVariableColor(config.key, allConfigs) }} />Original</span>}
-            <span className={styles.sample}><i className={styles.line} style={{ borderColor: fullTestVariableColor(config.key, allConfigs) }} />{showingFiltered ? 'Filtered' : 'Original'}</span>
-          </div>
+          {!showingOverlay && <i className={styles.line} aria-hidden="true" style={{ borderColor: fullTestVariableColor(config.key, allConfigs) }} />}
+          <span className={styles.name} title={config.label}>{config.label}</span>
         </div>
-        {isEditMode && index > 0 && <button type="button" className={styles.remove} aria-label={`Remove ${config.label} from plot`}
+        {showingOverlay && <div className={styles.samples}>
+          <span className={styles.sample}><i className={`${styles.line} ${styles.original}`} aria-hidden="true" style={{ borderColor: fullTestVariableColor(config.key, allConfigs) }} />Original</span>
+          <span className={styles.sample}><i className={styles.line} aria-hidden="true" style={{ borderColor: fullTestVariableColor(config.key, allConfigs) }} />Filtered</span>
+        </div>}
+        {index > 0 && <button type="button" className={styles.remove} aria-label={`Remove ${config.label} from plot`}
           title={`Remove ${config.label}`} onClick={() => { onAdditionalColumnsChange?.(extras.filter(key => key !== config.key)); panel.current?.focus({ preventScroll: true }); }}>×</button>}
       </div>)}
-      <p className={styles.hint}>Shared Y axis · original units. {showingFiltered && 'The plot filter applies to every variable.'}</p>
-      {isEditMode && <p className={styles.hint}>Use + to compare up to 6 variables.</p>}
+      <p className={styles.hint}>Shared Y axis</p>
     </div>, document.body)}
   </div>;
 }

@@ -181,8 +181,10 @@ class ComponentTests(DataDirTestCase):
         motor = self.create(); self.upload({"motor": motor["id"]})
         self.client.patch("/api/tests/alpha/meta", json={"notes": "Findings"})
         annotation = {"id": str(uuid4()), "start_s": 1.5, "text": "Marker"}
-        doc = self.client.get("/api/tests/alpha/annotations").json()
-        self.client.put("/api/tests/alpha/annotations", json={"expected_revision": 0, "expected_data_bounds": doc["data_bounds"], "annotations": [annotation]})
+        # Files from the retired time-note feature remain inert test content.
+        store.write_json_atomic(self.tests / "alpha/annotations.json", {
+            "version": 1, "time_basis": "stored_elapsed_seconds", "revision": 1,
+            "annotations": [annotation]})
         annotations = (self.tests / "alpha/annotations.json").read_bytes()
         edit._rebuild("alpha", {"rename": {"signal": "force"}, "trim_t0": 1, "trim_t1": 3})
         self.assertEqual(self.client.post("/api/tests/alpha/rename?new_name=beta").status_code, 200)

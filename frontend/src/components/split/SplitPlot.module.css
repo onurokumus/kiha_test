@@ -3,31 +3,96 @@
   min-width: 0;
 }
 
+:global(.feature-split) .card {
+  padding: 10px 12px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.stackHeader {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 0 2px;
+}
+
+.stackHeader > button {
+  margin-left: auto;
+}
+
+.stackHeader :global(.section-title) {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.help {
+  flex: 1;
+  color: #66758c;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.help summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.help p {
+  max-width: 76ch;
+  margin: 6px 0 0;
+}
+
 .header {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-bottom: 6px;
   min-width: 0;
 }
 
-.plotNumber {
+.displayDetail {
   flex: none;
-  color: #a0a0a0;
-  font-size: 11px;
+  color: #626f83;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .variable {
-  flex: 1 1 200px;
+  flex: 1 1 auto;
+  min-width: 0;
   max-width: 440px;
 }
 
 .actions {
   display: flex;
   flex: none;
-  gap: 6px;
+  gap: 4px;
   margin-left: auto;
+}
+
+.actions .iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+}
+
+.iconButton svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .viewport {
@@ -43,12 +108,12 @@
 }
 
 .tpLabel:focus-visible {
-  outline: 2px solid #9cdcfe;
+  outline: 2px solid #405994;
   outline-offset: -2px;
 }
 
-.hint {
-  margin-top: 3px;
-  color: #909090;
-  font-size: 10px;
+.displayDetail:focus-visible,
+.help summary:focus-visible {
+  outline: 2px solid #405994;
+  outline-offset: 2px;
 }

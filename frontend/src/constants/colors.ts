@@ -1,22 +1,8 @@
+// Blue is reserved for the scatter overview. Keep all 20 upstream selection slots.
+// Saved sessions retain their explicit colors; this palette assigns new selections.
 export const COLORS = [
-  '#ce9178',
-  '#6a9955',
-  '#c586c0',
-  '#dcdcaa',
-  '#9cdcfe',
-  '#f44747',
-  '#d7ba7d',
-  '#b5cea8',
-  '#4ec9b0',
-  '#569cd6',
-  '#ff8c42',
-  '#7aa2f7',
-  '#e06c9f',
-  '#a8d44f',
-  '#00bcd4',
-  '#ffca58',
-  '#b388eb',
-  '#ef8354',
-  '#5dd39e',
-  '#c0a7ff',
+  '#d55e00', '#21834a', '#9333b8', '#c72c65', '#a17c00', '#c73b32',
+  '#557a19', '#a45478', '#8b562f', '#007d66', '#bf510c', '#a3308b',
+  '#547538', '#b25d57', '#7150a0', '#795c16', '#417251', '#8a3e54',
+  '#6a6619', '#78432e',
 ];

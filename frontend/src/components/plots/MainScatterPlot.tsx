@@ -63,6 +63,38 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   const [chartDimensions, setChartDimensions] = useState({ width: 0, height: 0 });
   const chartRef = useRef<HTMLDivElement>(null);
   const pointPositions = useRef<Map<string, { cx: number; cy: number }>>(new Map());
+  const hoverTargetRef = useRef<Element | null>(null);
+  const [hasPointHover, setHasPointHover] = useState(false);
+  const dismissHover = useCallback(() => setHasPointHover(false), []);
+
+  // The tooltip is portaled to document.body, outside Recharts' visibility
+  // wrapper. Only an actual point hit may keep it open, never a stale payload.
+  const trackPointHover = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const target = event.target instanceof Element
+      ? event.target.closest('[data-scatter-hover-target]') : null;
+    const owner = target && chartRef.current?.contains(target) ? target : null;
+    if (owner === hoverTargetRef.current) return;
+    hoverTargetRef.current = owner;
+    setHasPointHover(Boolean(owner));
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') dismissHover(); };
+    window.addEventListener('blur', dismissHover);
+    window.addEventListener('resize', dismissHover);
+    document.addEventListener('scroll', dismissHover, true);
+    document.addEventListener('visibilitychange', dismissHover);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('blur', dismissHover);
+      window.removeEventListener('resize', dismissHover);
+      document.removeEventListener('scroll', dismissHover, true);
+      document.removeEventListener('visibilitychange', dismissHover);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [dismissHover]);
+
+  useEffect(dismissHover, [dismissHover, xLabel, yLabel, mainZoom, scatterData]);
 
   // Track chart dimensions for clustering recalculation
   useEffect(() => {
@@ -516,6 +548,8 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   }, []);
 
   const handleMouseLeave = useCallback(() => {
+    hoverTargetRef.current = null;
+    setHasPointHover(false);
     setIsPanning(false);
     panStart.current = null;
     hasDragged.current = false;
@@ -577,11 +611,12 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       const r = shapeProps.payload.isSelected ? 8 : 6;
       return (
         <circle
+          data-scatter-hover-target="point"
           cx={shapeProps.cx}
           cy={shapeProps.cy}
           r={r}
           fill={shapeProps.payload.color}
-          stroke={shapeProps.payload.isSelected ? '#fff' : 'transparent'}
+          stroke={shapeProps.payload.isSelected ? shapeProps.payload.color : 'transparent'}
           strokeWidth={2}
           style={{ cursor: 'pointer' }}
           onMouseDown={(e) => {
@@ -619,11 +654,12 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
     const shapeProps = props as { cx: number; cy: number };
     return (
       <circle
+        data-scatter-hover-target="datasheet"
         cx={shapeProps.cx}
         cy={shapeProps.cy}
         r={3.5}
-        fill="#1e1e1e"
-        stroke="#d7ba7d"
+        fill="#f7f8fa"
+        stroke="#806b20"
         strokeWidth={1.75}
         onMouseEnter={handlePointHover}
       />
@@ -631,6 +667,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   }, [handlePointHover]);
 
   const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    dismissHover();
     if (menuState && chartRef.current) {
       // Check if mouse position is within the plot div bounds
       const rect = chartRef.current.getBoundingClientRect();
@@ -654,7 +691,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       // No menu open, zoom normally
       onWheel(e);
     }
-  }, [menuState, onWheel]);
+  }, [menuState, onWheel, dismissHover]);
 
   return (
     <div
@@ -666,6 +703,9 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseLeave}
+      onPointerMoveCapture={trackPointHover}
+      onPointerCancel={handleMouseLeave}
+      onMouseDownCapture={dismissHover}
     >
       <div style={{ position: 'absolute', right: 8, top: 2, zIndex: 2 }}
         onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
@@ -674,14 +714,14 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       </div>
       <ResponsiveContainer width="100%" height="100%">
         <ScatterChart margin={SCATTER_MARGIN}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#3c3c3c" />
+          <CartesianGrid strokeDasharray="3 3" stroke="#dfe4ec" />
           <XAxis
             dataKey="x"
             type="number"
             name={xLabel}
-            tick={{ fill: '#a0a0a0', fontSize: 11 }}
-            label={{ value: xLabel, position: 'bottom', fill: '#a0a0a0', fontSize: 12 }}
-            stroke="#3c3c3c"
+            tick={{ fill: '#626f83', fontSize: 11 }}
+            label={{ value: xLabel, position: 'bottom', fill: '#626f83', fontSize: 12 }}
+            stroke="#dfe4ec"
             domain={mainZoom ? [mainZoom[0], mainZoom[1]] : [bounds.initialXMin, bounds.initialXMax]}
             allowDataOverflow
             tickFormatter={(v) => formatValue(v).toString()}
@@ -690,25 +730,25 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
             dataKey="y"
             type="number"
             name={yLabel}
-            tick={{ fill: '#a0a0a0', fontSize: 11 }}
+            tick={{ fill: '#626f83', fontSize: 11 }}
             label={{
               value: yLabel,
               angle: -90,
               position: 'insideLeft',
-              fill: '#a0a0a0',
+              fill: '#626f83',
               fontSize: 12,
             }}
-            stroke="#3c3c3c"
+            stroke="#dfe4ec"
             domain={mainZoom ? [mainZoom[2], mainZoom[3]] : [bounds.initialYMin, bounds.initialYMax]}
             allowDataOverflow
             tickFormatter={(v) => formatValue(v).toString()}
           />
           <ZAxis range={[100, 100]} />
           <Tooltip
-            cursor={isPanning || suppressTooltip ? false : { strokeDasharray: '3 3' }}
+            cursor={isPanning || suppressTooltip || !hasPointHover || menuState ? false : { strokeDasharray: '3 3' }}
             content={<CustomScatterTooltip chartRef={chartRef} />}
             isAnimationActive={false}
-            active={isPanning || suppressTooltip ? false : undefined}
+            active={isPanning || suppressTooltip || !hasPointHover || menuState ? false : undefined}
           />
           {(showHorizontalErrorBars || showVerticalErrorBars) && (
             <Customized
@@ -727,7 +767,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
               name="Datasheet"
               data={datasheetData}
               line={{
-                stroke: '#d7ba7d',
+                stroke: '#806b20',
                 strokeWidth: 2,
                 strokeDasharray: '7 4',
                 fill: 'none',

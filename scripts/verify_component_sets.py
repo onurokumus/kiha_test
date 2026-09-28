@@ -104,6 +104,8 @@ def run_checks(web, api, dataset, temporary, output):
                 page.get_by_role('button', name=re.compile('Import test data')).click()
             chooser.value.set_files(str(path))
             page.get_by_label('Uploaded by', exact=True).fill('Two-shaft verification')
+            page.get_by_role('region', name='Import setup', exact=True).locator('summary').filter(
+                has_text='Description and components').click()
             for index, label in ((1, 'Left drive'), (2, 'Right drive')):
                 page.get_by_role('button', name='Add component set', exact=True).click()
                 field(index, 'Set name').fill(label)

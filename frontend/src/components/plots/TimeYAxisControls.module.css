@@ -1,9 +1,9 @@
 .trigger,
 .panel button {
-  border: 1px solid #4a4a4a;
-  border-radius: 3px;
-  background: #333638;
-  color: #e0e0e0;
+  border: 1px solid #cbd3e0;
+  border-radius: 5px;
+  background: #f8f9fc;
+  color: #202c42;
   font: inherit;
   font-size: 11px;
   padding: 2px 6px;
@@ -13,8 +13,8 @@
   white-space: nowrap;
 }
 .trigger[data-manual='true'] {
-  color: #9cdcfe;
-  border-color: #569cd6;
+  color: #405994;
+  border-color: #263685;
 }
 .trigger:disabled,
 .panel button:disabled {
@@ -23,7 +23,7 @@
 }
 .trigger:focus-visible,
 .panel :focus-visible {
-  outline: 2px solid #9cdcfe;
+  outline: 2px solid #5773a8;
   outline-offset: 2px;
 }
 .panel {
@@ -34,11 +34,11 @@
   max-height: calc(100vh - 16px);
   overflow: auto;
   padding: 12px;
-  border: 1px solid #60666a;
+  border: 1px solid #dfe4ec;
   border-radius: 5px;
-  background: #252829;
-  color: #e0e0e0;
-  box-shadow: 0 5px 24px #0009;
+  background: #fff;
+  color: #202c42;
+  box-shadow: 0 8px 24px #202c421a;
   font-size: 12px;
 }
 .heading {
@@ -68,11 +68,11 @@
 .fields input {
   min-width: 0;
   width: 100%;
-  border: 1px solid #62686b;
-  border-radius: 3px;
+  border: 1px solid #dfe4ec;
+  border-radius: 5px;
   padding: 5px;
-  background: #1e1e1e;
-  color: #e0e0e0;
+  background: #f7f8fa;
+  color: #202c42;
 }
 .actions {
   display: flex;
@@ -84,10 +84,12 @@
 }
 .panel p {
   margin: 10px 0 0;
-  color: #aebac2;
+  color: #626f83;
   font-size: 11px;
   line-height: 1.5;
 }
 .panel .error {
-  color: #f48771;
+  color: #b84343;
 }
+.details { margin-top: 12px; color: #626f83; font-size: 11px; }
+.details summary { cursor: pointer; }

@@ -1,0 +1,74 @@
+.workspace:global(.feature-edit) {
+  padding: 12px 18px 24px !important;
+  gap: 12px !important;
+}
+
+.toolbar {
+  position: sticky;
+  top: -12px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid #dfe4ec;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.toolbar h1 {
+  margin: 0;
+  padding-right: 12px;
+  border-right: 1px solid #dfe4ec;
+  color: #26344d;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -.25px;
+  white-space: nowrap;
+}
+
+.testSelect {
+  flex: 0 1 240px;
+  min-width: 170px;
+}
+
+.draftStatus {
+  flex: 1 0 104px;
+  min-height: 16px;
+  color: #806b20;
+  font-size: 11px;
+}
+
+.actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.actions :global(.btn) { min-height: 32px; }
+.workspace :global(.feature-edit-overview) { gap: 12px; }
+.workspace :global(.feature-disclosure) > summary { padding: 12px 16px; }
+.workspace :global(.feature-inline-disclosure) { margin: 0; }
+.workspace :global(.feature-inline-disclosure) > summary { padding: 9px 0; }
+.workspace :global(.feature-edit-meta) > :global(.feature-inline-disclosure) { border-top: 1px solid #edf0f5; }
+.workspace :global(.feature-meta-actions) { margin-top: 0; }
+.workspace :global(.feature-column-grid) { overflow-x: auto; }
+.workspace :global(.feature-column-grid) > span { overflow-wrap: anywhere; }
+
+.testSummary { color: #626f83; font-size: 11px; line-height: 1.6; }
+.sourceFile { margin: 0 0 10px; color: #626f83; font-size: 11px; overflow-wrap: anywhere; }
+.notesGrid { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(300px, 2fr); gap: 18px; }
+.noteField { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.noteField label { flex: 1; }
+.noteField textarea { flex: 1; min-height: 112px; }
+.sectionHint { margin-left: 12px; color: #6d7b90; font-size: 11px; font-weight: 400; }
+.workspace .sectionDraft { margin-left: 12px; color: #806b20; font-size: 11px; font-weight: 400; }
+
+@media (max-width: 1000px) {
+  .toolbar { column-gap: 10px; }
+  .testSelect { flex-basis: 200px; }
+  .draftStatus { flex-basis: 100px; }
+  .actions { margin-left: auto; }
+}
+
+@media (max-width: 760px) {
+  .notesGrid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .noteField textarea { min-height: 76px; }
+}

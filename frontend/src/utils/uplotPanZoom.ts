@@ -14,7 +14,9 @@ export interface PanZoomControl { cancel: () => void }
 
 /**
  * uPlot plugin: mouse-wheel x-zoom around the cursor + x-pan via shift-drag or
- * middle-button drag. Plain left-drag stays uPlot's select-zoom rectangle
+ * middle-button drag. With commitY, left-drag selects X, Y, or both using a
+ * ten-pixel threshold per axis; Alt+drag keeps the existing Y-only shortcut.
+ * Otherwise plain left-drag stays uPlot's select-zoom rectangle
  * (suppressed for pan gestures through cursor.bind, uPlot's supported hook —
  * do NOT try capture-phase listeners instead: at the event target, capture and
  * bubble listeners fire in registration order, so uPlot's own mousedown wins).
@@ -26,9 +28,10 @@ export interface PanZoomControl { cancel: () => void }
  */
 export function xPanZoomPlugin(
   commit?: (range: AxisRange) => void,
-  /** TP plots opt in to independent Alt+wheel/drag Y gestures. */
+  /** TP plots opt in to left-drag box zoom and independent Alt+wheel/drag Y. */
   commitY?: (range: AxisRange) => void,
-  control?: { current: PanZoomControl | null }
+  control?: { current: PanZoomControl | null },
+  boxOnly = false
 ): uPlot.Plugin {
   let destroyed = false;
   let wheelTimer = 0;
@@ -54,7 +57,7 @@ export function xPanZoomPlugin(
       bind.mousedown = (_self, _targ, handler) => (e) => {
         // Our custom binding replaces uPlot's default primary-button filter.
         // Retain that filter so right-click only opens the plot action menu.
-        if (e.button === 0 && !isPanGesture(e) && !(commitY && e.altKey)) handler(e);
+        if (e.button === 0 && !isPanGesture(e) && !commitY) handler(e);
         return null;
       };
     },
@@ -89,41 +92,81 @@ export function xPanZoomPlugin(
         };
 
         const onDown = (e: MouseEvent) => {
-          if (!destroyed && commitY && e.altKey && e.button === 0) {
+          if (!destroyed && commitY && e.button === 0 && (!e.shiftKey || e.altKey)) {
             e.preventDefault();
             flush();
             finishPan?.();
             const rect = u.over.getBoundingClientRect();
-            if (rect.height <= 0) return;
-            const localY = (event: MouseEvent) => Math.max(0, Math.min(rect.height, event.clientY - rect.top));
-            const start = localY(e);
+            if (rect.width <= 0 || rect.height <= 0) return;
+            const local = (event: MouseEvent) => ({
+              x: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+              y: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+            });
+            const start = local(e);
+            const yOnly = e.altKey;
+            let xActive = false;
+            let yActive = false;
+            const selection = (event: MouseEvent) => {
+              const end = local(event);
+              // The threshold activates an axis once per gesture. Keep it active
+              // through reversals so releasing near the anchor retains that axis.
+              xActive ||= !yOnly && Math.abs(end.x - start.x) > 10;
+              yActive ||= Math.abs(end.y - start.y) > 10;
+              return { end, x: xActive, y: yActive };
+            };
             const onMove = (event: MouseEvent) => {
-              const end = localY(event);
-              u.setSelect({ left: 0, width: rect.width, top: Math.min(start, end), height: Math.abs(end - start) }, false);
+              const { end } = selection(event);
+              const dx = Math.abs(end.x - start.x);
+              const dy = Math.abs(end.y - start.y);
+              const moved = yOnly ? dy > 0 : dx > 0 || dy > 0;
+              // Preview follows the pointer from the first pixel; thresholds only
+              // decide which axes commit. Filling inactive axes causes a snap as
+              // a diagonal drag crosses the two thresholds at different times.
+              // A one-pixel minimum keeps purely horizontal/vertical drags visible.
+              const width = moved ? (yOnly ? rect.width : Math.max(1, dx)) : 0;
+              const height = moved ? Math.max(1, dy) : 0;
+              u.setSelect({
+                left: yOnly ? 0 : Math.min(start.x, end.x, rect.width - width),
+                top: Math.min(start.y, end.y, rect.height - height),
+                width,
+                height,
+              }, false);
             };
             const cleanup = () => {
               window.removeEventListener('mousemove', onMove);
               window.removeEventListener('mouseup', onUp);
+              window.removeEventListener('keydown', onKey);
               window.removeEventListener('blur', cleanup);
               if (!destroyed) u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
               finishPan = null;
             };
+            const onKey = (event: KeyboardEvent) => {
+              if (event.key === 'Escape') cleanup();
+            };
             const onUp = (event: MouseEvent) => {
-              const end = localY(event);
-              const range: AxisRange = [u.posToVal(Math.max(start, end), 'y'), u.posToVal(Math.min(start, end), 'y')];
+              const { end, x, y } = selection(event);
+              const xRange: AxisRange = [u.posToVal(Math.min(start.x, end.x), 'x'), u.posToVal(Math.max(start.x, end.x), 'x')];
+              const yRange: AxisRange = [u.posToVal(Math.max(start.y, end.y), 'y'), u.posToVal(Math.min(start.y, end.y), 'y')];
               cleanup();
-              if (Math.abs(end - start) > 10 && validAxisRange(range)) {
-                u.setScale('y', { min: range[0], max: range[1] });
-                commitY(range);
+              // Lock Y before publishing X, so auto-fit cannot undo the box's
+              // vertical bounds. Only X is shared with the other TP plots.
+              if (y && validAxisRange(yRange)) {
+                commitY(yRange);
+                u.setScale('y', { min: yRange[0], max: yRange[1] });
+              }
+              if (x && validAxisRange(xRange)) {
+                u.setScale('x', { min: xRange[0], max: xRange[1] });
+                commit?.(xRange);
               }
             };
             finishPan = cleanup;
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
+            window.addEventListener('keydown', onKey);
             window.addEventListener('blur', cleanup);
             return;
           }
-          if (commitY && e.altKey) return;
+          if (boxOnly || (commitY && e.altKey)) return;
           if (destroyed || !isPanGesture(e)) return;
           const min0 = u.scales.x.min;
           const max0 = u.scales.x.max;
@@ -158,7 +201,7 @@ export function xPanZoomPlugin(
         };
 
         u.over.addEventListener('dblclick', cancel);
-        u.over.addEventListener('wheel', onWheel, { passive: false });
+        if (!boxOnly) u.over.addEventListener('wheel', onWheel, { passive: false });
         u.over.addEventListener('mousedown', onDown);
         detachReadyListeners = () => {
           u.over.removeEventListener('wheel', onWheel);
@@ -181,12 +224,17 @@ export function xPanZoomPlugin(
   };
 }
 
+/** Reuse axis-selective box zoom without replacing a plot's wheel/pan behavior. */
+export function boxZoomPlugin(commitY: (range: AxisRange) => void = () => {}): uPlot.Plugin {
+  return xPanZoomPlugin(undefined, commitY, undefined, true);
+}
+
 /**
  * uPlot plugin for a fully client-side two-dimensional point cloud.
  *
  * - wheel: zoom both axes around the cursor
  * - shift-drag or middle-drag: pan both axes
- * - plain left-drag: left to uPlot's built-in 2D box zoom
+ * - plain left-drag: supplied by the adjacent boxZoomPlugin
  * - double-click: left to uPlot's built-in auto-range reset
  */
 export function xyPanZoomPlugin(): uPlot.Plugin {

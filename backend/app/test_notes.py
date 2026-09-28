@@ -1,4 +1,4 @@
-"""Bounded plain text for test descriptions and findings (not plot annotations)."""
+"""Bounded plain text for test descriptions and findings."""
 
 import re
 from typing import Annotated

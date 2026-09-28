@@ -54,7 +54,6 @@ export function parseSessionFile(text: string): SessionFile {
     'axesUserSet',
     'plotsUserEdited',
     'specLogY',
-    'annotationsVisible',
     'scatterCollapsed',
     'clusteringEnabled',
     'datasheetVisible',
@@ -199,8 +198,9 @@ export function parseSessionFile(text: string): SessionFile {
     return fail('source references');
   if (raw.plotViewports !== undefined) {
     if (!object(raw.plotViewports)) return fail('plot ranges');
-    for (const kind of ['spectrum', 'xy'] as const) {
+    for (const kind of ['full', 'spectrum', 'xy'] as const) {
       const items = raw.plotViewports[kind];
+      if (kind === 'full' && items === undefined) continue; // Older sessions predate full-test Y zoom.
       if (
         !Array.isArray(items) ||
         items.length > 9 ||

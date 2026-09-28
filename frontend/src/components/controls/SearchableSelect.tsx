@@ -35,7 +35,7 @@ interface SearchableSelectProps {
   className?: string;
   style?: CSSProperties;
   size?: 'compact' | 'default';
-  appearance?: 'default' | 'embedded' | 'plot';
+  appearance?: 'default' | 'embedded' | 'plot' | 'title';
   disabled?: boolean;
   title?: string;
   searchable?: boolean;
@@ -193,13 +193,29 @@ export const SearchableSelect = ({
     );
   }, [menuMaxWidth, menuMinWidth]);
 
-  const closeMenu = (restoreFocus = false) => {
+  const closeMenu = useCallback((restoreFocus = false) => {
+    const focusScope = triggerRef.current?.closest('[data-select-focus-scope]')
+      ?.getAttribute('data-select-focus-scope');
     setIsOpen(false);
     setQuery('');
     if (restoreFocus) {
-      requestAnimationFrame(() => triggerRef.current?.focus());
+      requestAnimationFrame(() => {
+        if (triggerRef.current?.isConnected) {
+          triggerRef.current.focus({ preventScroll: true });
+          return;
+        }
+        // Changing a plot signal intentionally remounts its chart. Restore
+        // keyboard focus to that slot's replacement title, not the detached
+        // trigger; other grids and duplicate signals keep independent scopes.
+        if (!focusScope) return;
+        const scope = Array.from(document.querySelectorAll('[data-select-focus-scope]'))
+          .find(element => element.getAttribute('data-select-focus-scope') === focusScope);
+        const replacement = Array.from(scope?.querySelectorAll<HTMLButtonElement>('[data-searchable-select] > button') ?? [])
+          .find(button => button.getAttribute('aria-label') === ariaLabel && !button.disabled);
+        replacement?.focus({ preventScroll: true });
+      });
     }
-  };
+  }, [ariaLabel]);
 
   const openMenu = (initialQuery = '') => {
     if (disabled || options.length === 0) return;
@@ -251,7 +267,7 @@ export const SearchableSelect = ({
       document.removeEventListener('focusin', onFocusIn);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [isOpen, updateMenuPosition]);
+  }, [isOpen, updateMenuPosition, closeMenu]);
 
   useEffect(() => {
     if (!isOpen) return;

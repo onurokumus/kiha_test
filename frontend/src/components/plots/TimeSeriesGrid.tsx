@@ -1,6 +1,7 @@
 import { PlotViewports, PlotViewport } from '../../utils/plotViewport';
 import { AnalysisSource } from '../../services/sessionSources';
-import React, { useMemo } from 'react';
+import React, { useId, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   FilterSpec,
   SelectedTestPoint,
@@ -9,10 +10,10 @@ import {
   TimePlotConfig,
   WindowDisplayMode,
 } from '../../types';
-import { DEFAULT_FILTER_UI, FilterUi } from '../../constants/filters';
+import { DEFAULT_FILTER_UI, FilterUi, filterForSampleRates } from '../../constants/filters';
 import { WaterfallBand } from '../../constants/waterfall';
 import { TimePlot } from './TimePlot';
-import { FullTestPlot } from './FullTestPlot';
+import { FullTestPlot, type FullTestDisplayDetail } from './FullTestPlot';
 import { WaterfallPlot } from './WaterfallPlot';
 import { SpectrumPlot } from './SpectrumPlot';
 import { XYPlot } from './XYPlot';
@@ -20,14 +21,15 @@ import { AxisRange } from '../../utils/timePlotRanges';
 import { SavedWaterfallColorRange } from '../../utils/waterfallColorRange';
 import { createPlotExportRegistry } from '../../utils/plotExportRegistry';
 import { MultiPlotExportControls } from '../controls/MultiPlotExportControls';
-import { useAnnotations } from '../../hooks/useAnnotations';
+import { SearchableSelect } from '../controls/SearchableSelect';
 import styles from './TimeSeriesGrid.module.css';
-import toolbar from '../controls/PlotToolbarButton.module.css';
 
 export type TimeViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
 export type TimeSeriesGridDensity = 'single' | 'quad' | 'nine';
 
 interface TimeSeriesGridProps {
+  detailTarget: HTMLSpanElement | null;
+  exportTarget: HTMLDivElement | null;
   viewports?: PlotViewports;
   sourceCatalog?: AnalysisSource[];
   onViewportChange?: (kind: keyof PlotViewports, index: number, value: PlotViewport | null) => void;
@@ -67,12 +69,11 @@ interface TimeSeriesGridProps {
   specSource: 'tp' | 'full';
   /** Active test's sample rate (Nyquist hint in per-plot filter rows). */
   fs: number | null;
+  sampleRatesByTest: Record<string, number | null | undefined>;
   /** Per-plot DSP filters, index-aligned with plotConfigs. */
   plotFilters: FilterUi[];
   plotFilterSpecs: (FilterSpec | null)[];
   plotShowOriginal: boolean[];
-  annotationsVisible: boolean;
-  onAnnotationsVisibleChange: (visible: boolean) => void;
   onPlotShowOriginalChange: (index: number, show: boolean) => void;
   onPlotFilterChange?: (index: number, patch: Partial<FilterUi>) => void;
   xySource: 'tp' | 'full';
@@ -83,7 +84,6 @@ interface TimeSeriesGridProps {
   xyXCols: string[];
   onXYXColChange?: (index: number, col: string) => void;
   columnsByTest: Record<string, string[]>;
-  isEditMode?: boolean;
   plotConfigs: string[];
   fullPlotExtraColumns: string[][];
   onFullPlotExtraColumnsChange: (index: number, columns: string[]) => void;
@@ -91,6 +91,8 @@ interface TimeSeriesGridProps {
 }
 
 export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
+  detailTarget,
+  exportTarget,
   viewMode,
   viewports, sourceCatalog = [], onViewportChange,
   density = 'nine',
@@ -121,11 +123,10 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   specLogY,
   specSource,
   fs,
+  sampleRatesByTest,
   plotFilters,
   plotFilterSpecs,
   plotShowOriginal,
-  annotationsVisible,
-  onAnnotationsVisibleChange,
   onPlotShowOriginalChange,
   onPlotFilterChange,
   xySource,
@@ -134,16 +135,18 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   xyXCols,
   onXYXColChange,
   columnsByTest,
-  isEditMode = false,
   plotConfigs,
   fullPlotExtraColumns,
   onFullPlotExtraColumnsChange,
   onPlotConfigChange,
 }) => {
+  const selectFocusScope = useId();
   const exportRegistry = useMemo(createPlotExportRegistry, []);
-  const annotations = useAnnotations(viewMode === 'full' ? [test]
-    : viewMode === 'tp' ? selectedTPs.map((point) => point.test) : []);
-  const annotationProps = { annotations, annotationsVisible, onAnnotationsVisibleChange };
+  const [plotDetails, setPlotDetails] = useState<Record<number, FullTestDisplayDetail | null>>({});
+  const detailRegistrations = useMemo(() => Array.from({ length: 9 }, (_, index) =>
+    (detail: FullTestDisplayDetail | null) => setPlotDetails(current =>
+      current[index]?.mode === detail?.mode && current[index]?.level === detail?.level
+        ? current : { ...current, [index]: detail })), []);
   const densityClass: Record<TimeSeriesGridDensity, string> = {
     single: styles.gridSingle,
     quad: styles.gridQuad,
@@ -194,64 +197,70 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
     (viewMode === 'spectrum' && specSource === 'tp') ||
     (viewMode === 'xy' && xySource === 'tp');
 
-  if (needsSelection && selectedTPs.length === 0 && !isEditMode) {
+  if (needsSelection && selectedTPs.length === 0) {
+    const variableOptions = allConfigs.map(config => ({ value: config.key, label: config.label, keywords: [config.key] }));
     return (
       <div className={styles.emptyWorkspace}>
-        <svg className={styles.emptyDiagram} viewBox="0 0 280 100" fill="none" aria-hidden="true">
-          <path
-            d="M0 25H280M0 50H280M0 75H280M35 0V100M105 0V100M175 0V100M245 0V100"
-            stroke="currentColor"
-            strokeOpacity=".13"
-          />
-          <path
-            d="M0 68H35L48 53L60 67H82L95 31L108 74L120 54H148L163 42L177 62H203L217 25L230 65H280"
-            stroke="#85bddd"
-            strokeWidth="2"
-          />
-          <path
-            d="M0 77H38L50 65L62 78H86L100 49L112 85L125 68H151L166 58L180 73H207L222 48L235 78H280"
-            stroke="#d7ba7d"
-            strokeWidth="1.5"
-            strokeOpacity=".8"
-          />
-        </svg>
-        <h2>Compare your test points</h2>
-        <p>
-          Select points in the scatter plot to overlay their signals here. Choose points from
-          different tests to compare operating conditions.
-        </p>
+        <h2>Select test points</h2>
+        <p>Click points in the scatter plot to compare their signals.</p>
         {onBrowseFullTest && (
           <button className="btn btn-primary" onClick={onBrowseFullTest}>
             Browse full test
           </button>
         )}
-        <span className={styles.emptyHint}>
-          Full test view lets you explore a complete run before selecting points.
-        </span>
+        {allConfigs.length > 0 && plotsToShow.length > 0 && <div className={styles.emptySignals} aria-label="Plot variables">
+          {plotsToShow.map(({ cfg, index }) => <div key={index} className={styles.emptySignal}
+            data-select-focus-scope={`${selectFocusScope}-${index}`}
+            role="group" aria-label={`Plot ${index + 1} variables`}>
+            <span className={styles.slotNumber} title={`Plot ${index + 1}`}>{index + 1}</span>
+            {viewMode === 'xy' && <><span className={styles.axisLabel}>X</span>
+              <SearchableSelect value={xyXCols[index] ?? ''} options={variableOptions}
+                onChange={column => onXYXColChange?.(index, column)}
+                ariaLabel={`X variable for plot ${index + 1}`} searchPlaceholder="Search X variables..."
+                optionNoun="variable" appearance="title" className={styles.emptyPicker} />
+              <span className={styles.axisLabel}>Y</span></>}
+            <SearchableSelect value={viewMode === 'xy' ? xyYCols[index] || cfg.key : cfg.key}
+              options={variableOptions} onChange={column => viewMode === 'xy'
+                ? onXYYColChange?.(index, column) : handleConfigChange(index, column)}
+              ariaLabel={`${viewMode === 'xy' ? 'Y variable' : 'Plot variable'} for plot ${index + 1}`}
+              searchPlaceholder="Search plot variables..." optionNoun="variable"
+              appearance="title" className={styles.emptyPicker} />
+          </div>)}
+        </div>}
       </div>
     );
   }
 
+  const detailPlots = viewMode === 'full' ? plotsToShow.filter(({ cfg }) => columns.includes(cfg.key)) : [];
+  const detailsReady = detailPlots.length > 0 && detailPlots.every(({ index }) => plotDetails[index]);
+  const details = detailsReady ? detailPlots.map(({ cfg, index }) => ({ label: cfg.label, ...plotDetails[index]! })) : [];
+  const levels = new Set(details.map(detail => detail.level));
+  const representations = new Set(details.map(detail => `${detail.mode}:${detail.level}`));
+  const firstDetail = details[0];
+  const detailDescription = firstDetail && (representations.size === 1
+    ? firstDetail.level === 1 ? 'Every sample is shown.'
+      : firstDetail.mode === 'envelope'
+        ? `Min/max of each group of up to ${firstDetail.level} samples, preserving peaks.`
+        : `One sample out of every ${firstDetail.level} is shown.`
+    : details.map(detail => `${detail.label}: 1:${detail.level} (${detail.mode === 'envelope' ? 'min/max groups' : 'sampled line'})`).join('\n'));
+
   return (
     <div className={styles.gridShell}>
-      <div className={styles.exportToolbar}>
-        {(viewMode === 'tp' || viewMode === 'full') && <button type="button"
-          className={toolbar.button} aria-label="Show time notes" aria-pressed={annotationsVisible}
-          data-tooltip="Show or hide time notes"
-          onClick={() => onAnnotationsVisibleChange(!annotationsVisible)}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M5 3h14v14H9l-4 4V3Z" />
-            <path d="M9 7h6M9 11h4" />
-          </svg>
-        </button>}
+      {detailTarget && firstDetail && createPortal(
+        <span className={styles.displayDetail} tabIndex={0} data-plot-resolution
+          title={`${detailDescription}\nDisplay only; CSV exports full-resolution samples.`}>
+          {levels.size === 1 ? `1:${firstDetail.level}` : 'Mixed'}
+        </span>, detailTarget,
+      )}
+      {exportTarget && createPortal(
         <MultiPlotExportControls registry={exportRegistry}
           contextKey={JSON.stringify([viewMode, test, density, expandedPlot, visibleSelectionFingerprint, plotConfigs, fullPlotExtraColumns, plotFilterSpecs, plotShowOriginal, fullPlotMode, timeZoom, waterfallWindow, waterfallOverlap, waterfallResolution, waterfallBand, waterfallColorRanges, specSource, specMode, specXAxis, specRpmCol, specLogY, xySource, xyXCols, xyYCols])}
           kind={viewMode === 'spectrum' && specMode === 'waterfall' ? 'waterfall' : viewMode === 'spectrum' || viewMode === 'xy' ? viewMode : 'time'}
           defaultColumns={density === 'nine' ? 3 : 2}
           disabledReason={expandedPlot !== null ? 'Restore the grid to export multiple plots.' : null}
-          title={viewMode === 'xy' ? 'XY plots' : viewMode === 'spectrum' ? `Spectrum · ${specMode.toUpperCase()}` : viewMode === 'tp' ? 'Test points' : `Full test · ${test}`} />
-      </div>
+          title={viewMode === 'xy' ? 'XY plots' : viewMode === 'spectrum' ? `Spectrum · ${specMode.toUpperCase()}` : viewMode === 'tp' ? 'Test points' : `Full test · ${test}`} />,
+        exportTarget,
+      )}
       <div className={gridClass}>
         {plotsToShow.map(({ cfg, index: idx }) => {
           const wrapperClass = `${styles.plotWrapper} ${styles.plotWrapperVisible}`;
@@ -259,7 +268,8 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
           const missingY = !columns.includes(displayedY);
           const missingX = viewMode === 'xy' && !columns.includes(xyXCols[idx] ?? '');
           if (missingY || missingX) return (
-            <section key={`plot-${idx}`} className={`${wrapperClass} ${styles.unavailable}`} aria-label={`Unavailable plot ${idx + 1}`}>
+            <section key={`plot-${idx}`} className={`${wrapperClass} ${styles.unavailable}`} aria-label={`Unavailable plot ${idx + 1}`}
+              data-select-focus-scope={`${selectFocusScope}-${idx}`}>
               <strong>{displayedY} · variable unavailable</strong>
               <p>Saved plot {idx + 1} stays in this slot. Choose an available variable to resume analysis.</p>
               {missingX && <label>X variable <select className="input" aria-label={`X variable for plot ${idx + 1}`} value={xyXCols[idx] ?? ''}
@@ -279,6 +289,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
             const source = sourceCatalog.find(item => item.name === name);
             return [source?.id ?? name, source?.revision ?? null];
           };
+          const fullViewportContext = JSON.stringify(['full', sourceToken(test), cfg.key, fullPlotExtraColumns[idx] ?? []]);
           const viewportProps = (kind: 'spectrum' | 'xy') => {
             const source = kind === 'spectrum' ? specSource : xySource;
             // Legacy manual/full sessions use the same Hz/elapsed axes in v2.
@@ -286,27 +297,46 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
             const waterfallContext = waterfallResolution === null && waterfallBand === 'full'
               ? [specMode, waterfallWindow, waterfallOverlap]
               : [specMode, waterfallWindow, waterfallOverlap, waterfallResolution, waterfallBand];
-            const context = JSON.stringify([kind, displayedY,
+            const contextParts: unknown[] = [kind, displayedY,
               kind === 'spectrum' ? specMode === 'waterfall' ? waterfallContext : [specMode, specXAxis, specRpmCol] : xyXCols[idx], source,
               source === 'full' ? [sourceToken(test), timeZoom] : selectedTPs
                 .filter(point => !hiddenTPs.has(point.id))
                 .map(point => [sourceToken(point.test), point.tpId, point.tp.start_s, point.endS,
                   ...(kind === 'spectrum' && specMode === 'waterfall' ? [point.tp.start_idx, point.tp.end_idx] : [])])
-                .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))]);
-            return { viewport: viewports?.[kind][idx], viewportContext: context,
+                .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))];
+            const legacyContext = JSON.stringify(contextParts);
+            if (kind === 'spectrum' && specMode !== 'waterfall')
+              contextParts[2] = [specMode, specXAxis, specRpmCol, specLogY];
+            const context = JSON.stringify(contextParts);
+            let viewport = viewports?.[kind][idx];
+            // Preserve the frequency crop across linear/log switches and old
+            // X-only sessions, but never apply linear Y bounds to log values.
+            if (viewport && viewport.context !== context && kind === 'spectrum' && specMode !== 'waterfall') {
+              try {
+                const previous = JSON.parse(viewport.context);
+                if (Array.isArray(previous) && Array.isArray(previous[2])) {
+                  previous[2] = previous[2].slice(0, 3);
+                  if (JSON.stringify(previous) === legacyContext) viewport = { ...viewport, context, y: null };
+                }
+              } catch { /* An unrelated context simply starts at automatic bounds. */ }
+            }
+            return { viewport, viewportContext: context,
               onViewportChange: (value: PlotViewport | null) => onViewportChange?.(kind, idx, value) };
           };
           const shared = {
             cfg,
             isExpanded: expandedPlot === idx,
             onToggleExpand: () => onToggleExpand(idx),
-            isEditMode,
             allConfigs,
             onConfigChange: (newKey: string) => handleConfigChange(idx, newKey),
           };
+          const sourceRates = viewMode === 'tp' ? selectedTPs
+            .filter(point => !hiddenTPs.has(point.id) && (columnsByTest[point.test] ?? []).includes(cfg.key))
+            .map(point => sampleRatesByTest[point.test]) : [fs];
+          const plotFilter = filterForSampleRates(plotFilterSpecs[idx] ?? null, sourceRates);
           const filterProps = {
-            fs,
-            filterSpec: plotFilterSpecs[idx] ?? null,
+            fs: plotFilter.fs,
+            filterSpec: plotFilter.spec,
             filterUi: plotFilters[idx] ?? DEFAULT_FILTER_UI,
             onFilterUiChange: (patch: Partial<FilterUi>) => onPlotFilterChange?.(idx, patch),
             showOriginal: plotShowOriginal[idx] ?? false,
@@ -314,13 +344,12 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
           };
 
           return (
-            <div key={`plot-${idx}`} className={wrapperClass}>
+            <div key={`plot-${idx}`} className={wrapperClass} data-select-focus-scope={`${selectFocusScope}-${idx}`}>
               {viewMode === 'tp' && (
                 <TimePlot
                   key={`tp:${cfg.key}:${visibleSelectionFingerprint}`}
                   {...shared}
                   {...filterProps}
-                  {...annotationProps}
                   registerExport={exportRegistry.registrations[idx]}
                   selectedTPs={selectedTPs}
                   hiddenTPs={hiddenTPs}
@@ -341,12 +370,15 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
               {viewMode === 'full' && (
                 <FullTestPlot
                   key={`full:${test}:${cfg.key}`}
+                  onDisplayDetailChange={detailRegistrations[idx]}
+                  viewport={viewports?.full[idx]}
+                  viewportContext={fullViewportContext}
+                  onViewportChange={value => onViewportChange?.('full', idx, value)}
                   {...shared}
                   additionalConfigs={(fullPlotExtraColumns[idx] ?? []).filter(column => columns.includes(column) && column !== cfg.key)
                     .map(column => ({ key: column, label: column }))}
                   onAdditionalColumnsChange={columns => onFullPlotExtraColumnsChange(idx, columns)}
                   {...filterProps}
-                  {...annotationProps}
                   registerExport={exportRegistry.registrations[idx]}
                   test={test}
                   selectedTPs={selectedTPs}

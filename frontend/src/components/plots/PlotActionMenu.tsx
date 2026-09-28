@@ -1,20 +1,14 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import type uPlot from 'uplot';
 import type { PlotExportActions } from '../controls/PlotExportControls';
-import type { PlotAnnotationActions, AnnotationStart } from './PlotAnnotations';
 import styles from './PlotActionMenu.module.css';
 
 interface Props {
   label: string;
   contextKey: string;
   targetRef: RefObject<HTMLDivElement>;
-  getPlot?: () => uPlot | null;
   exportActions?: RefObject<PlotExportActions>;
-  annotationActions?: RefObject<PlotAnnotationActions>;
-  canAnnotate?: boolean;
   overlay?: { checked: boolean; enabled: boolean; onChange: (value: boolean) => void };
-  notes?: { visible: boolean; onChange: (value: boolean) => void };
   resetLabel?: string;
   onReset: () => void;
   onResetY?: () => void;
@@ -23,21 +17,19 @@ interface Props {
   filterStatus?: string;
   onAnalysisDetails?: () => void;
 }
-interface Opening { x: number; y: number; timing?: AnnotationStart; contextKey: string }
+interface Opening { x: number; y: number; contextKey: string }
 interface Action { label: string; run: () => void; checked?: boolean; reason?: string }
 
 /** One plot-scoped menu, outside grid clipping. Actions call the same owners as
  * visible controls; a context change dismisses captured pointer coordinates. */
-export function PlotActionMenu({ label, contextKey, targetRef, getPlot, exportActions,
-  annotationActions, canAnnotate, overlay, notes, resetLabel = 'Reset axes', onReset, onResetY,
+export function PlotActionMenu({ label, contextKey, targetRef, exportActions,
+  overlay, resetLabel = 'Reset axes', onReset, onResetY,
   yAxis, onEditFilter, filterStatus, onAnalysisDetails }: Props) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const [opening, setOpening] = useState<Opening | null>(null);
   const active = opening?.contextKey === contextKey ? opening : null;
-  const latest = useRef({ contextKey, getPlot });
-  latest.current = { contextKey, getPlot };
   useEffect(() => {
     if (opening && opening.contextKey !== contextKey) setOpening(null);
   }, [contextKey, opening]);
@@ -46,19 +38,9 @@ export function PlotActionMenu({ label, contextKey, targetRef, getPlot, exportAc
     setOpening(null);
     if (focus) trigger.current?.focus({ preventScroll: true });
   };
-  const openAt = (x: number, y: number, pointer = false) => {
-    const plot = latest.current.getPlot?.();
-    let timing: AnnotationStart | undefined;
-    if (plot?.scales.x.min != null && plot.scales.x.max != null) {
-      const range: [number, number] = [plot.scales.x.min, plot.scales.x.max];
-      const rect = plot.over.getBoundingClientRect();
-      const value = pointer && rect.width > 0
-        ? plot.posToVal(Math.max(0, Math.min(rect.width, x - rect.left)) * plot.over.clientWidth / rect.width, 'x')
-        : (range[0] + range[1]) / 2;
-      if (Number.isFinite(value)) timing = { kind: 'marker', value, range };
-    }
+  const openAt = (x: number, y: number) => {
     window.dispatchEvent(new Event('kiha:plot-menu-open'));
-    setOpening({ x, y, timing, contextKey: latest.current.contextKey });
+    setOpening({ x, y, contextKey });
   };
   const openRef = useRef(openAt);
   openRef.current = openAt;
@@ -73,8 +55,7 @@ export function PlotActionMenu({ label, contextKey, targetRef, getPlot, exportAc
       event.preventDefault(); event.stopPropagation();
       const rect = target.getBoundingClientRect();
       // Browser-generated keyboard contextmenu events may have no coordinates.
-      openRef.current(event.clientX || rect.left + 16, event.clientY || rect.top + 16,
-        event.clientX !== 0 || event.clientY !== 0);
+      openRef.current(event.clientX || rect.left + 16, event.clientY || rect.top + 16);
     };
     const keyboard = (event: KeyboardEvent) => {
       if (interactive(event) || !(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) return;
@@ -134,15 +115,6 @@ export function PlotActionMenu({ label, contextKey, targetRef, getPlot, exportAc
     { label: resetLabel, run: onReset },
     ...(onResetY ? [{ label: 'Auto-fit Y to visible data', checked: yAxis?.automatic, run: onResetY }] : []),
     ...(yAxis ? [{ label: 'Set Y-axis bounds…', reason: yAxis.enabled ? undefined : 'Wait for a time trace.', run: yAxis.onEdit }] : []),
-    ...(annotationActions ? [
-      { label: 'Add time marker…', reason: canAnnotate && active?.timing ? undefined : 'Wait for a time trace with source timing.',
-        run: () => annotationActions.current?.open(active?.timing) },
-      { label: 'Add interval note…', reason: canAnnotate && active?.timing ? undefined : 'Wait for a time trace with source timing.',
-        run: () => { if (active?.timing) annotationActions.current?.open({ ...active.timing, kind: 'interval' }); } },
-      { label: 'Manage time notes…', reason: canAnnotate ? undefined : 'Wait for a time trace with source timing.',
-        run: () => annotationActions.current?.open() },
-    ] : []),
-    ...(notes ? [{ label: 'Show time notes (all plots)', checked: notes.visible, run: () => notes.onChange(!notes.visible) }] : []),
   ];
 
   return <>

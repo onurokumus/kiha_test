@@ -53,7 +53,6 @@ export interface AnalysisSession extends WaterfallSettings {
   plotFilters: FilterUi[];
   /** Display-only per-grid-slot choice, independent of DSP settings. */
   plotShowOriginal: boolean[];
-  annotationsVisible: boolean;
   xyYCols: string[];
   xyXCols: string[];
   scatterRatio: number;
@@ -94,7 +93,6 @@ export const defaultAnalysisSession = (): AnalysisSession => ({
   plotsUserEdited: false,
   plotFilters: Array.from({ length: 9 }, () => ({ ...DEFAULT_FILTER_UI })),
   plotShowOriginal: Array(9).fill(false),
-  annotationsVisible: true,
   xyYCols: [],
   xyXCols: [],
   scatterRatio: 40,
@@ -288,7 +286,6 @@ export function normalizeAnalysisSession(value: unknown): AnalysisSession {
       Array.isArray(value.plotShowOriginal) && value.plotShowOriginal[index] === true
     ),
     xyYCols: stringArray(value.xyYCols, 9),
-    annotationsVisible: value.annotationsVisible !== false,
     xyXCols: stringArray(value.xyXCols, 9),
     scatterRatio,
     scatterCollapsed: !!value.scatterCollapsed,

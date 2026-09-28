@@ -36,10 +36,10 @@ class TrashTests(DataDirTestCase):
         meta = store.get_meta(name)
         meta.update(notes='Original findings', user_meta={'motor': 'legacy', '__proto__': 'keep'})
         store.write_json_atomic(self.tests / name / 'meta.json', meta)
-        document = self.client.get(f'/api/tests/{name}/annotations').json()
-        self.assertEqual(self.client.put(f'/api/tests/{name}/annotations', json={'expected_revision': 0,
-            'expected_data_bounds': document['data_bounds'], 'annotations': [
-                {'id': str(uuid4()), 'start_s': 1, 'end_s': 2, 'text': 'Keep interval'}]}).status_code, 200)
+        # Retired time-note files are preserved like any other legacy file.
+        store.write_json_atomic(self.tests / name / 'annotations.json', {
+            'version': 1, 'time_basis': 'stored_elapsed_seconds', 'revision': 1,
+            'annotations': [{'id': str(uuid4()), 'start_s': 1, 'end_s': 2, 'text': 'Keep interval'}]})
         self.assertEqual(self.client.put(f'/api/tests/{name}/testpoints', json={'test': name, 'test_points': [
             {'id': 3, 'name': 'Run', 'start_s': 0, 'end_s': 3}]}).status_code, 200)
         return self.tests / name

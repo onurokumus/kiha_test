@@ -49,6 +49,9 @@ def run_checks(web, api, dataset, temporary, output):
         def save():
             button = page.get_by_role('button', name='Save notes and metadata', exact=True)
             button.focus(); page.keyboard.press('Enter'); expect(button).to_be_disabled()
+            # The enclosing fieldset also disables Save during submission.
+            # Wait for completion before exercising the navigation guard.
+            expect(page.locator('.feature-edit')).to_have_attribute('aria-busy', 'false')
         def total(id): return page.locator(f'tr[data-component-id="{id}"]')
         def api_summary(id):
             doc = request.get('component-statistics').json()

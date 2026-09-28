@@ -16,12 +16,11 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  min-height: 38px;
-  padding: 3px 5px;
-  color: #d7dde3;
-  background: #222426;
-  border: 1px solid #383f45;
-  border-radius: 5px;
+  min-height: 43px;
+  padding: 0 0 8px;
+  color: #41516b;
+  background: transparent;
+  border-bottom: 1px solid #edf0f5;
 }
 
 .trigger,
@@ -34,9 +33,9 @@
 .removeButton {
   box-sizing: border-box;
   min-height: 32px;
-  color: #c8d0d6;
-  background: #303236;
-  border: 1px solid #484f55;
+  color: #202c42;
+  background: #f2f4f8;
+  border: 1px solid #dfe4ec;
   border-radius: 4px;
   font: inherit;
   cursor: pointer;
@@ -44,31 +43,35 @@
 
 .trigger {
   display: inline-flex;
+  justify-self: start;
   align-items: center;
-  gap: 7px;
-  padding: 0 9px;
+  gap: 6px;
+  padding: 0 8px;
+  color: #41516b;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 5px;
   font-size: 11px;
   font-weight: 650;
 }
 
-.trigger[aria-expanded='true'] {
-  color: #a8ddff;
-  background: #203849;
-  border-color: #569cd6;
+.trigger,
+.clearButton {
+  min-height: 34px;
+}
+
+.trigger[aria-expanded='true'],
+.trigger[data-active] {
+  color: #405994;
+  background: #e5edff;
+  border-color: #d4dff6;
 }
 
 .filterGlyph {
-  display: inline-grid;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  color: #78bde7;
-  border: 1px solid #426579;
-  border-radius: 3px;
-  font-family: Consolas, 'Cascadia Mono', monospace;
-  font-size: 13px;
-  line-height: 1;
-  transform: rotate(90deg);
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: currentColor;
 }
 
 .activeBadge,
@@ -79,24 +82,27 @@
   box-sizing: border-box;
   place-items: center;
   padding: 0 5px;
-  color: #bce6ff;
-  background: #28506a;
-  border: 1px solid #467b9b;
+  color: #405994;
+  background: #e5edff;
+  border: 1px solid #c4cfe1;
   border-radius: 9px;
-  font-family: Consolas, 'Cascadia Mono', monospace;
-  font-size: 9px;
+  font-family: Manrope, 'Segoe UI', sans-serif;
+  font-size: 10px;
   font-weight: 700;
 }
 
 .resultCount {
-  color: #8f99a1;
-  font-family: Consolas, 'Cascadia Mono', monospace;
-  font-size: 10px;
+  padding-left: 10px;
+  border-left: 1px solid #e3e8f0;
+  color: #626f83;
+  font-family: Manrope, 'Segoe UI', sans-serif;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .resultCount strong {
-  color: #d2dce3;
+  color: #202c42;
   font-weight: 700;
 }
 
@@ -113,11 +119,11 @@
   max-width: 150px;
   padding: 3px 6px;
   overflow: hidden;
-  color: #9ccde9;
-  background: #213643;
-  border: 1px solid #35566a;
-  border-radius: 3px;
-  font-size: 9px;
+  color: #405994;
+  background: #e5edff;
+  border: 1px solid #c4cfe1;
+  border-radius: 5px;
+  font-size: 10px;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -129,7 +135,7 @@
 
 .clearButton {
   padding: 0 9px;
-  color: #b7c0c6;
+  color: #626f83;
   font-size: 10px;
 }
 
@@ -144,14 +150,11 @@
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  color: #d7dde3;
-  background:
-    linear-gradient(180deg, rgba(86, 156, 214, 0.07), transparent 56px), rgba(31, 33, 35, 0.985);
-  border: 1px solid #4c5e6a;
+  color: #41516b;
+  background: #fff;
+  border: 1px solid #c4cfe1;
   border-radius: 6px;
-  box-shadow:
-    0 16px 36px rgba(0, 0, 0, 0.48),
-    inset 0 1px rgba(150, 211, 245, 0.07);
+  box-shadow: 0 8px 24px #202c421a;
   animation: drawerReveal 120ms ease-out;
 }
 
@@ -165,8 +168,8 @@
   gap: 12px;
   min-height: 48px;
   padding: 7px 8px 7px 11px;
-  background: rgba(35, 39, 42, 0.98);
-  border-bottom: 1px solid #3d484f;
+  background: #fff;
+  border-bottom: 1px solid #dfe4ec;
 }
 
 .drawerHeader > div {
@@ -176,14 +179,14 @@
 }
 
 .drawerHeader strong {
-  color: #dfe8ee;
+  color: #202c42;
   font-size: 12px;
   font-weight: 650;
 }
 
 .drawerHeader span {
-  color: #89959d;
-  font-size: 9px;
+  color: #626f83;
+  font-size: 10px;
   line-height: 1.3;
 }
 
@@ -191,14 +194,14 @@
   flex: 0 0 32px;
   width: 32px;
   padding: 0;
-  color: #aeb8bf;
+  color: #626f83;
   background: transparent;
   border-color: transparent;
   font-size: 18px;
 }
 
 .section {
-  border-bottom: 1px solid #343c42;
+  border-bottom: 1px solid #dfe4ec;
 }
 
 .section:last-child {
@@ -209,7 +212,7 @@
   display: flex;
   align-items: center;
   min-height: 38px;
-  background: #26292b;
+  background: #f8f9fc;
 }
 
 .sectionToggle {
@@ -232,8 +235,8 @@
   width: 7px;
   height: 7px;
   box-sizing: border-box;
-  border-right: 1px solid #8ba0ad;
-  border-bottom: 1px solid #8ba0ad;
+  border-right: 1px solid #c4cfe1;
+  border-bottom: 1px solid #c4cfe1;
   transform: translateY(-2px) rotate(45deg);
   transition: transform 120ms ease;
 }
@@ -253,10 +256,10 @@
 .sectionActions button {
   min-height: 28px;
   padding: 0 6px;
-  color: #78bde7;
+  color: #405994;
   background: transparent;
   border-color: transparent;
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .addButton {
@@ -264,25 +267,25 @@
   min-height: 28px;
   margin-right: 7px;
   padding: 0 8px;
-  color: #bce6ff;
-  background: #26475c;
-  border-color: #467b9b;
+  color: #405994;
+  background: #e5edff;
+  border-color: #c4cfe1;
   font-size: 10px;
   font-weight: 650;
 }
 
 .addButton:disabled {
-  color: #727b81;
-  background: #303236;
-  border-color: #43484c;
+  color: #626f83;
+  background: #f2f4f8;
+  border-color: #dfe4ec;
   cursor: not-allowed;
 }
 
 .sectionBody,
 .parameterBody {
   padding: 8px;
-  background: #1d1f21;
-  border-top: 1px solid #333a3f;
+  background: #f8f9fc;
+  border-top: 1px solid #dfe4ec;
 }
 
 .searchField {
@@ -297,21 +300,21 @@
   height: 32px;
   box-sizing: border-box;
   padding: 0 8px;
-  color: #dde3e7;
-  background: #292c2f;
-  border: 1px solid #495159;
+  color: #202c42;
+  background: #f8f9fc;
+  border: 1px solid #dfe4ec;
   border-radius: 4px;
   outline: 0;
   font: inherit;
   font-size: 11px;
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 .searchField input:focus,
 .parameterField select:focus,
 .rangeField input:focus {
-  border-color: #569cd6;
-  box-shadow: 0 0 0 2px rgba(86, 156, 214, 0.18);
+  border-color: #263685;
+  box-shadow: none;
 }
 
 .optionList {
@@ -320,7 +323,7 @@
   max-height: 190px;
   overflow-y: auto;
   padding-right: 3px;
-  scrollbar-color: #52616b #25292c;
+  scrollbar-color: #b8c4d7 #f8f9fc;
   scrollbar-width: thin;
 }
 
@@ -361,14 +364,14 @@
   min-width: 0;
   min-height: 30px;
   padding: 2px 5px;
-  color: #cbd2d7;
-  border-radius: 3px;
+  color: #202c42;
+  border-radius: 5px;
   font-size: 11px;
   cursor: pointer;
 }
 
 .checkboxItem:hover {
-  background: #292e32;
+  background: #f8f9fc;
 }
 
 .checkboxItem input {
@@ -376,7 +379,7 @@
   width: 15px;
   height: 15px;
   margin: 0;
-  accent-color: #569cd6;
+  accent-color: #263685;
 }
 
 .checkboxItem span {
@@ -388,11 +391,11 @@
 
 .checkboxItemIndented {
   padding-left: 35px;
-  color: #aeb7bd;
+  color: #626f83;
 }
 
 .checkboxItemDimmed {
-  color: #6f787e;
+  color: #626f83;
 }
 
 .parameterList {
@@ -409,16 +412,16 @@
   gap: 6px;
   min-width: 0;
   padding: 7px;
-  background: #25282a;
-  border: 1px solid #383f44;
+  background: #f8f9fc;
+  border: 1px solid #dfe4ec;
   border-radius: 4px;
 }
 
 .parameterIndex {
   align-self: center;
-  color: #65727b;
-  font-family: Consolas, 'Cascadia Mono', monospace;
-  font-size: 9px;
+  color: #626f83;
+  font-family: Manrope, 'Segoe UI', sans-serif;
+  font-size: 10px;
   text-align: center;
 }
 
@@ -431,11 +434,11 @@
 
 .parameterField > span,
 .rangeField > span {
-  color: #7f8b93;
-  font-size: 8px;
+  color: #626f83;
+  font-size: 10px;
   font-weight: 650;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .parameterField select {
@@ -449,7 +452,7 @@
 .removeButton {
   width: 32px;
   padding: 0;
-  color: #aab3b9;
+  color: #626f83;
   background: transparent;
   border-color: transparent;
   font-size: 16px;
@@ -458,7 +461,7 @@
 .emptyMessage {
   margin: 0;
   padding: 10px 6px;
-  color: #78838a;
+  color: #626f83;
   font-size: 10px;
   line-height: 1.45;
   text-align: center;
@@ -472,9 +475,9 @@
 .addButton:hover:not(:disabled),
 .treeToggle:hover:not(:disabled),
 .removeButton:hover {
-  color: #eff7fb;
-  background-color: #35414a;
-  border-color: #587183;
+  color: #263685;
+  background-color: #edf1f8;
+  border-color: #c4cfe1;
 }
 
 .trigger:focus-visible,
@@ -488,7 +491,7 @@
 .checkboxItem input:focus-visible {
   position: relative;
   z-index: 3;
-  outline: 2px solid #74c0ed;
+  outline: 2px solid #263685;
   outline-offset: 2px;
 }
 
@@ -534,8 +537,6 @@
     padding: 0 2px 2px;
   }
 
-  .trigger,
-  .clearButton,
   .closeButton,
   .sectionToggle,
   .addButton,
@@ -576,18 +577,23 @@
 
 @container scatter-filters (max-width: 300px) {
   .summaryBar {
-    grid-template-columns: minmax(0, 1fr) auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
   }
 
   .resultCount {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    justify-self: start;
-    padding: 0 5px;
+    padding-left: 0;
+    border-left: 0;
   }
 
   .activeChips {
-    grid-row: 3;
+    flex-basis: 100%;
+    order: 1;
+  }
+
+  .clearButton {
+    margin-left: auto;
   }
 
   .sectionHeader {
