@@ -1,8 +1,13 @@
-import { useState, useCallback, useMemo } from 'react';
-import { PLOT_INSET, PLOT_INSET_X, PLOT_INSET_Y } from '../constants/scatterGeometry';
+import { useState, useCallback, useMemo, type Dispatch, type SetStateAction } from 'react';
+import { PLOT_INSET_Y } from '../constants/scatterGeometry';
 import { ScatterRangePoint, ScatterRangeVisibility, scatterExtents } from '../utils/scatterRanges';
+import {
+  boundsViewport, panScatterViewport, scatterPlotAnchor, scatterWheelFactor,
+  validScatterViewport, withinScatterLimits, zoomScatterViewport,
+  type ScatterBounds, type ScatterViewport,
+} from '../utils/scatterViewport';
 
-type ZoomDomain = [number, number, number, number] | null;
+type ZoomDomain = ScatterViewport | null;
 
 const paddedAxis = (min: number, max: number): [number, number] => {
   const span = max - min;
@@ -15,7 +20,16 @@ export const useMainPlotZoom = (
   initialZoom: ZoomDomain = null,
   rangeVisibility: ScatterRangeVisibility = { horizontal: false, vertical: false }
 ) => {
-  const [mainZoom, setMainZoom] = useState<ZoomDomain>(initialZoom);
+  const [mainZoom, updateZoom] = useState<ZoomDomain>(() =>
+    initialZoom && validScatterViewport(initialZoom) ? initialZoom : null);
+  // Keep the public React setter contract for session restore and axis changes,
+  // while preventing invalid persisted or caller-supplied numbers reaching SVG.
+  const setMainZoom: Dispatch<SetStateAction<ZoomDomain>> = useCallback(next => {
+    updateZoom(previous => {
+      const value = typeof next === 'function' ? next(previous) : next;
+      return value === null || validScatterViewport(value) ? value : previous;
+    });
+  }, []);
   const horizontalRangesVisible = rangeVisibility.horizontal;
   const verticalRangesVisible = rangeVisibility.vertical;
 
@@ -40,74 +54,47 @@ export const useMainPlotZoom = (
     };
   }, [horizontalRangesVisible, scatterData, verticalRangesVisible]);
 
+  const defaultView = useMemo(() => {
+    const view = boundsViewport(defaultBounds);
+    return validScatterViewport(view) ? view : [0, 1, 0, 1] as ScatterViewport;
+  }, [defaultBounds]);
+
+  const setView = useCallback((view: ScatterViewport) => {
+    if (withinScatterLimits(view, defaultView)) setMainZoom([...view]);
+  }, [defaultView, setMainZoom]);
+
+  const zoomBy = useCallback((factor: number) => {
+    if (factor === 1) return;
+    setMainZoom(previous => zoomScatterViewport(previous ?? defaultView, factor, defaultView) ?? previous);
+  }, [defaultView, setMainZoom]);
+
   const handleMainWheel = useCallback(
     (e: React.WheelEvent<HTMLDivElement>) => {
+      // Leave browser zoom shortcuts (and trackpad pinch delivered as Ctrl+wheel) alone.
+      if (e.ctrlKey || e.metaKey) return;
       const rect = e.currentTarget.getBoundingClientRect();
-      const width = rect.width - PLOT_INSET_X;
-      const height = rect.height - PLOT_INSET_Y;
-      if (width <= 0 || height <= 0 || e.deltaY === 0) return;
-      // Use the same clamped anchor for both the center and new bounds.
-      // Wheel gestures over axis labels must not jump the viewport.
-      const xRatio = Math.max(0, Math.min(1, (e.clientX - rect.left - PLOT_INSET.left) / width));
-      const yRatio = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top - PLOT_INSET.top) / height));
-      const zoomFactor = e.deltaY > 0 ? 1.2 : 0.8;
-
-      setMainZoom((prev) => {
-        const curXMin = prev ? prev[0] : defaultBounds.xMin;
-        const curXMax = prev ? prev[1] : defaultBounds.xMax;
-        const curYMin = prev ? prev[2] : defaultBounds.yMin;
-        const curYMax = prev ? prev[3] : defaultBounds.yMax;
-
-        const xRange = curXMax - curXMin;
-        const yRange = curYMax - curYMin;
-        const xCenter = curXMin + xRange * xRatio;
-        const yCenter = curYMin + yRange * yRatio;
-
-        const newXRange = xRange * zoomFactor;
-        const newYRange = yRange * zoomFactor;
-
-        const next: [number, number, number, number] = [
-          xCenter - newXRange * xRatio,
-          xCenter + newXRange * (1 - xRatio),
-          yCenter - newYRange * yRatio,
-          yCenter + newYRange * (1 - yRatio),
-        ];
-        return next.every(Number.isFinite) && next[0] < next[1] && next[2] < next[3]
-          ? next
-          : prev;
-      });
+      const anchor = scatterPlotAnchor(e.clientX, e.clientY, rect);
+      const factor = scatterWheelFactor(e.deltaY, e.deltaMode, rect.height - PLOT_INSET_Y);
+      if (!anchor || factor === null || factor === 1) return;
+      setMainZoom(previous => zoomScatterViewport(previous ?? defaultView, factor, defaultView, anchor) ?? previous);
     },
-    [defaultBounds]
+    [defaultView, setMainZoom]
   );
 
   const handlePan = useCallback(
-    (deltaX: number, deltaY: number, currentBounds?: { xMin: number; xMax: number; yMin: number; yMax: number }) => {
-      setMainZoom((prev) => {
-        if (!prev) {
-          // First pan - use the provided current bounds from the component
-          if (!currentBounds) return null;
-          return [
-            currentBounds.xMin - deltaX,
-            currentBounds.xMax - deltaX,
-            currentBounds.yMin - deltaY,
-            currentBounds.yMax - deltaY,
-          ];
-        }
-
-        return [
-          prev[0] - deltaX,
-          prev[1] - deltaX,
-          prev[2] - deltaY,
-          prev[3] - deltaY,
-        ];
+    (deltaX: number, deltaY: number, currentBounds?: ScatterBounds) => {
+      if (deltaX === 0 && deltaY === 0) return;
+      setMainZoom(previous => {
+        const view = previous ?? (currentBounds ? boundsViewport(currentBounds) : defaultView);
+        return panScatterViewport(view, deltaX, deltaY, defaultView) ?? previous;
       });
     },
-    []
+    [defaultView, setMainZoom]
   );
 
   const resetZoom = useCallback(() => {
     setMainZoom(null);
-  }, []);
+  }, [setMainZoom]);
 
   return {
     mainZoom,
@@ -115,5 +102,7 @@ export const useMainPlotZoom = (
     handleMainWheel,
     handlePan,
     resetZoom,
+    zoomBy,
+    setView,
   };
 };

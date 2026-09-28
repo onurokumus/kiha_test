@@ -8,6 +8,7 @@ interface Props {
   contextKey: string;
   targetRef: RefObject<HTMLDivElement>;
   exportActions?: RefObject<PlotExportActions>;
+  hideTrigger?: boolean;
   overlay?: { checked: boolean; enabled: boolean; onChange: (value: boolean) => void };
   resetLabel?: string;
   onReset: () => void;
@@ -22,7 +23,7 @@ interface Action { label: string; run: () => void; checked?: boolean; reason?: s
 
 /** One plot-scoped menu, outside grid clipping. Actions call the same owners as
  * visible controls; a context change dismisses captured pointer coordinates. */
-export function PlotActionMenu({ label, contextKey, targetRef, exportActions,
+export function PlotActionMenu({ label, contextKey, targetRef, exportActions, hideTrigger = false,
   overlay, resetLabel = 'Reset axes', onReset, onResetY,
   yAxis, onEditFilter, filterStatus, onAnalysisDetails }: Props) {
   const id = useId();
@@ -36,7 +37,7 @@ export function PlotActionMenu({ label, contextKey, targetRef, exportActions,
 
   const close = (focus = false) => {
     setOpening(null);
-    if (focus) trigger.current?.focus({ preventScroll: true });
+    if (focus) (trigger.current ?? targetRef.current)?.focus({ preventScroll: true });
   };
   const openAt = (x: number, y: number) => {
     window.dispatchEvent(new Event('kiha:plot-menu-open'));
@@ -82,7 +83,7 @@ export function PlotActionMenu({ label, contextKey, targetRef, exportActions,
     const contains = (target: EventTarget | null) => target instanceof Node &&
       (menu.current?.contains(target) || trigger.current?.contains(target));
     const outside = (event: Event) => { if (!contains(event.target)) setOpening(null); };
-    const dismiss = () => { setOpening(null); trigger.current?.focus({ preventScroll: true }); };
+    const dismiss = () => { setOpening(null); (trigger.current ?? targetRef.current)?.focus({ preventScroll: true }); };
     const another = () => setOpening(null);
     const scroll = (event: Event) => { if (!(event.target instanceof Node && menu.current?.contains(event.target))) dismiss(); };
     const blur = () => setOpening(null);
@@ -118,7 +119,7 @@ export function PlotActionMenu({ label, contextKey, targetRef, exportActions,
   ];
 
   return <>
-    <button ref={trigger} type="button" className={styles.trigger} aria-label={`Plot actions for ${label}`}
+    {!hideTrigger && <button ref={trigger} type="button" className={styles.trigger} aria-label={`Plot actions for ${label}`}
       title="Plot actions (also right-click the plot)" aria-haspopup="menu" aria-expanded={!!active}
       aria-controls={active ? id : undefined} onClick={() => {
         if (active) close(); else { const rect = trigger.current!.getBoundingClientRect(); openAt(rect.left, rect.bottom + 4); }
@@ -126,7 +127,7 @@ export function PlotActionMenu({ label, contextKey, targetRef, exportActions,
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault(); const rect = trigger.current!.getBoundingClientRect(); openAt(rect.left, rect.bottom + 4);
         }
-      }}>…</button>
+      }}>…</button>}
     {active && createPortal(<div ref={menu} id={id} role="menu" aria-label={`Plot actions for ${label}`}
       className={styles.menu} style={{ left: active.x, top: active.y }} onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {

@@ -124,6 +124,25 @@ function snapshotSvg(source: SVGSVGElement): SVGSVGElement {
     copies[index].style.removeProperty('transition');
     copies[index].style.removeProperty('filter');
   });
+  // Files always use the original light chart palette. Normalize the detached
+  // clone only, so async font/image work never changes the live theme or view.
+  const paint = (selector: string, property: string, value: string) => {
+    clone.querySelectorAll<SVGElement>(selector).forEach(element => element.style.setProperty(property, value));
+  };
+  paint('.recharts-cartesian-axis-line, .recharts-cartesian-axis-tick-line', 'stroke', '#b2bed0');
+  // Computed styles are copied per element, including Recharts' nested tspans.
+  paint('.recharts-cartesian-axis text, .recharts-cartesian-axis text *', 'fill', '#626f83');
+  paint('[data-range-axis="x"], [data-range-axis="x"] line', 'stroke', '#405994');
+  paint('[data-range-axis="y"], [data-range-axis="y"] line', 'stroke', '#806b20');
+  paint('.datasheet-scatter-series .recharts-scatter-line, .datasheet-scatter-series .recharts-scatter-line path', 'stroke', '#806b20');
+  paint('[data-scatter-hover-target="datasheet"]', 'fill', '#f7f8fa');
+  paint('[data-scatter-hover-target="datasheet"]', 'stroke', '#806b20');
+  clone.querySelectorAll<SVGElement>('[data-export-fill], [data-export-stroke]').forEach(element => {
+    for (const property of ['fill', 'stroke']) {
+      const color = element.getAttribute(`data-export-${property}`);
+      if (color) element.style.setProperty(property, color);
+    }
+  });
   clone.querySelectorAll('.recharts-tooltip-cursor, animate, animateTransform, set').forEach(node => node.remove());
   clone.querySelectorAll<SVGGElement>('[data-scatter-hover-target="point"]').forEach(group => {
     const dot = group.querySelector<SVGCircleElement>('circle[fill]:not([fill="none"])');

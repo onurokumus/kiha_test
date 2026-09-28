@@ -1,4 +1,5 @@
 import type uPlot from 'uplot';
+import { withLightPlot } from '../constants/uplotTheme';
 import { fetchPlotImagePackage } from '../services/api';
 import { imageMetadata } from './analysisMetadata';
 import { checkExport, reportExport, yieldExport } from '../services/exportProgress';
@@ -213,11 +214,15 @@ function downloadBlob(blob: Blob, requestedName: string, extension: 'png' | 'zip
  * Capture the current uPlot canvas with a compact title and wrapping legend.
  * Detailed context is retained in metadata rather than painted into the image.
  * The caller gates incomplete/error views and supplies their actual scope and
- * settings. No fetch, live-plot mutation, DOM screenshot or hidden-series data
- * is involved. This function is entirely synchronous so callers can capture
+ * settings. A synchronous light-palette redraw is restored before returning;
+ * data, axes and visibility are untouched. Callers can capture
  * several plots in one task before any view can change between snapshots.
  */
 export function capturePlotPng(plot: uPlot, options: PlotPngContent): PlotPngCapture {
+  return withLightPlot(plot, () => captureLightPlotPng(plot, options));
+}
+
+function captureLightPlotPng(plot: uPlot, options: PlotPngContent): PlotPngCapture {
   const source = plot.ctx.canvas;
   if (plot.status !== 1 || !plot.root.isConnected || source.width < 1 || source.height < 1 ||
       !Number.isFinite(plot.width) || plot.width <= 0) {

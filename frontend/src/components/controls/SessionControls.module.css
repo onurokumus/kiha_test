@@ -5,14 +5,14 @@
   margin: auto;
   padding: 18px;
   overflow: auto;
-  color: #202c42;
-  background: #ffffff;
-  border: 1px solid #c4cfe1;
+  color: var(--text, #202c42);
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--border-strong, #c4cfe1);
   border-radius: 6px;
   font-size: 13px;
 }
 .dialog::backdrop {
-  background: #202c4266;
+  background: var(--backdrop, #202c4266);
 }
 .heading {
   display: flex;
@@ -34,7 +34,7 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 10px;
-  border: 1px solid #cbd3e0;
+  border: 1px solid var(--border, #cbd3e0);
   border-radius: 4px;
   margin: 16px 0;
   padding: 12px;
@@ -56,9 +56,9 @@
   box-sizing: border-box;
 }
 .dialog button {
-  color: #202c42;
-  background: #f8f9fc;
-  border: 1px solid #c4cfe1;
+  color: var(--text, #202c42);
+  background: var(--surface-raised, #f8f9fc);
+  border: 1px solid var(--border-strong, #c4cfe1);
   padding: 5px 10px;
   border-radius: 5px;
   cursor: pointer;
@@ -68,7 +68,7 @@
   cursor: default;
 }
 .dialog :focus-visible {
-  outline: 2px solid #405994;
+  outline: 2px solid var(--focus, #405994);
   outline-offset: 2px;
 }
 .preview {
@@ -83,5 +83,5 @@
   margin: 0;
 }
 .error {
-  color: #b84343;
+  color: var(--danger, #b84343);
 }

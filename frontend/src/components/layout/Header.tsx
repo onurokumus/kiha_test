@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { TestInfo, UploadItem } from '../../types';
+import { toggleTheme, useTheme } from '../../hooks/useTheme';
 
 export type AppTab = 'analyze' | 'split' | 'edit' | 'uploads' | 'components' | 'settings';
 
@@ -43,8 +44,8 @@ const UploadChip: React.FC<{
       <span
         className="badge upload-chip"
         style={{
-          color: '#b84343',
-          background: '#fff1f0',
+          color: 'var(--danger, #b84343)',
+          background: 'var(--danger-bg, #fff1f0)',
           display: 'inline-flex',
           alignItems: 'center',
           gap: 6,
@@ -135,6 +136,7 @@ export const Header: React.FC<HeaderProps> = ({
   notice, sessionControls,
 }) => {
   const importRef = useRef<HTMLInputElement>(null);
+  const theme = useTheme();
   // Local active uploads render their own chip; only count transfers received
   // from another browser/window in the generic status badge.
   const localActive = uploads.filter((item) => !!item.sessionId).length;
@@ -181,6 +183,16 @@ export const Header: React.FC<HeaderProps> = ({
           <span aria-hidden="true">＋</span> Import CSV
         </button>
         {sessionControls}
+        <button type="button" className="theme-toggle" role="switch"
+          aria-label="Dark mode" aria-checked={theme === 'dark'}
+          title="Toggle dark mode"
+          onClick={toggleTheme}>
+          {theme === 'dark' ? (
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" /></svg>
+          ) : (
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.6 14A8.7 8.7 0 0 1 10 3.4 8.7 8.7 0 1 0 20.6 14Z" /></svg>
+          )}
+        </button>
         <a className="app-back-link" href="/k11c0/">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m6-6-6 6 6 6" /></svg>
           Back to K11C0

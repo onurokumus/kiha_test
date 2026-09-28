@@ -1,3 +1,5 @@
+import { usePlotTheme } from '../../utils/usePlotTheme';
+import { plotSeriesColor } from '../../constants/uplotTheme';
 import { usePlotViewport, ViewportProps } from '../../utils/plotViewport';
 import { loadedAnalysis } from '../../utils/analysisMetadata';
 import React, { useEffect, useRef, useState } from 'react';
@@ -141,6 +143,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   const analysisActions = useRef<SpectrumAnalysisActions>(null);
   const exportActions = useRef<PlotExportActions>(null);
   const plotRef = useRef<uPlot | null>(null);
+  usePlotTheme(plotRef);
   const viewportControl = usePlotViewport(plotRef, {viewport, viewportContext, onViewportChange}, 'manual');
   const structKeyRef = useRef('');
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -261,7 +264,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
         (tr) =>
           ({
             label: tr.label,
-            stroke: tr.color,
+            stroke: (plot: uPlot) => plotSeriesColor(plot, tr.color),
             width: 1,
             spanGaps: false,
             value: facetedSeriesValue,
@@ -305,7 +308,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
     // Axis labels and series colors are structural, so log mode and colors
     // must participate in the key used to reuse the existing canvas.
     const structKey = [
-      JSON.stringify(series.map((s) => [s.label, s.stroke])), box.w, box.h, isExpanded, axisMode, logY, specMode,
+      JSON.stringify(traces.map(trace => [trace.label, trace.color])), box.w, box.h, isExpanded, axisMode, logY, specMode,
     ].join('|');
     viewportControl.sync(() => syncPlot({
       plotRef,
@@ -447,7 +450,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
           ariaLabel="Plot variable" title="Change plot variable"
           searchPlaceholder="Search plot variables..." optionNoun="variable" appearance="title" /> : undefined}
 
-        summary={missingCount > 0 ? <><span style={{ color: '#806b20' }}>{summary}</span>
+        summary={missingCount > 0 ? <><span style={{ color: 'var(--warning, #806b20)' }}>{summary}</span>
           <PlotDetailsButton label={cfg.label} disabled={pending || (!traces.length && !failures.length)}
             onClick={() => analysisActions.current?.open()} /></> : undefined}
 

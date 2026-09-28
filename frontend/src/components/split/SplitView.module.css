@@ -26,7 +26,7 @@
 
 .toolbar h1 {
   margin: 0;
-  color: #344666;
+  color: var(--text, #344666);
   font-size: 16px;
   font-weight: 700;
   white-space: nowrap;
@@ -46,7 +46,7 @@
 }
 
 .editControls {
-  border-left: 1px solid #dfe4ec;
+  border-left: 1px solid var(--border, #dfe4ec);
   padding-left: 12px;
 }
 
@@ -71,11 +71,11 @@
 }
 
 .saved {
-  color: #66758c;
+  color: var(--muted, #66758c);
 }
 
 .unsaved {
-  color: #806b20;
+  color: var(--warning, #806b20);
 }
 
 .statusMessage {
@@ -83,7 +83,7 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: #263685;
+  color: var(--accent, #263685);
 }
 
 .files {
@@ -105,9 +105,9 @@
 }
 
 .files > button[aria-expanded='true'] {
-  border-color: #a6b4d8;
-  background: #eef1fb;
-  color: #263685;
+  border-color: var(--border-strong, #a6b4d8);
+  background: var(--selected-bg, #eef1fb);
+  color: var(--accent, #263685);
 }
 
 .filesPanel {
@@ -119,10 +119,10 @@
   padding: 10px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: #fff;
-  border: 1px solid #d4dcea;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #d4dcea);
   border-radius: 6px;
-  box-shadow: 0 8px 24px #26344d1a;
+  box-shadow: 0 8px 24px var(--shadow, #26344d1a);
 }
 
 .filesPanel > button {
@@ -131,7 +131,7 @@
 
 .filesPanel p {
   margin: 4px 0 0;
-  color: #66758c;
+  color: var(--muted, #66758c);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -157,7 +157,7 @@
 }
 
 .statusMessage:focus-visible {
-  outline: 2px solid #405994;
+  outline: 2px solid var(--focus, #405994);
   outline-offset: 2px;
 }
 

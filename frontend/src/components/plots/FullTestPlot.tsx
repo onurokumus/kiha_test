@@ -1,3 +1,5 @@
+import { usePlotTheme } from '../../utils/usePlotTheme';
+import { plotSeriesColor } from '../../constants/uplotTheme';
 import { ViewportProps } from '../../utils/plotViewport';
 import { AxisRange } from '../../utils/timePlotRanges';
 import { loadedAnalysis } from '../../utils/analysisMetadata';
@@ -164,6 +166,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
   const chartRef = useRef<HTMLDivElement>(null);
   const exportActions = useRef<PlotExportActions>(null);
   const plotRef = useRef<uPlot | null>(null);
+  usePlotTheme(plotRef);
   const structKeyRef = useRef('');
   const yRange = viewport?.context === viewportContext ? viewport?.y ?? null : null;
   const yRangeRef = useRef<AxisRange | null>(yRange);
@@ -385,7 +388,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
       const values = window.series[key];
       const label = `${key} ${filtered ? 'filtered' : 'original'}`;
       const style: uPlot.Series = {
-        stroke: subdued ? `${color}80` : color,
+        stroke: (plot: uPlot) => plotSeriesColor(plot, subdued ? `${color}80` : color),
         width: subdued ? 1 : filtered ? 2 : window.mode === 'envelope' ? 1 : 1.5,
         dash: subdued ? [5, 4] : [],
         spanGaps: false,
@@ -401,7 +404,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
         );
         bands.push({
           series: [upperIndex, upperIndex + 1],
-          fill: color + (subdued ? '16' : filtered ? '32' : '40'),
+          fill: (plot: uPlot) => plotSeriesColor(plot, color + (subdued ? '16' : filtered ? '32' : '40')),
         });
         data.push(envelope.max, envelope.min);
       } else {
@@ -615,7 +618,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
         identityControl={<FullTestVariables configs={configs} allConfigs={allConfigs}
           showingOverlay={showingOverlay}
           onPrimaryChange={onConfigChange} onAdditionalColumnsChange={onAdditionalColumnsChange} />}
-        status={(ferror || filterNeedsAttention) && <span title={ferror || 'Open Filter settings in the plot menu'} style={{ color: '#806b20' }}>Filter needs attention</span>}
+        status={(ferror || filterNeedsAttention) && <span title={ferror || 'Open Filter settings in the plot menu'} style={{ color: 'var(--warning, #806b20)' }}>Filter needs attention</span>}
         actions={<>
           <PlotActionMenu label={plotLabel} targetRef={chartRef} contextKey={JSON.stringify([contextKey, windowRequestKey, filterSpec, showOriginal])}
             exportActions={exportActions}
@@ -650,23 +653,23 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
           )}
           {showingFiltered && <span className="badge">{filterSummary}</span>}
           {filteredWindow?.boundary_warning && (
-            <span style={{ fontSize: 10, color: '#806b20' }}>
+            <span style={{ fontSize: 10, color: 'var(--warning, #806b20)' }}>
               ⚠ range touches data edge — filter transients possible
             </span>
           )}
           {(filteredWindow?.time_gap_count ?? 0) > 0 && (
-            <span style={{ fontSize: 10, color: '#806b20' }}>
+            <span style={{ fontSize: 10, color: 'var(--warning, #806b20)' }}>
               ⚠ filtered separately around {filteredWindow?.time_gap_count} missing-data
               {' '}gap{filteredWindow?.time_gap_count === 1 ? '' : 's'}
             </span>
           )}
           {filteredWindow?.gap_segment_warning && (
-            <span style={{ fontSize: 10, color: '#806b20' }}>
+            <span style={{ fontSize: 10, color: 'var(--warning, #806b20)' }}>
               short continuous regions have no filtered trace
             </span>
           )}
-          {ferror && <span style={{ color: '#b84343', fontSize: 10 }}>{ferror}</span>}
-          {filterSpec && <details style={{ flexBasis: '100%', fontSize: 10, color: '#626f83' }}>
+          {ferror && <span style={{ color: 'var(--danger, #b84343)', fontSize: 10 }}>{ferror}</span>}
+          {filterSpec && <details style={{ flexBasis: '100%', fontSize: 10, color: 'var(--muted, #626f83)' }}>
             <summary style={{ cursor: 'pointer' }}>Details</summary>
             Filters {columns.length > 1 ? 'all variables in ' : ''}the viewed range at full resolution; zoom applies it again. Original is stored data before this filter, including prior edits.
           </details>}

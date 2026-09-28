@@ -1,9 +1,9 @@
 import { CSSProperties } from 'react';
 
 export const SelectStyle: CSSProperties = {
-  background: '#f8f9fc',
-  color: '#202c42',
-  border: '1px solid #dfe4ec',
+  background: 'var(--input-bg, #f8f9fc)',
+  color: 'var(--text, #202c42)',
+  border: '1px solid var(--border, #dfe4ec)',
   padding: '4px 8px',
   borderRadius: 5,
   minHeight: 30,
@@ -19,9 +19,9 @@ export const noSelect: CSSProperties = {
 };
 
 export const buttonStyle: CSSProperties = {
-  background: '#ffffff',
-  color: '#202c42',
-  border: '1px solid #dfe4ec',
+  background: 'var(--surface, #ffffff)',
+  color: 'var(--text, #202c42)',
+  border: '1px solid var(--border, #dfe4ec)',
   padding: '3px 10px',
   borderRadius: 5,
   minHeight: 30,

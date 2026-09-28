@@ -325,7 +325,7 @@ export default function SplitView({
   return (
     <div className={`feature-split ${styles.workspace}`}>
       {tpLoadState === 'loading' && (
-        <div className="panel" role="status" aria-live="polite" style={{ color: '#405994' }}>
+        <div className="panel" role="status" aria-live="polite" style={{ color: 'var(--accent, #405994)' }}>
           Loading saved test-point definitions…
         </div>
       )}
@@ -333,7 +333,7 @@ export default function SplitView({
         <div
           className="panel"
           role="alert"
-          style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#b84343' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--danger, #b84343)' }}
         >
           <span style={{ flex: 1 }}>
             Could not load saved test-point definitions. Editing is disabled to protect the
@@ -497,12 +497,12 @@ export default function SplitView({
         </p></details>
         </div>
         <div className="feature-points-scroll"><div className="feature-points-grid">
-          <span style={{ color: '#626f83' }}>Name</span>
-          <span style={{ color: '#626f83' }}>Label</span>
-          <span style={{ color: '#626f83' }}>Start (s)</span>
-          <span style={{ color: '#626f83' }}>End (s)</span>
-          <span style={{ color: '#626f83' }}>Open</span>
-          <span style={{ color: '#626f83' }}>Notes</span>
+          <span style={{ color: 'var(--muted, #626f83)' }}>Name</span>
+          <span style={{ color: 'var(--muted, #626f83)' }}>Label</span>
+          <span style={{ color: 'var(--muted, #626f83)' }}>Start (s)</span>
+          <span style={{ color: 'var(--muted, #626f83)' }}>End (s)</span>
+          <span style={{ color: 'var(--muted, #626f83)' }}>Open</span>
+          <span style={{ color: 'var(--muted, #626f83)' }}>Notes</span>
           <span />
           {indexedTps.map((tp) => {
             const sel = tp.id === selectedId;
@@ -522,7 +522,7 @@ export default function SplitView({
           })}
         </div></div>
         {tps.length === 0 && (
-          <div style={{ color: '#626f83', fontSize: 11, padding: 8 }}>
+          <div style={{ color: 'var(--muted, #626f83)', fontSize: 11, padding: 8 }}>
             No test points yet. Add a test point or configure Auto-split.
           </div>
         )}
@@ -601,7 +601,7 @@ function FragmentRow({ tp, sel, exportHref, isDraft, onPatch, onZoom, onRemove, 
   onSelect: () => void;
 }) {
   const cellStyle = {
-    background: sel ? '#e5edff' : undefined,
+    background: sel ? 'var(--selected-bg, #e5edff)' : undefined,
     borderRadius: 2,
   };
   return (
@@ -642,7 +642,7 @@ function FragmentRow({ tp, sel, exportHref, isDraft, onPatch, onZoom, onRemove, 
              onChange={(e) => onPatch({ notes: e.target.value })} />
       <span style={{ display: 'flex', gap: 4 }}>
         <button className="btn" onClick={onZoom} title="zoom to test point">Zoom</button>
-        <span style={{ alignSelf: 'center', color: '#626f83' }} title={`Test-point ID ${tp.id}`}>#{tp.id}</span>
+        <span style={{ alignSelf: 'center', color: 'var(--muted, #626f83)' }} title={`Test-point ID ${tp.id}`}>#{tp.id}</span>
         <a className="btn" href={exportHref} download
            aria-label={`Download ${isDraft ? 'draft ' : ''}CSV for TP ${tp.id}`}
            aria-disabled={!exportHref || undefined}

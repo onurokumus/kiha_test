@@ -1,3 +1,5 @@
+import { usePlotTheme } from '../../utils/usePlotTheme';
+import { plotSeriesColor } from '../../constants/uplotTheme';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
 import { AxisRange } from '../../utils/timePlotRanges';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -75,6 +77,7 @@ export default function SplitPlot(props: Props) {
   const wrapperRef = useRef<HTMLDivElement>(null); // positioning reference
   const containerRef = useRef<HTMLDivElement>(null); // uPlot mount target
   const plotRef = useRef<uPlot | null>(null);
+  const theme = usePlotTheme(plotRef);
   const yRangeRef = useRef<AxisRange | null>(null);
   useEffect(() => {
     yRangeRef.current = null;
@@ -161,13 +164,13 @@ export default function SplitPlot(props: Props) {
     if (win.mode === 'envelope') {
       const envelope = win.series[column];
       series.push(
-        { label: `${column} max`, stroke: color, width: 1, spanGaps: false },
-        { label: `${column} min`, stroke: color, width: 1, spanGaps: false }
+        { label: `${column} max`, stroke: (plot: uPlot) => plotSeriesColor(plot, color), width: 1, spanGaps: false },
+        { label: `${column} min`, stroke: (plot: uPlot) => plotSeriesColor(plot, color), width: 1, spanGaps: false }
       );
-      bands.push({ series: [1, 2], fill: color + '40' });
+      bands.push({ series: [1, 2], fill: (plot: uPlot) => plotSeriesColor(plot, color + '40') });
       data.push(envelope?.max ?? empty(), envelope?.min ?? empty());
     } else {
-      series.push({ label: column, stroke: color, width: 1.5, spanGaps: false });
+      series.push({ label: column, stroke: (plot: uPlot) => plotSeriesColor(plot, color), width: 1.5, spanGaps: false });
       data.push(win.series[column] ?? empty());
     }
 
@@ -191,7 +194,7 @@ export default function SplitPlot(props: Props) {
         },
         // Fixed axis and outer padding keep absolute X/TP positions aligned
         // even when variables have very different numerical magnitudes.
-        axes: [{ ...TIME_AXIS_STYLE, size: 44 }, { ...AXIS_STYLE, size: 84, stroke: color }],
+        axes: [{ ...TIME_AXIS_STYLE, size: 44 }, { ...AXIS_STYLE, size: 84, stroke: (plot: uPlot) => plotSeriesColor(plot, color) }],
         padding: [20, 16, 0, 0],
         legend: { show: false },
         cursor: {
@@ -397,9 +400,9 @@ export default function SplitPlot(props: Props) {
                   style={{
                     position: 'absolute', left: x0, top: 0,
                     width: x1 - x0, height: '100%',
-                    background: sel ? '#527bd32b' : '#527bd310',
-                    borderLeft: '1px solid #263685',
-                    borderRight: tp.end_s !== null ? '1px solid #263685' : '1px dashed #4a6b8a',
+                    background: theme === 'dark' ? sel ? '#a6b8ff2b' : '#a6b8ff10' : sel ? '#527bd32b' : '#527bd310',
+                    borderLeft: '1px solid var(--accent, #263685)',
+                    borderRight: tp.end_s !== null ? '1px solid var(--accent, #263685)' : '1px dashed var(--muted, #4a6b8a)',
                   }}
                 />
                 <button
@@ -415,8 +418,8 @@ export default function SplitPlot(props: Props) {
                     overflow: 'hidden', whiteSpace: 'nowrap',
                     pointerEvents: 'auto', cursor: 'pointer',
                     fontSize: 10, fontWeight: 600,
-                    color: sel ? '#263685' : '#626f83',
-                    background: sel ? '#e5edff' : '#ffffffeb',
+                    color: sel ? 'var(--accent, #263685)' : 'var(--muted, #626f83)',
+                    background: sel ? 'var(--selected-bg, #e5edff)' : 'var(--surface-raised, #ffffffeb)',
                     padding: '1px 4px', borderRadius: 2, border: 0,
                   }}
                 >
@@ -435,7 +438,7 @@ export default function SplitPlot(props: Props) {
                         display: 'flex', justifyContent: 'center',
                       }}
                     >
-                      <div style={{ width: 3, height: '100%', background: '#263685' }} />
+                      <div style={{ width: 3, height: '100%', background: 'var(--accent, #263685)' }} />
                     </div>
                     {tp.end_s !== null && (
                       <div
@@ -449,7 +452,7 @@ export default function SplitPlot(props: Props) {
                           display: 'flex', justifyContent: 'center',
                         }}
                       >
-                        <div style={{ width: 3, height: '100%', background: '#263685' }} />
+                        <div style={{ width: 3, height: '100%', background: 'var(--accent, #263685)' }} />
                       </div>
                     )}
                   </>

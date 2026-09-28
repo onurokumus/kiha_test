@@ -1,3 +1,5 @@
+import { usePlotTheme } from '../../utils/usePlotTheme';
+import { plotSeriesColor } from '../../constants/uplotTheme';
 import { loadedAnalysis } from '../../utils/analysisMetadata';
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import uPlot from 'uplot';
@@ -153,6 +155,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
   const yAxisActions = useRef<TimeYAxisActions>(null);
   const exportActions = useRef<PlotExportActions>(null);
   const plotRef = useRef<uPlot | null>(null);
+  usePlotTheme(plotRef);
   const structKeyRef = useRef('');
   // Latest zoom-commit callback — a reused uPlot keeps its build-time closures.
   const onZoomChangeRef = useRef(onZoomChange);
@@ -420,7 +423,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
         (trace) =>
           ({
             label: trace.label,
-            stroke: showingOverlay && trace.kind === 'original' ? `${trace.color}99` : trace.color,
+            stroke: (plot: uPlot) => plotSeriesColor(plot, showingOverlay && trace.kind === 'original' ? `${trace.color}99` : trace.color),
             width: trace.kind === 'filtered' ? 2 : showingOverlay ? 1 : 1.5,
             dash: showingOverlay && trace.kind === 'original' ? [5, 4] : [],
             spanGaps: false,
@@ -487,7 +490,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
     // Axis ranges stay out of the struct key. Reuse the plot, swap data
     // without transient auto-ranging, and update the controlled scales.
     const structKey = [
-      JSON.stringify(series.map((s) => [s.label, s.stroke, s.width, s.dash])), box.w, box.h, isExpanded,
+      JSON.stringify(plottedTraces.map(trace => [trace.label, trace.color, trace.kind])), showingOverlay, box.w, box.h, isExpanded,
     ].join('|');
     syncPlot({
       plotRef,
@@ -719,7 +722,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
           onRetry={onRetryStatistics} filterActive={Boolean(filterSpec)} />}
         status={<>
           {yRange && <span title="Fixed Y bounds; choose Auto-fit Y in the plot menu">Y fixed</span>}
-          {(ferror || filterNeedsAttention) && <span title={ferror || 'Open Filter settings in the plot menu'} style={{ color: '#806b20' }}>Filter needs attention</span>}
+          {(ferror || filterNeedsAttention) && <span title={ferror || 'Open Filter settings in the plot menu'} style={{ color: 'var(--warning, #806b20)' }}>Filter needs attention</span>}
         </>}
         actions={<>
           <PlotActionMenu label={cfg.label} targetRef={chartRef} contextKey={JSON.stringify([cfg.key, tpFingerprint, filterSpec, showOriginal, zoomDomain])}
@@ -764,22 +767,22 @@ export const TimePlot: React.FC<TimePlotProps> = ({
           )}
           {showingFiltered && <span className="badge">{filterSummary}</span>}
           {fovers.some((f) => f.warning) && (
-            <span style={{ fontSize: 10, color: '#806b20' }}>
+            <span style={{ fontSize: 10, color: 'var(--warning, #806b20)' }}>
               ⚠ range touches data edge — filter transients possible
             </span>
           )}
           {fovers.some((f) => f.gapWarning) && (
-            <span style={{ fontSize: 10, color: '#806b20' }}>
+            <span style={{ fontSize: 10, color: 'var(--warning, #806b20)' }}>
               ⚠ filters run separately on each side of missing-data gaps
             </span>
           )}
           {fovers.some((f) => f.segmentWarning) && (
-            <span style={{ fontSize: 10, color: '#806b20' }}>
+            <span style={{ fontSize: 10, color: 'var(--warning, #806b20)' }}>
               short continuous regions have no filtered trace
             </span>
           )}
-          {ferror && <span style={{ color: '#b84343', fontSize: 10 }}>{ferror}</span>}
-          {filterSpec && <details style={{ flexBasis: '100%', fontSize: 10, color: '#626f83' }}>
+          {ferror && <span style={{ color: 'var(--danger, #b84343)', fontSize: 10 }}>{ferror}</span>}
+          {filterSpec && <details style={{ flexBasis: '100%', fontSize: 10, color: 'var(--muted, #626f83)' }}>
             <summary style={{ cursor: 'pointer' }}>Details</summary>
             Filters each complete saved TP; zoom does not change the filter. Original is stored data before this filter, including prior edits.
           </details>}

@@ -1,3 +1,4 @@
+import { plotSeriesColor } from '../constants/uplotTheme';
 import uPlot from 'uplot';
 
 export interface XRangeHighlight {
@@ -51,11 +52,11 @@ export function xRangeHighlightsPlugin(
           if (!Number.isFinite(left) || !Number.isFinite(right) || right < left) continue;
 
           const width = Math.max(edgeWidth, right - left);
-          ctx.fillStyle = highlight.color;
+          ctx.fillStyle = plotSeriesColor(u, highlight.color);
           ctx.globalAlpha = 0.14;
           ctx.fillRect(left, plotTop, width, barHeight);
 
-          ctx.strokeStyle = highlight.color;
+          ctx.strokeStyle = plotSeriesColor(u, highlight.color);
           ctx.globalAlpha = 0.9;
           ctx.lineWidth = edgeWidth;
           ctx.beginPath();

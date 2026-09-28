@@ -51,7 +51,7 @@ export function axisTitlesPlugin(title: string): uPlot.Plugin {
         context.save();
         context.scale(ratio, ratio);
         context.font = AXIS_STYLE.labelFont;
-        context.fillStyle = AXIS_STYLE.stroke;
+        context.fillStyle = AXIS_STYLE.stroke(plot);
         context.textAlign = 'center';
         context.textBaseline = 'middle';
         const titleWidth = lines.length * lineHeight;

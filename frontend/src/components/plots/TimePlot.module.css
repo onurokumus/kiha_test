@@ -1,7 +1,7 @@
 .plotContainer {
-  background: #ffffff;
+  background: var(--surface, #ffffff);
   border-radius: 7px;
-  border: 1px solid #dfe4ec;
+  border: 1px solid var(--border, #dfe4ec);
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -17,7 +17,7 @@
 }
 
 .plotContainer:hover {
-  border-color: #c7d1e2;
+  border-color: var(--border-strong, #c7d1e2);
   box-shadow: none;
 }
 
@@ -69,12 +69,12 @@
   margin: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  color: #202c42;
+  color: var(--text, #202c42);
   font-size: 11px;
   line-height: 1.25;
   text-align: left;
   white-space: nowrap;
-  scrollbar-color: #b8c4d7 #f8f9fc;
+  scrollbar-color: var(--border-strong, #b8c4d7) var(--surface-raised, #f8f9fc);
   scrollbar-width: thin;
 }
 
@@ -83,11 +83,11 @@
 }
 
 .plotCanvas :global(.u-legend::-webkit-scrollbar-track) {
-  background: #ffffff;
+  background: var(--surface, #ffffff);
 }
 
 .plotCanvas :global(.u-legend::-webkit-scrollbar-thumb) {
-  background: #f8f9fc;
+  background: var(--border-strong, #f8f9fc);
   border-radius: 5px;
 }
 

@@ -22,6 +22,7 @@ const AGG_MODES: { value: AggMode; label: string }[] = [
 ];
 
 interface FilterControlsProps {
+  navigationRef?: (node: HTMLDivElement | null) => void;
   filterState: ScatterFilterState;
   filterOptions: FilterOptions;
   columns: string[];
@@ -127,6 +128,7 @@ const NumericInput: React.FC<{
 };
 
 const FilterControlsComponent: React.FC<FilterControlsProps> = ({
+  navigationRef,
   filterState,
   filterOptions,
   columns,
@@ -309,6 +311,8 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
           type="button"
           className={styles.trigger}
           data-active={hasActiveFilters || undefined}
+          aria-label="Filters"
+          aria-describedby={activeFilterCount > 0 ? `${drawerId}-active-count` : undefined}
           aria-expanded={isOpen}
           aria-controls={drawerId}
           onClick={() => setIsOpen((open) => !open)}
@@ -317,16 +321,16 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
             strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M4 4h16v3l-6 7v5l-4 2v-7L4 7V4Z" />
           </svg>
-          <span>Filters</span>
+          <span className={styles.triggerLabel}>Filters</span>
           {activeFilterCount > 0 && (
-            <span className={styles.activeBadge} aria-label={`${activeFilterCount} active filters`}>
+            <span id={`${drawerId}-active-count`} className={styles.activeBadge} aria-label={`${activeFilterCount} active filters`}>
               {activeFilterCount}
             </span>
           )}
         </button>
 
         <span className={styles.resultCount} aria-live="polite" aria-atomic="true">
-          <strong>{filteredCount}</strong> / {totalCount} points
+          <strong>{filteredCount}</strong> / {totalCount}<span className={styles.countSuffix}> points</span>
         </span>
 
         {activeChips.length > 0 && (
@@ -349,9 +353,11 @@ const FilterControlsComponent: React.FC<FilterControlsProps> = ({
             onClick={onClearFilters}
             aria-label="Clear all scatter filters"
           >
-            Clear
+            <span className={styles.clearLabel}>Clear</span>
+            <span className={styles.clearGlyph} aria-hidden="true">×</span>
           </button>
         )}
+        <div className={styles.navigationSlot} ref={navigationRef} />
       </div>
 
       {isOpen && (

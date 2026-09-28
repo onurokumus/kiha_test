@@ -1,3 +1,5 @@
+import { useTheme } from '../../hooks/useTheme';
+import { themeSeriesColor } from '../../constants/uplotTheme';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { TimePlotConfig } from '../../types';
@@ -17,6 +19,8 @@ interface Props {
 export function FullTestVariables({ configs, allConfigs,
   showingOverlay, onPrimaryChange, onAdditionalColumnsChange }: Props) {
   const [open, setOpen] = useState(false);
+  const theme = useTheme();
+  const variableColor = (key: string) => themeSeriesColor(fullTestVariableColor(key, allConfigs), theme === 'dark');
   const [position, setPosition] = useState({ left: 0, top: 0, width: 300, maxHeight: 360 });
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -25,9 +29,9 @@ export function FullTestVariables({ configs, allConfigs,
   const extras = configs.slice(1).map(config => config.key);
   const selected = new Set(configs.map(config => config.key));
   const options = allConfigs.map(config => ({ value: config.key, label: config.label,
-    color: fullTestVariableColor(config.key, allConfigs), keywords: [config.key] }));
+    color: variableColor(config.key), keywords: [config.key] }));
   const legendEntries = configs.map(config => ({ label: config.label,
-    color: fullTestVariableColor(config.key, allConfigs) }));
+    color: variableColor(config.key) }));
   const canAdd = configs.length < 6 && allConfigs.some(config => !selected.has(config.key));
   const place = useCallback(() => {
     const bounds = trigger.current?.getBoundingClientRect();
@@ -88,7 +92,7 @@ export function FullTestVariables({ configs, allConfigs,
       data-tooltip-legend={open ? undefined : JSON.stringify(legendEntries)}
       onClick={() => { if (open) close(); else { place(); setOpen(true); } }}>
       <span className={styles.dots} aria-hidden="true">{configs.slice(0, 3).map(config =>
-        <i key={config.key} className={styles.dot} style={{ background: fullTestVariableColor(config.key, allConfigs) }} />)}</span>
+        <i key={config.key} className={styles.dot} style={{ background: variableColor(config.key) }} />)}</span>
       <span className={styles.count}>{configs.length}</span>
       <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" aria-hidden="true"><path d="m2 4 4 4 4-4" /></svg>
     </button>
@@ -114,12 +118,12 @@ export function FullTestVariables({ configs, allConfigs,
       <div className={styles.heading}>{configs.length} variable{configs.length === 1 ? '' : 's'}</div>
       {configs.map((config, index) => <div key={config.key} className={styles.row}>
         <div className={styles.variable}>
-          {!showingOverlay && <i className={styles.line} aria-hidden="true" style={{ borderColor: fullTestVariableColor(config.key, allConfigs) }} />}
+          {!showingOverlay && <i className={styles.line} aria-hidden="true" style={{ borderColor: variableColor(config.key) }} />}
           <span className={styles.name} title={config.label}>{config.label}</span>
         </div>
         {showingOverlay && <div className={styles.samples}>
-          <span className={styles.sample}><i className={`${styles.line} ${styles.original}`} aria-hidden="true" style={{ borderColor: fullTestVariableColor(config.key, allConfigs) }} />Original</span>
-          <span className={styles.sample}><i className={styles.line} aria-hidden="true" style={{ borderColor: fullTestVariableColor(config.key, allConfigs) }} />Filtered</span>
+          <span className={styles.sample}><i className={`${styles.line} ${styles.original}`} aria-hidden="true" style={{ borderColor: variableColor(config.key) }} />Original</span>
+          <span className={styles.sample}><i className={styles.line} aria-hidden="true" style={{ borderColor: variableColor(config.key) }} />Filtered</span>
         </div>}
         {index > 0 && <button type="button" className={styles.remove} aria-label={`Remove ${config.label} from plot`}
           title={`Remove ${config.label}`} onClick={() => { onAdditionalColumnsChange?.(extras.filter(key => key !== config.key)); panel.current?.focus({ preventScroll: true }); }}>×</button>}

@@ -18,9 +18,9 @@ export interface AxisControlsProps {
   yAxis: string;
   onXAxisChange: (axis: string) => void;
   onYAxisChange: (axis: string) => void;
-  mainZoom: [number, number, number, number] | null;
-  onResetZoom: () => void;
   onReloadData: () => void;
+  onExport: () => void;
+  onResetZoom: () => void;
   isLoading: boolean;
   clusteringAvailable: boolean;
   clusteringEnabled: boolean;
@@ -58,9 +58,9 @@ export const AxisControls: React.FC<AxisControlsProps> = ({
   yAxis,
   onXAxisChange,
   onYAxisChange,
-  mainZoom,
-  onResetZoom,
   onReloadData,
+  onExport,
+  onResetZoom,
   isLoading,
   clusteringAvailable,
   clusteringEnabled,
@@ -206,6 +206,13 @@ export const AxisControls: React.FC<AxisControlsProps> = ({
     setMoreOpen(false);
   };
 
+  const runPlotAction = (action: () => void) => {
+    setMoreOpen(false);
+    // The popup unmounts; give the export dialog a stable focus-return target.
+    moreButtonRef.current?.focus({ preventScroll: true });
+    action();
+  };
+
   return (
     <div ref={rootRef} className={styles.root}>
       <div className={styles.commandBar}>
@@ -239,12 +246,6 @@ export const AxisControls: React.FC<AxisControlsProps> = ({
           </div>
         </div>
 
-        {mainZoom && (
-          <button type="button" onClick={onResetZoom} className={styles.resetButton}>
-            Reset zoom
-          </button>
-        )}
-
         <button
           ref={moreButtonRef}
           type="button"
@@ -274,6 +275,15 @@ export const AxisControls: React.FC<AxisControlsProps> = ({
             style={popoverPosition}
             onKeyDown={handlePopoverKeyDown}
           >
+            <button type="button" className={styles.plotAction} aria-label="Export scatter plot"
+              onClick={() => runPlotAction(onExport)}>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9m-3-3 3 3 3-3M4 12v4h12v-4" /></svg>
+              <span>Export CSV / PNG…</span>
+            </button>
+            <button type="button" className={styles.plotAction} onClick={() => runPlotAction(onResetZoom)}>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3H3v4m10-4h4v4M3 13v4h4m10-4v4h-4" /></svg>
+              <span>Reset zoom</span>
+            </button>
             <button
               type="button"
               className={styles.reloadButton}
@@ -375,8 +385,12 @@ export const AxisControls: React.FC<AxisControlsProps> = ({
                 </li>
                 <li>
                   <kbd>Drag</kbd>
-                  <span>Pan the current view</span>
+                  <span>Pan, or draw a rectangle in Box zoom mode</span>
                 </li>
+                <li><kbd>Shift + drag</kbd><span>Zoom to a rectangle</span></li>
+                <li><kbd>Esc</kbd><span>Cancel the current drag</span></li>
+                <li><kbd>↑ ↓ ← →</kbd><span>Pan while the plot is focused</span></li>
+                <li><kbd>+ / −</kbd><span>Zoom; Home fits all points</span></li>
               </ul>
             </div>
           </div>,

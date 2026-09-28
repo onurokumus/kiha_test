@@ -1,6 +1,6 @@
 .panel {
   min-width: 0;
-  border-color: #d4dcea;
+  border-color: var(--border, #d4dcea);
   scroll-margin-top: 60px;
 }
 
@@ -14,7 +14,7 @@
 
 .header h2 {
   margin: 0 0 5px;
-  color: #344666;
+  color: var(--text, #344666);
   font-size: 14px;
   font-weight: 600;
 }
@@ -22,7 +22,7 @@
 .header p {
   max-width: 76ch;
   margin: 0;
-  color: #63748b;
+  color: var(--muted, #63748b);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -53,12 +53,12 @@
   margin: 0 0 8px;
   font-size: 12px;
   font-weight: 600;
-  color: #41516b;
+  color: var(--text-secondary, #41516b);
 }
 
 .variables legend span {
   margin-left: 8px;
-  color: #6d7b90;
+  color: var(--muted, #6d7b90);
   font-weight: 400;
 }
 
@@ -76,7 +76,7 @@
 }
 
 .rowLabel {
-  color: #63748b;
+  color: var(--muted, #63748b);
   font-size: 11px;
 }
 
@@ -97,7 +97,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  color: #66758c;
+  color: var(--muted, #66758c);
   font-size: 11px;
 }
 
@@ -114,9 +114,9 @@
 .methodNote {
   margin: 10px 0 12px;
   padding: 8px 10px;
-  border-left: 2px solid #b9c7de;
-  background: #f7f9fc;
-  color: #54647d;
+  border-left: 2px solid var(--border-strong, #b9c7de);
+  background: var(--surface-raised, #f7f9fc);
+  color: var(--text-secondary, #54647d);
   line-height: 1.5;
   font-size: 11px;
 }
@@ -138,7 +138,7 @@
 
 .checkbox input {
   margin: 0;
-  accent-color: #263685;
+  accent-color: var(--accent-solid, #263685);
 }
 
 .duration input {
@@ -149,7 +149,7 @@
 .help,
 .sampleSummary,
 .resultStatus {
-  color: #66758c;
+  color: var(--muted, #66758c);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -168,8 +168,8 @@
 
 .proposal {
   padding: 12px;
-  background: #f7f8fa;
-  border: 1px solid #dfe4ec;
+  background: var(--surface-raised, #f7f8fa);
+  border: 1px solid var(--border, #dfe4ec);
   border-radius: 3px;
 }
 
@@ -186,7 +186,7 @@
   gap: 4px;
   margin: 8px 0 12px;
   font-size: 11px;
-  color: #66758c;
+  color: var(--muted, #66758c);
 }
 
 .excluded > div {
@@ -197,21 +197,21 @@
 
 .excluded dd {
   margin: 0;
-  color: #344666;
+  color: var(--text, #344666);
   font-variant-numeric: tabular-nums;
 }
 
 .tableScroll {
   max-height: 285px;
   overflow: auto;
-  border: 1px solid #dfe4ec;
+  border: 1px solid var(--border, #dfe4ec);
 }
 
 .table {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  color: #41516b;
+  color: var(--text-secondary, #41516b);
   font-size: 11px;
   text-align: left;
   font-variant-numeric: tabular-nums;
@@ -220,14 +220,14 @@
 .table th,
 .table td {
   padding: 7px 8px;
-  border-bottom: 1px solid #e9edf4;
+  border-bottom: 1px solid var(--border-subtle, #e9edf4);
   vertical-align: top;
 }
 
 .table thead th {
   position: sticky;
   top: 0;
-  background: #f2f5fa;
+  background: var(--surface-raised, #f2f5fa);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -264,25 +264,25 @@
 
 .applyArea {
   margin-top: 12px;
-  border-top: 1px solid #dfe4ec;
+  border-top: 1px solid var(--border, #dfe4ec);
   padding-top: 10px;
 }
 
 .applyArea p {
   margin: 0 0 10px;
-  color: #63748b;
+  color: var(--muted, #63748b);
   font-size: 11px;
   line-height: 1.55;
 }
 
 .applyArea strong {
-  color: #806b20;
+  color: var(--warning, #806b20);
   font-weight: 600;
 }
 
 .error {
   margin: 8px 0;
-  color: #b84343;
+  color: var(--danger, #b84343);
   font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -295,17 +295,17 @@
 .empty {
   padding: 10px;
   margin: 10px 0;
-  border: 1px solid #e0d7bf;
-  color: #806b20;
+  border: 1px solid var(--warning-border, #e0d7bf);
+  color: var(--warning, #806b20);
   font-size: 12px;
   line-height: 1.5;
 }
-.methodDetails { margin: 10px 0; color: #63748b; font-size: 11px; }
+.methodDetails { margin: 10px 0; color: var(--muted, #63748b); font-size: 11px; }
 .methodDetails summary { cursor: pointer; }
 
 .panel button:focus-visible,
 .panel input:focus-visible,
 .tableScroll:focus-visible {
-  outline: 2px solid #405994;
+  outline: 2px solid var(--focus, #405994);
   outline-offset: 2px;
 }

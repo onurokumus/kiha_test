@@ -7,6 +7,7 @@ import { AppTab, Header } from './components/layout/Header';
 import { AxisControls } from './components/controls/AxisControls';
 import { FilterControls } from './components/controls/FilterControls';
 import { SelectedPointsPanel } from './components/controls/SelectedPointsPanel';
+import type { PlotExportActions } from './components/controls/PlotExportControls';
 import { MainScatterPlot } from './components/plots/MainScatterPlot';
 import { PlotStateOverlay } from './components/plots/PlotState';
 import { TimeSeriesGrid } from './components/plots/TimeSeriesGrid';
@@ -277,6 +278,8 @@ function App() {
     hasRestoredSession ? restoredSession.plotDensity : 'nine'
   );
   const [isResizingWorkspace, setIsResizingWorkspace] = useState(false);
+  const scatterExportActions = useRef<PlotExportActions>(null);
+  const [scatterNavigationHost, setScatterNavigationHost] = useState<HTMLDivElement | null>(null);
   const analyzeWorkspaceRef = useRef<HTMLDivElement>(null);
   const {
     uploads,
@@ -1585,7 +1588,7 @@ function App() {
     yAxis,
   ]);
 
-  const { mainZoom, setMainZoom, handleMainWheel, handlePan, resetZoom } = useMainPlotZoom(
+  const { mainZoom, setMainZoom, handleMainWheel, handlePan, resetZoom, zoomBy, setView } = useMainPlotZoom(
     scatterDomainData,
     hasRestoredSession ? restoredSession.mainZoom : null,
     {
@@ -1991,12 +1994,12 @@ function App() {
         position: 'fixed',
         inset: 0,
         zIndex: 2000,
-        background: '#f7f8fae8',
-        border: '3px dashed #263685',
+        background: 'var(--backdrop, #f7f8fae8)',
+        border: '3px dashed var(--accent, #263685)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        color: '#263685',
+        color: 'var(--accent, #263685)',
         fontSize: 20,
         pointerEvents: 'none',
       }}
@@ -2198,9 +2201,9 @@ function App() {
                 yAxis={yAxis}
                 onXAxisChange={handleXAxisChange}
                 onYAxisChange={handleYAxisChange}
-                mainZoom={mainZoom}
-                onResetZoom={resetZoom}
                 onReloadData={reloadData}
+                onExport={() => scatterExportActions.current?.open()}
+                onResetZoom={resetZoom}
                 isLoading={loading}
                 clusteringAvailable={rawScatterData.length >= 2}
                 clusteringEnabled={clusteringEnabled}
@@ -2215,6 +2218,7 @@ function App() {
                 onVerticalErrorBarsChange={setShowVerticalErrorBars}
               />
               <FilterControls
+                navigationRef={setScatterNavigationHost}
                 filterState={filterState}
                 filterOptions={filterOptions}
                 columns={unionColumns}
@@ -2230,6 +2234,8 @@ function App() {
               />
               <div className="scatter-plot-stage">
                 <MainScatterPlot
+                  exportActions={scatterExportActions}
+                  navigationTarget={scatterNavigationHost}
                   scatterData={scatterData}
                   datasheetData={datasheetData}
                   rawDataCount={rawScatterData.length}
@@ -2240,6 +2246,8 @@ function App() {
                   yLabel={yLabel}
                   mainZoom={mainZoom}
                   onResetZoom={resetZoom}
+                  onZoomBy={zoomBy}
+                  onSetView={setView}
                   onToggleTestPoint={handleScatterToggle}
                   onWheel={handleMainWheel}
                   onPan={handlePan}

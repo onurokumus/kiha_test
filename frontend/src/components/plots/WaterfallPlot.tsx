@@ -1,10 +1,11 @@
+import { usePlotTheme } from '../../utils/usePlotTheme';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import type { SelectedTestPoint, TimePlotConfig, WaterfallData, WaterfallExportRequest } from '../../types';
 import { fetchWaterfall, isAbortError } from '../../services/api';
-import { AXIS_STYLE } from '../../constants/uplotTheme';
+import { AXIS_STYLE, plotColor } from '../../constants/uplotTheme';
 import { axisTitlesPlugin } from '../../utils/uplotAxisTitle';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
 import { usePlotViewport, type ViewportProps } from '../../utils/plotViewport';
@@ -161,6 +162,7 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
 } & ViewportProps) {
   const host = useRef<HTMLDivElement>(null);
   const plot = useRef<uPlot | null>(null);
+  usePlotTheme(plot);
   const [box, setBox] = useState({ width: 0, height: 0 });
   const [hover, setHover] = useState('');
   const control = usePlotViewport(plot, { viewport, viewportContext, onViewportChange }, 'manual');
@@ -212,7 +214,7 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
       const gradient = c.createLinearGradient(0, b.top + b.height, 0, b.top);
       stops.forEach((rgb, i) => gradient.addColorStop(i / (stops.length-1), `rgb(${rgb.join(',')})`));
       c.fillStyle = gradient; c.fillRect(x, b.top, w, b.height);
-      c.fillStyle = '#626f83'; c.font = `${9 * ratio}px Manrope`; c.textAlign = 'left';
+      c.fillStyle = plotColor(u, '--muted', '#626f83'); c.font = `${9 * ratio}px Manrope`; c.textAlign = 'left';
       c.textBaseline = 'bottom';
       c.fillText(logColor ? 'log10(U)' : 'U', x, b.top - 2 * ratio);
       c.textBaseline = 'alphabetic';
@@ -365,7 +367,7 @@ export function WaterfallPlot(props: Props) {
       summaryInline
       summary={<ColorRangeControls key={`${cfg.key}:${logColor}`} label={cfg.label}
         scale={scale} manual={colorRange !== null} logColor={logColor} onChange={onColorRangeChange} />}
-      status={traces.some(tr => tr.data.nan_count) ? <><span style={{ color: '#806b20' }}>Missing samples</span>
+      status={traces.some(tr => tr.data.nan_count) ? <><span style={{ color: 'var(--warning, #806b20)' }}>Missing samples</span>
         <PlotDetailsButton label={cfg.label} onClick={() => dialog.current?.showModal()} /></> : undefined}
       actions={<>
         <PlotActionMenu label={cfg.label} targetRef={body} contextKey={key} onReset={reset}

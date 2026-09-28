@@ -5,7 +5,7 @@
   align-items: end;
   gap: 16px;
   min-width: 0;
-  color: #202c42;
+  color: var(--text, #202c42);
   font-family: Manrope, 'Segoe UI', sans-serif;
 }
 
@@ -16,7 +16,7 @@
 }
 
 .field > span {
-  color: #626f83;
+  color: var(--muted, #626f83);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.4;
@@ -28,14 +28,14 @@
   box-sizing: border-box;
   height: 36px;
   min-width: 0;
-  color: #202c42;
-  background: #f8f9fc;
-  border: 1px solid #dfe4ec;
+  color: var(--text, #202c42);
+  background: var(--input-bg, #f8f9fc);
+  border: 1px solid var(--border, #dfe4ec);
   border-radius: 4px;
   outline: 0;
   font: inherit;
   font-size: 13px;
-  color-scheme: light;
+  color-scheme: inherit;
 }
 
 .field input {
@@ -55,7 +55,7 @@
 
 .nyquist {
   grid-column: 1 / -1;
-  color: #626f83;
+  color: var(--muted, #626f83);
   font-size: 12px;
 }
 
@@ -68,37 +68,37 @@
 }
 
 .explanation {
-  color: #626f83;
+  color: var(--muted, #626f83);
 }
 
 .validation {
-  color: #806b20;
+  color: var(--warning, #806b20);
 }
 
 .clearButton {
   grid-column: 1 / -1;
   justify-self: end;
   padding: 0 14px;
-  color: #41516b;
+  color: var(--text-secondary, #41516b);
   cursor: pointer;
 }
 
 .field input:hover,
 .field select:hover,
 .clearButton:hover {
-  background: #f8f9fc;
-  border-color: #dfe4ec;
+  background: var(--hover-bg, #f8f9fc);
+  border-color: var(--border, #dfe4ec);
 }
 
 .field input:focus-visible,
 .field select:focus-visible,
 .clearButton:focus-visible {
-  border-color: #263685;
+  border-color: var(--focus, #263685);
   box-shadow: none;
 }
 
 .field input[aria-invalid='true'] {
-  border-color: #e9b6b0;
+  border-color: var(--danger-border, #e9b6b0);
 }
 .explanation summary { cursor: pointer; }
 .explanation p { margin: 7px 0 0; }

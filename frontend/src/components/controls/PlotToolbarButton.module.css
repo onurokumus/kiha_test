@@ -7,27 +7,27 @@
   width: 32px;
   height: 32px;
   padding: 6px;
-  color: #405994;
-  background: #f2f4f8;
-  border: 1px solid #cbd3e0;
+  color: var(--accent, #405994);
+  background: var(--surface-raised, #f2f4f8);
+  border: 1px solid var(--border, #cbd3e0);
   border-radius: 4px;
   cursor: pointer;
 }
 
 .button:hover:not(:disabled) {
-  color: #202c42;
-  background: #e5edff;
-  border-color: #405994;
+  color: var(--text, #202c42);
+  background: var(--hover-bg, #e5edff);
+  border-color: var(--accent, #405994);
 }
 
 .button[aria-pressed='true'] {
-  color: #405994;
-  background: #f8f9fc;
-  border-color: #c4cfe1;
+  color: var(--accent, #405994);
+  background: var(--selected-bg, #f8f9fc);
+  border-color: var(--border-strong, #c4cfe1);
 }
 
 .button:focus-visible {
-  outline: 2px solid #405994;
+  outline: 2px solid var(--focus, #405994);
   outline-offset: 2px;
 }
 

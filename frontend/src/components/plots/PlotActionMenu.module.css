@@ -1,12 +1,12 @@
-.trigger { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; flex-shrink: 0; border: 1px solid #dfe4ec; border-radius: 5px; color: #626f83; background: transparent; padding: 0; font-family: Manrope, 'Segoe UI', sans-serif; font-size: 18px; line-height: 20px; cursor: pointer;
+.trigger { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; flex-shrink: 0; border: 1px solid var(--border, #dfe4ec); border-radius: 5px; color: var(--muted, #626f83); background: transparent; padding: 0; font-family: Manrope, 'Segoe UI', sans-serif; font-size: 18px; line-height: 20px; cursor: pointer;
   border-color: transparent;
 }
-.trigger:hover { background: #f8f9fc; border-color: #c4cfe1; }
-.trigger:focus-visible, .menu button:focus-visible { outline: 2px solid #263685; outline-offset: 1px; }
-.menu { position: fixed; z-index: 10000; width: 270px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; box-sizing: border-box; padding: 5px; border: 1px solid #dfe4ec; border-radius: 5px; background: #fff; color: #202c42; box-shadow: 0 8px 24px #202c421a; font-size: 12px; }
-.caption { color: #626f83; padding: 6px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid #dfe4ec; margin-bottom: 3px; }
+.trigger:hover { background: var(--hover-bg, #f8f9fc); border-color: var(--border-strong, #c4cfe1); }
+.trigger:focus-visible, .menu button:focus-visible { outline: 2px solid var(--focus, #263685); outline-offset: 1px; }
+.menu { position: fixed; z-index: 10000; width: 270px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow: auto; box-sizing: border-box; padding: 5px; border: 1px solid var(--border, #dfe4ec); border-radius: 5px; background: var(--surface-raised, #fff); color: var(--text, #202c42); box-shadow: 0 8px 24px var(--shadow, #202c421a); font-size: 12px; }
+.caption { color: var(--muted, #626f83); padding: 6px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--border-subtle, #dfe4ec); margin-bottom: 3px; }
 .menu button { display: flex; gap: 5px; width: 100%; border: 0; border-radius: 2px; padding: 7px 5px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.menu button:hover, .menu button:focus { background: #edf1f8; }
-.menu button[aria-disabled='true'] { color: #626f83; cursor: default; }
-.menu small { display: block; margin-top: 3px; font-size: 10px; color: #626f83; }
+.menu button:hover, .menu button:focus { background: var(--hover-bg, #edf1f8); }
+.menu button[aria-disabled='true'] { color: var(--muted, #626f83); cursor: default; }
+.menu small { display: block; margin-top: 3px; font-size: 10px; color: var(--muted, #626f83); }
 .check { width: 14px; flex: 0 0 14px; }

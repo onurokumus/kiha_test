@@ -1,3 +1,5 @@
+import { usePlotTheme } from '../../utils/usePlotTheme';
+import { plotSeriesColor } from '../../constants/uplotTheme';
 import { usePlotViewport, ViewportProps } from '../../utils/plotViewport';
 import { loadedAnalysis } from '../../utils/analysisMetadata';
 import React, { useEffect, useRef, useState } from 'react';
@@ -87,6 +89,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   const detailsDialog = useRef<HTMLDialogElement>(null);
   const detailsOpener = useRef<HTMLElement | null>(null);
   const plotRef = useRef<uPlot | null>(null);
+  usePlotTheme(plotRef);
   const viewportControl = usePlotViewport(plotRef, {viewport, viewportContext, onViewportChange}, true);
   const structKeyRef = useRef('');
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -189,8 +192,8 @@ export const XYPlot: React.FC<XYPlotProps> = ({
         (tr) =>
           ({
             label: tr.label,
-            stroke: tr.color,
-            fill: tr.color + '80',
+            stroke: (plot: uPlot) => plotSeriesColor(plot, tr.color),
+            fill: (plot: uPlot) => plotSeriesColor(plot, tr.color + '80'),
             width: 1,
             paths: pointsPaths,
             facets: [
@@ -223,7 +226,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
     ] as unknown as uPlot.AlignedData;
 
     const structKey = [
-      JSON.stringify(series.map((s) => [s.label, s.stroke, s.fill])), box.w, box.h, isExpanded, xCol, cfg.label,
+      JSON.stringify(traces.map(trace => [trace.label, trace.color])), box.w, box.h, isExpanded, xCol, cfg.label,
     ].join('|');
     viewportControl.sync(() => syncPlot({
       plotRef,
@@ -372,7 +375,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
               gap: 4,
             }}
           >
-            <span aria-hidden="true" style={{ fontSize: 10, color: '#626f83', flexShrink: 0 }}>X</span>
+            <span aria-hidden="true" style={{ fontSize: 10, color: 'var(--muted, #626f83)', flexShrink: 0 }}>X</span>
             <SearchableSelect
               value={xCol}
               onChange={(nextKey) => onXColChange?.(nextKey)}
@@ -389,7 +392,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
               appearance="title"
               size="compact"
             />
-            <span aria-hidden="true" style={{ fontSize: 10, color: '#626f83', flexShrink: 0 }}>Y</span>
+            <span aria-hidden="true" style={{ fontSize: 10, color: 'var(--muted, #626f83)', flexShrink: 0 }}>Y</span>
             <SearchableSelect
               value={cfg.key}
               onChange={(nextKey) => onConfigChange?.(nextKey)}
@@ -409,7 +412,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
           </div>
         ) : undefined}
         expandLabel={`${cfg.label} versus ${xCol}`}
-        summary={missingCount > 0 ? <><span style={{ color: '#806b20' }}>
+        summary={missingCount > 0 ? <><span style={{ color: 'var(--warning, #806b20)' }}>
           {missingCount.toLocaleString()} rows omitted
         </span><PlotDetailsButton label={label} onClick={openDetails} /></> : undefined}
 

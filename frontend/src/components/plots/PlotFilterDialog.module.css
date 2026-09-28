@@ -5,15 +5,15 @@
   overflow: auto;
   margin: auto;
   padding: 22px;
-  color: #202c42;
-  background: #ffffff;
-  border: 1px solid #c4cfe1;
+  color: var(--text, #202c42);
+  background: var(--surface-raised, #ffffff);
+  border: 1px solid var(--border-strong, #c4cfe1);
   border-radius: 6px;
-  box-shadow: 0 8px 24px #202c421a;
+  box-shadow: 0 8px 24px var(--shadow, #202c421a);
   font: 13px/1.5 Manrope, sans-serif;
 }
 
-.dialog::backdrop { background: #202c4266; }
+.dialog::backdrop { background: var(--backdrop, #202c4266); }
 .heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .heading strong { overflow-wrap: anywhere; font-size: 16px; font-weight: 600; }
 .heading button {
@@ -21,14 +21,14 @@
   width: 30px;
   height: 30px;
   padding: 0;
-  border: 1px solid #cbd3e0;
+  border: 1px solid var(--border, #cbd3e0);
   border-radius: 4px;
-  background: #f2f4f8;
-  color: #202c42;
+  background: var(--surface-raised, #f2f4f8);
+  color: var(--text, #202c42);
   font-size: 20px;
   cursor: pointer;
 }
-.heading button:hover { border-color: #405994; }
-.heading button:focus-visible { outline: 2px solid #405994; outline-offset: 2px; }
-.dialog p { margin: 10px 0 20px; color: #626f83; }
+.heading button:hover { border-color: var(--accent, #405994); }
+.heading button:focus-visible { outline: 2px solid var(--focus, #405994); outline-offset: 2px; }
+.dialog p { margin: 10px 0 20px; color: var(--muted, #626f83); }
 .fields { min-width: 0; }

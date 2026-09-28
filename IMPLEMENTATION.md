@@ -1,5 +1,142 @@
 # Implementation handoff
 
+## Dark-mode and scatter Git checkpoint (2026-09-28)
+
+This checkpoint includes the header theme switch, themed controls/plots and light
+PNG exports, adaptive scatter grid/navigation, the combined filter/control row,
+More-menu export/reset actions, and the pointer-focus/drag-hint follow-ups.
+Target: origin/codex/ptt-ui-rework-2026-09-28. The separate Uploads inline-rename
+feature remains local and is excluded from this checkpoint. Verification below
+applies to these changes; no deployment is included.
+
+## Scatter grid and navigation (2026-09-28)
+
+Explicit user request takes priority over independent Phase 11b. Target remains
+D:/okumus/work_v2/kiha_test, codex/ptt-ui-rework-2026-09-28. Changes are local,
+alongside the completed dark mode and independent Uploads rename work.
+
+Implemented a solid adaptive engineering grid with major/minor lines and a
+stronger zero reference, separate light/dark palette tokens, round tick spacing,
+and step-aware precision. Deep-zoom labels stay distinct; X endpoint labels align
+inward and the Y gutter separates values from the axis title. Explicit shared
+Recharts axis sizes fix the old mismatch between the rendered data rectangle
+and wheel/pan/clustering calculations.
+
+The filter button/count and fixed Pan, Box zoom, +/-, fit/reset controls share
+one compact row. Export and reset actions now live in the existing More popup;
+separate Export/ellipsis buttons are removed. Right-click and Shift+F10 preserve
+the same plot actions. Navigation is portaled into the filter summary row,
+keeping drag state local and the filter drawer outside the clipped canvas.
+More closes before export opens and receives focus when the dialog closes.
+Controls stay aligned with active filters and at narrow desktop widths.
+Removed the visible Drag to pan/Drag to zoom hint at user request; tooltips
+and accessible keyboard guidance remain. Build/lint pass for this text removal. Default drag pans; Shift-drag
+or Box zoom draws a rectangle; middle-drag pans in either mode. Scroll zooms
+smoothly at the pointer; opposite wheel input reverses without drift. Ctrl/Meta
+wheel remains browser zoom. Focused canvas shortcuts: arrows pan, +/- zoom,
+Home fits, P/Z choose mode, Escape cancels. Background double-click also fits.
+
+Pointer capture begins after a real drag; release flushes the final frame.
+Escape, blur, resize and lost capture cancel cleanly. Point and cluster clicks
+remain selectable, with fresh callbacks after filtering coincident points.
+Portal/interactive targets cannot start a canvas gesture. Pointer focus is
+explicitly marked so a drag cannot inherit the keyboard-only canvas outline;
+Tab and subsequent keyboard actions restore visible focus. Saved views and
+selections keep their existing session model. PNG exports normalize custom grid
+strokes and axes to the light palette; CSV retains the same source rows.
+
+Entry points: MainScatterPlot/ScatterGrid and MainScatterPlot.module.css;
+useScatterNavigation/useMainPlotZoom; scatterGeometry, scatterTicks and
+scatterViewport helpers; AxisControls/App wiring; scatterExport light snapshot.
+
+Verification:
+- Frontend build/lint and all 77 helper tests pass (17 new numeric cases).
+- Existing scatter CSV/PNG exports and point-menu regression pass, including
+  actual 125%/150% browser zoom for the menu, with no API writes/browser errors.
+- Independent browser review passes 11 interaction groups: portal multi-select,
+  final-frame pan, outside capture, cancel/blur/lost capture/resize, point-start
+  drags, box zoom and keyboard. Filtered coincident-point regression also passes.
+- Light/dark screenshots and 1100px deep-zoom axis labels visually inspected.
+- python -X utf8 scripts/verify_scatter_navigation.py: all 24 browser groups
+  pass across both themes, 960/1100px and actual 125%/150% browser zoom. Tests
+  measure rendered axes, pointer anchoring/inverse wheel, fast final-frame pan,
+  capture outside the plot, all box directions, cancel, keyboard and point clicks.
+- python -X utf8 scripts/verify_plot_theme.py: seven plot groups and 14 real PNG
+  downloads pass again before the final tick-spacing refinement. Light/dark exports are byte-identical,
+  including the custom scatter grid after a real pan with a selected point.
+  View, selection and dark rendering survive success and forced capture failure.
+  A focused PNG pair after the final refinement also passes byte parity and
+  saved-state preservation. Narrow plots now refine an overly coarse step before
+  falling back to endpoint labels; the 150% view retains round 25/50/75 ticks.
+- No application errors/API writes. Reports and screenshots: %TEMP%/
+  ptt-scatter-navigation, ptt-scatter-readonly-audit, ptt-scatter-exports and
+  ptt-plot-theme. Final 150% browser-zoom screenshot visually inspected.
+
+Follow-up verification for the compact toolbar and mouse-focus repair:
+- Frontend build/lint pass. Independent focus QA passes 14 cases across themes.
+- New scripts/verify_scatter_toolbar.py passes 19 groups covering one row with
+  active filters/Clear, More export/reset, real CSV/PNG downloads, focus return,
+  context menus, pointer-vs-keyboard outlines, 960/1100px and actual 125%/150% zoom.
+- Updated export/navigation helpers use More as the visible export entry point.
+  All 24 navigation groups and 17 normal/browser-zoom export downloads pass.
+  The shared plot-theme suite passes all seven groups and 14 PNG downloads,
+  including More focus return and hidden context-menu focus fallback.
+- More popup and active-filter 150% screenshot visually inspected; reports in
+  %TEMP%/ptt-scatter-toolbar and ptt-scatter-focus. No dataset writes.
+
+Preview: http://127.0.0.1:8087/ptt/, index-DRhFlxft.js. No commit/push/deployment.
+No remaining work for this request. Next independent backlog milestone: Phase 11b.
+
+## Dark mode switch (2026-09-28)
+
+Completed the explicit user request ahead of Phase 11b, on
+codex/ptt-ui-rework-2026-09-28 in D:/okumus/work_v2/kiha_test. The compact
+sun/moon header switch persists ptt.theme.v1 locally. First paint uses the saved
+choice or system theme; explicit choice wins over later OS changes and syncs
+between tabs. Blocked storage still allows switching within the current tab.
+Theme remains independent of analysis sessions and server defaults.
+
+theme.css defines dark semantic tokens; existing light values remain fallbacks
+throughout all sections, controls, popovers and dialogs. Header wrapping accounts
+for the added switch. Its accessible switch state communicates on/off; a stable
+tooltip avoids the feedback provider restoring stale dynamic title text. The
+existing logo already supports dark backgrounds. Native controls, placeholders,
+focus, status colors and translucent drag/range overlays follow the palette.
+
+usePlotTheme redraws existing uPlot instances without rebuilding charts,
+refetching data, resetting zoom or changing saved selections/colors. Canvas axes
+resolve live tokens, while dark series colors receive a presentation-only hue
+preserving brightness lift. SVG scatter and variable legends also adapt.
+PNG exports retain the original light palette: per-plot synchronous light
+capture restores the dark canvas in finally; scatter normalizes its detached
+SVG including nested text/paths. Data, scientific settings and provenance are
+unchanged. Files: hooks/useTheme.ts, public/theme.js, theme.css, Header/main;
+constants/uplotTheme.ts, utils/usePlotTheme.ts, plotPngExport/scatterExport;
+section/control/plot styles retain their existing layout and light fallbacks.
+
+Verification:
+- Frontend build/lint and all 60 helper tests pass; existing bundle advisory.
+- python -X utf8 scripts/verify_dark_mode.py: 11 browser groups pass, covering
+  six sections, pickers/Options/filters/session/export/confirmation dialogs,
+  exact saved selection/zoom preservation, reload, OS changes, cross-tab sync,
+  blocked storage and dark startup with the app bundle/API blocked.
+  287 enabled UI text/placeholder samples have minimum contrast 4.823:1.
+  Header has no overflow/overlap at 960/1100/1241/1300/1301px or actual 150% zoom.
+  Its --tooltip-only follow-up verifies mouse, Space, Enter, Escape and focus.
+- python -X utf8 scripts/verify_plot_theme.py: six Analyze modes plus Split pass.
+  Fourteen actual PNG downloads are byte-identical between light/dark themes,
+  including scatter datasheet and range overlays. Canvas identity, saved ranges
+  and requests remain unchanged; successful and forced-failed captures restore
+  the dark plot. No application errors/API writes in either browser suite.
+- Independent review corrected contrast, opaque Split overlays and SVG export
+  descendant colors. Dark pages/charts and exported PNGs visually inspected.
+  Evidence: %TEMP%/ptt-dark-mode and %TEMP%/ptt-plot-theme. Existing browser-only
+  Python/Playwright runtime used; no native scientific libraries or data writes.
+
+Built preview: http://127.0.0.1:8087/ptt/, index--iILnIwo.js. Changes remain
+local/uncommitted alongside the independent Uploads rename work; no push or
+deployment. No remaining dark-mode work. Next independent milestone: Phase 11b.
+
 ## Scatter-filter fixes integrated into Codex rework (2026-09-28)
 
 Corrects the earlier branch split: filter behavior was committed separately as

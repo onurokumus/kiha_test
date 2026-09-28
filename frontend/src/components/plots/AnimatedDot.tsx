@@ -1,4 +1,6 @@
 import React, { useState, useEffect, memo } from 'react';
+import { useTheme } from '../../hooks/useTheme';
+import { themeSeriesColor } from '../../constants/uplotTheme';
 
 interface AnimatedDotProps {
   cx: number;
@@ -20,10 +22,13 @@ const AnimatedDotComponent: React.FC<AnimatedDotProps> = ({
   isHighlighted = false,
   onPointHover
 }) => {
+  const theme = useTheme();
   const [displayColor, setDisplayColor] = useState(payload.color);
   const [displayR, setDisplayR] = useState(payload.isSelected ? 8 : 6);
   const [displayStroke, setDisplayStroke] = useState(payload.isSelected ? payload.color : 'transparent');
   const [isHovered, setIsHovered] = useState(false);
+  const color = themeSeriesColor(displayColor, theme === 'dark');
+  const stroke = themeSeriesColor(displayStroke, theme === 'dark');
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -51,7 +56,7 @@ const AnimatedDotComponent: React.FC<AnimatedDotProps> = ({
             cy={cy}
             r={glowRadius}
             fill="none"
-            stroke={displayColor}
+            stroke={color}
             strokeWidth={1}
             opacity={0.3}
             pointerEvents="none"
@@ -77,7 +82,7 @@ const AnimatedDotComponent: React.FC<AnimatedDotProps> = ({
             cy={cy}
             r={pulseRadius}
             fill="none"
-            stroke={displayColor}
+            stroke={color}
             strokeWidth={1.5}
             opacity={0.5}
             pointerEvents="none"
@@ -93,8 +98,10 @@ const AnimatedDotComponent: React.FC<AnimatedDotProps> = ({
         cx={cx}
         cy={cy}
         r={displayR}
-        fill={displayColor}
-        stroke={displayStroke}
+        fill={color}
+        stroke={stroke}
+        data-export-fill={displayColor}
+        data-export-stroke={displayStroke}
         strokeWidth={2}
         style={{
           cursor: 'pointer',
@@ -142,7 +149,11 @@ const arePropsEqual = (prev: AnimatedDotProps, next: AnimatedDotProps) => {
     prev.cy === next.cy &&
     prev.payload.color === next.payload.color &&
     prev.payload.isSelected === next.payload.isSelected &&
-    prev.isHighlighted === next.isHighlighted
+    prev.isHighlighted === next.isHighlighted &&
+    // Coincident points can reuse a Recharts symbol after filtering. Keep
+    // handlers current even when the replacement has identical geometry.
+    prev.onToggle === next.onToggle &&
+    prev.onPointHover === next.onPointHover
   );
 };
 

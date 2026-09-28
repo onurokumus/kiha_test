@@ -4,7 +4,11 @@ import App from './App';
 import { fetchDefaultSettings, isAbortError } from './services/api';
 import { hasPersonalSettings, setPageDefaultSettings } from './constants/settings';
 import { FeedbackProvider } from './components/feedback/FeedbackProvider';
+import { initializeTheme } from './hooks/useTheme';
 import './App.css';
+import './theme.css';
+
+initializeTheme();
 
 async function bootstrap() {
   // Personal settings are the strongest preference. Otherwise fetch the

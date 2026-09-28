@@ -1,10 +1,12 @@
-import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { useTheme } from '../../hooks/useTheme';
+import { createPortal } from 'react-dom';
+import { themeSeriesColor } from '../../constants/uplotTheme';
+import React, { useState, useRef, useCallback, useMemo, useEffect, useId } from 'react';
 import {
   ScatterChart,
   Scatter,
   XAxis,
   YAxis,
-  CartesianGrid,
   Tooltip,
   ResponsiveContainer,
   ZAxis,
@@ -13,8 +15,11 @@ import {
 import { DatasheetDataPoint, ScatterDataPoint, TestPoint } from '../../types';
 import { AnimatedDot } from './AnimatedDot';
 import { ClusterDot } from './ClusterDot';
-import { formatValue } from '../../utils/formatters';
-import { SCATTER_MARGIN, PLOT_INSET_X, PLOT_INSET_Y } from '../../constants/scatterGeometry';
+import { SCATTER_MARGIN, PLOT_INSET, PLOT_INSET_X, PLOT_INSET_Y, X_AXIS_HEIGHT, Y_AXIS_WIDTH } from '../../constants/scatterGeometry';
+import { useScatterNavigation } from '../../hooks/useScatterNavigation';
+import { createScatterTicks } from '../../utils/scatterTicks';
+import { ScatterGrid } from './ScatterGrid';
+import styles from './MainScatterPlot.module.css';
 import { PointSelectionMenu } from './PointSelectionMenu';
 import { CustomScatterTooltip } from './CustomScatterTooltip';
 import { ScatterRangeBars } from './ScatterRangeBars';
@@ -25,6 +30,8 @@ import { PlotExportControls, type PlotExportActions } from '../controls/PlotExpo
 import { downloadScatterCsv, downloadScatterPng } from '../../utils/scatterExport';
 
 interface MainScatterPlotProps {
+  exportActions: React.RefObject<PlotExportActions>;
+  navigationTarget: HTMLDivElement | null;
   scatterData: ScatterDataPoint[];
   datasheetData: DatasheetDataPoint[];
   rawDataCount: number;
@@ -35,6 +42,8 @@ interface MainScatterPlotProps {
   yVariable: string;
   mainZoom: [number, number, number, number] | null;
   onResetZoom: () => void;
+  onZoomBy: (factor: number) => void;
+  onSetView: (view: [number, number, number, number]) => void;
   onToggleTestPoint: (point: ScatterDataPoint) => void;
   onWheel: (e: React.WheelEvent<HTMLDivElement>) => void;
   onPan: (deltaX: number, deltaY: number, currentBounds?: { xMin: number; xMax: number; yMin: number; yMax: number }) => void;
@@ -49,6 +58,8 @@ interface MenuState {
 }
 
 export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
+  exportActions,
+  navigationTarget,
   scatterData,
   datasheetData,
   rawDataCount,
@@ -59,6 +70,8 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   yVariable,
   mainZoom,
   onResetZoom,
+  onZoomBy,
+  onSetView,
   onToggleTestPoint,
   onWheel,
   onPan,
@@ -70,7 +83,8 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   const [highlightedPointId, setHighlightedPointId] = useState<string | null>(null);
   const [chartDimensions, setChartDimensions] = useState({ width: 0, height: 0 });
   const chartRef = useRef<HTMLDivElement>(null);
-  const exportActions = useRef<PlotExportActions>(null);
+  const theme = useTheme();
+  const helpId = useId();
   const pointPositions = useRef<Map<string, { cx: number; cy: number }>>(new Map());
   const hoverTargetRef = useRef<Element | null>(null);
   const [hasPointHover, setHasPointHover] = useState(false);
@@ -141,34 +155,6 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scatterData]);
 
-  // Pan state
-  const [isPanning, setIsPanning] = useState(false);
-  const [suppressTooltip, setSuppressTooltip] = useState(false);
-  const panStart = useRef<{ x: number; y: number; clientX: number; clientY: number } | null>(null);
-  const hasDragged = useRef(false);
-  const rafIdRef = useRef<number | null>(null);
-  const latestMouseEvent = useRef<{ clientX: number; clientY: number } | null>(null);
-  const boundsRef = useRef<{
-    initialXMin: number;
-    initialXMax: number;
-    initialYMin: number;
-    initialYMax: number;
-    currentXMin: number;
-    currentXMax: number;
-    currentYMin: number;
-    currentYMax: number;
-  }>({
-    initialXMin: 0,
-    initialXMax: 1,
-    initialYMin: 0,
-    initialYMax: 1,
-    currentXMin: 0,
-    currentXMax: 1,
-    currentYMin: 0,
-    currentYMax: 1,
-  });
-  const mainZoomRef = useRef(mainZoom);
-
   /** The reference line participates in the automatic chart domain but never
    * in clustering, filtering, selection, or point-count calculations. */
   const domainData = useMemo(
@@ -188,10 +174,10 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
         initialXMax: 1,
         initialYMin: 0,
         initialYMax: 1,
-        currentXMin: 0,
-        currentXMax: 1,
-        currentYMin: 0,
-        currentYMax: 1,
+        currentXMin: mainZoom?.[0] ?? 0,
+        currentXMax: mainZoom?.[1] ?? 1,
+        currentYMin: mainZoom?.[2] ?? 0,
+        currentYMax: mainZoom?.[3] ?? 1,
       };
     }
 
@@ -215,14 +201,16 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
     };
   }, [domainData, mainZoom, showHorizontalErrorBars, showVerticalErrorBars]);
 
-  // Update refs when values change
-  useEffect(() => {
-    boundsRef.current = bounds;
-  }, [bounds]);
-
-  useEffect(() => {
-    mainZoomRef.current = mainZoom;
-  }, [mainZoom]);
+  const navigation = useScatterNavigation({ chartRef,
+    view: [bounds.currentXMin, bounds.currentXMax, bounds.currentYMin, bounds.currentYMax],
+    mainZoom, contextKey: JSON.stringify([xVariable, yVariable]), onSetView, onZoomBy, onPan, onResetZoom,
+    onStart: () => { dismissHover(); setMenuState(null); setHighlightedPointId(null); },
+  });
+  const isPanning = navigation.isDragging;
+  const xTicks = useMemo(() => createScatterTicks(bounds.currentXMin, bounds.currentXMax,
+    chartDimensions.width - PLOT_INSET_X, 'x'), [bounds.currentXMin, bounds.currentXMax, chartDimensions.width]);
+  const yTicks = useMemo(() => createScatterTicks(bounds.currentYMin, bounds.currentYMax,
+    chartDimensions.height - PLOT_INSET_Y, 'y'), [bounds.currentYMin, bounds.currentYMax, chartDimensions.height]);
 
   const enableClustering = clusteringEnabled && shouldEnableClustering(rawDataCount);
 
@@ -425,158 +413,10 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
     if (restoreFocus) chartRef.current?.focus({ preventScroll: true });
   }, []);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    // Only start panning on left click
-    // AnimatedDot calls stopPropagation, so clicks on points won't reach here
-    if (e.button === 0) {
-      const rect = chartRef.current?.getBoundingClientRect();
-      if (!rect) return;
-
-      // If menu is open, check if the click is on the menu
-      if (menuState) {
-        const target = e.target as HTMLElement;
-        const isMenuClick = target.closest('[data-menu-container]');
-
-        if (isMenuClick) {
-          // Click is on menu, don't interfere
-          return;
-        }
-
-        // Check if mouse is inside the plot area
-        const isInsidePlot =
-          e.clientX >= rect.left &&
-          e.clientX <= rect.right &&
-          e.clientY >= rect.top &&
-          e.clientY <= rect.bottom;
-
-        if (!isInsidePlot) {
-          // Mouse is outside plot, don't start panning
-          return;
-        }
-
-        // Mouse is inside plot, close menu and allow panning
-        setMenuState(null);
-        setHighlightedPointId(null);
-      }
-
-      setIsPanning(true);
-      hasDragged.current = false;
-      panStart.current = {
-        x: e.clientX,
-        y: e.clientY,
-        clientX: e.clientX,
-        clientY: e.clientY,
-      };
-
-      // Prevent text selection while dragging
-      e.preventDefault();
-    }
-  }, [menuState]);
-
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!isPanning || !panStart.current || !chartRef.current) return;
-
-      // Store latest mouse coordinates
-      latestMouseEvent.current = { clientX: e.clientX, clientY: e.clientY };
-
-      // If moved more than 3 pixels, consider it a drag
-      const deltaPixelsX = e.clientX - panStart.current.clientX;
-      const deltaPixelsY = e.clientY - panStart.current.clientY;
-
-      if (Math.abs(deltaPixelsX) > 3 || Math.abs(deltaPixelsY) > 3) {
-        hasDragged.current = true;
-      }
-
-      if (!hasDragged.current) return;
-
-      // Suppress tooltip when dragging starts
-      if (!suppressTooltip) {
-        setSuppressTooltip(true);
-      }
-
-      // Throttle pan updates using requestAnimationFrame
-      if (rafIdRef.current !== null) {
-        return; // Skip this update, previous one is still pending
-      }
-
-      rafIdRef.current = requestAnimationFrame(() => {
-        rafIdRef.current = null;
-
-        if (!chartRef.current || !panStart.current || !latestMouseEvent.current) return;
-
-        const rect = chartRef.current.getBoundingClientRect();
-        const chartWidth = rect.width - 70; // Account for margins
-        const chartHeight = rect.height - 50;
-
-        // Use latest mouse coordinates for smooth panning
-        const deltaPixelsX = latestMouseEvent.current.clientX - panStart.current.clientX;
-        const deltaPixelsY = latestMouseEvent.current.clientY - panStart.current.clientY;
-
-        // Use refs to avoid stale closure issues
-        const currentBounds = boundsRef.current;
-        const currentZoom = mainZoomRef.current;
-
-        // Calculate data space delta based on current zoom
-        const curXMin = currentZoom ? currentZoom[0] : currentBounds.currentXMin;
-        const curXMax = currentZoom ? currentZoom[1] : currentBounds.currentXMax;
-        const curYMin = currentZoom ? currentZoom[2] : currentBounds.currentYMin;
-        const curYMax = currentZoom ? currentZoom[3] : currentBounds.currentYMax;
-
-        const xRange = curXMax - curXMin;
-        const yRange = curYMax - curYMin;
-
-        const deltaX = (deltaPixelsX / chartWidth) * xRange;
-        const deltaY = (-deltaPixelsY / chartHeight) * yRange;
-
-        // Pass current bounds to handlePan for consistent first-pan behavior
-        onPan(deltaX, deltaY, {
-          xMin: curXMin,
-          xMax: curXMax,
-          yMin: curYMin,
-          yMax: curYMax,
-        });
-
-        // Update pan start for continuous panning
-        panStart.current.clientX = latestMouseEvent.current.clientX;
-        panStart.current.clientY = latestMouseEvent.current.clientY;
-      });
-    },
-    [isPanning, onPan, suppressTooltip]
-  );
-
-  const handleMouseUp = useCallback(() => {
-    setIsPanning(false);
-    panStart.current = null;
-    hasDragged.current = false;
-    // Cancel any pending animation frame
-    if (rafIdRef.current !== null) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
-  }, []);
-
   const handleMouseLeave = useCallback(() => {
     hoverTargetRef.current = null;
     setHasPointHover(false);
-    setIsPanning(false);
-    panStart.current = null;
-    hasDragged.current = false;
-    // Clear tooltip suppression when leaving the chart
-    setSuppressTooltip(false);
-    // Cancel any pending animation frame
-    if (rafIdRef.current !== null) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
   }, []);
-
-  const handlePointHover = useCallback(() => {
-    // Clear tooltip suppression when hovering over a point
-    if (suppressTooltip) {
-      setSuppressTooltip(false);
-    }
-  }, [suppressTooltip]);
 
   // Memoize the shape renderer to prevent recreating on every render
   const shapeRenderer = useCallback((props: unknown) => {
@@ -624,8 +464,10 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
           cx={shapeProps.cx}
           cy={shapeProps.cy}
           r={r}
-          fill={shapeProps.payload.color}
-          stroke={shapeProps.payload.isSelected ? shapeProps.payload.color : 'transparent'}
+          fill={themeSeriesColor(shapeProps.payload.color, theme === 'dark')}
+          data-export-fill={shapeProps.payload.color}
+          data-export-stroke={shapeProps.payload.isSelected ? shapeProps.payload.color : 'transparent'}
+          stroke={shapeProps.payload.isSelected ? themeSeriesColor(shapeProps.payload.color, theme === 'dark') : 'transparent'}
           strokeWidth={2}
           style={{ cursor: 'pointer' }}
           onMouseDown={(e) => {
@@ -654,10 +496,9 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
           )
         }
         isHighlighted={highlightedPointId === shapeProps.payload.id}
-        onPointHover={handlePointHover}
       />
     );
-  }, [handlePointClick, highlightedPointId, handlePointHover, isPanning]);
+  }, [handlePointClick, highlightedPointId, isPanning, theme]);
 
   const datasheetShapeRenderer = useCallback((props: unknown) => {
     const shapeProps = props as { cx: number; cy: number };
@@ -667,40 +508,18 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
         cx={shapeProps.cx}
         cy={shapeProps.cy}
         r={3.5}
-        fill="#f7f8fa"
-        stroke="#806b20"
+        fill="var(--surface, #f7f8fa)"
+        stroke="var(--warning, #806b20)"
         strokeWidth={1.75}
-        onMouseEnter={handlePointHover}
       />
     );
-  }, [handlePointHover]);
+  }, []);
 
-  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
-    dismissHover();
-    if (menuState && chartRef.current) {
-      // Check if mouse position is within the plot div bounds
-      const rect = chartRef.current.getBoundingClientRect();
-      const isInsidePlot =
-        e.clientX >= rect.left &&
-        e.clientX <= rect.right &&
-        e.clientY >= rect.top &&
-        e.clientY <= rect.bottom;
-
-      if (isInsidePlot) {
-        // Mouse is over the plot area, close menu and zoom
-        setMenuState(null);
-        setHighlightedPointId(null);
-        onWheel(e);
-      } else {
-        // Mouse is outside the plot area, just close menu without zooming
-        setMenuState(null);
-        setHighlightedPointId(null);
-      }
-    } else {
-      // No menu open, zoom normally
-      onWheel(e);
-    }
-  }, [menuState, onWheel, dismissHover]);
+  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    if (navigation.isDragging) return;
+    dismissHover(); setMenuState(null); setHighlightedPointId(null);
+    onWheel(event);
+  }, [navigation.isDragging, onWheel, dismissHover]);
 
   const exportReason = exportDisabledReason ||
     (scatterData.length + datasheetData.length === 0 ? 'No points to export. Adjust the axes or filters.' : null);
@@ -718,23 +537,32 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   };
 
   return (
-    <div
-      ref={chartRef}
-      tabIndex={0} aria-label="Plot canvas for test-point overview"
-      style={{ flex: 1, minHeight: 0, position: 'relative', cursor: isPanning ? 'grabbing' : 'default' }}
-      onWheel={handleWheel}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseLeave}
-      onPointerMoveCapture={trackPointHover}
-      onPointerCancel={handleMouseLeave}
-      onMouseDownCapture={dismissHover}
-    >
-      <div style={{ position: 'absolute', right: 8, top: 2, zIndex: 2, display: 'flex', alignItems: 'center', gap: 6 }}
-        onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+    <div className={styles.root}>
+      {navigationTarget && createPortal(<div className={styles.toolbar} role="group" aria-label="Scatter navigation">
+        <div className={styles.modeGroup} role="group" aria-label="Drag behavior">
+          <button type="button" className={styles.tool} aria-label="Pan scatter plot" aria-pressed={navigation.mode === 'pan'}
+            title="Pan (P). Drag to move the view; click a point to select it." onClick={() => navigation.setMode('pan')}>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 10V4a1.3 1.3 0 0 1 2.6 0v5-6a1.3 1.3 0 0 1 2.6 0v6-4a1.3 1.3 0 0 1 2.6 0v5-2a1.3 1.3 0 0 1 2.6 0v4c0 4-2.3 6-5.5 6-2.2 0-3.4-1-4.6-2.6L4 11.5c-1-1.3.5-2.8 1.6-1.8L7 11" /></svg>
+          </button>
+          <button type="button" className={styles.tool} aria-label="Box zoom scatter plot" aria-pressed={navigation.mode === 'zoom'}
+            title="Box zoom (Z). Drag a rectangle; Shift+drag also zooms in Pan mode. Escape cancels." onClick={() => navigation.setMode('zoom')}>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path strokeDasharray="2 2" d="M3 9V3h11v4M3 12v3h4"/><circle cx="11.5" cy="11.5" r="4"/><path d="m14.5 14.5 3 3"/></svg>
+          </button>
+        </div>
+        <span className={styles.divider} />
+        <button type="button" className={styles.tool} aria-label="Zoom in scatter plot" title="Zoom in (+)" onClick={() => onZoomBy(0.8)}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12M10 4v12"/></svg>
+        </button>
+        <button type="button" className={styles.tool} aria-label="Zoom out scatter plot" title="Zoom out (−)" onClick={() => onZoomBy(1.25)}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12"/></svg>
+        </button>
+        <button type="button" className={styles.tool} aria-label="Reset zoom" title="Fit all points (Home). Double-click the background also resets the view."
+          onClick={onResetZoom} data-zoomed={!!mainZoom}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3H3v4m10-4h4v4M3 13v4h4m10-4v4h-4"/><path d="M7 7h6v6H7z"/></svg>
+        </button>
+      </div>, navigationTarget)}
         <PlotExportControls label="scatter" contextKey={exportContext}
-          actionsRef={exportActions} supportsMetadata={false}
+          actionsRef={exportActions} supportsMetadata={false} hideTrigger
           scope={`${xLabel} / ${yLabel}`}
           defaultData="original" originalReason={exportReason} filteredReason={null} pngReason={exportReason}
           csvLabel="Test-point means"
@@ -742,45 +570,75 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
           pngDescription="Current scatter view with axes, point colors, overlap groups, enabled range bars and the datasheet line. Saves a clean PNG at twice the displayed size."
           onCsv={exportCsv} onPng={exportPng} />
         <PlotActionMenu label="test-point overview" targetRef={chartRef} exportActions={exportActions}
-          contextKey={exportContext} onReset={onResetZoom} />
-      </div>
+          contextKey={exportContext} onReset={onResetZoom} hideTrigger />
+      <span id={helpId} className={styles.srOnly}>Click a point to select it. Scroll to zoom at the pointer. Drag to pan,
+        or Shift-drag to box zoom. With the plot focused, use arrow keys to pan, plus and minus to zoom,
+        Home to fit all points, P for pan, Z for box zoom, and Escape to cancel a drag.</span>
+      <div ref={chartRef} tabIndex={0} aria-label="Plot canvas for test-point overview" aria-describedby={helpId}
+        className={styles.canvas} data-drag-mode={navigation.activeMode} data-dragging={isPanning}
+        onWheel={handleWheel} onPointerDownCapture={navigation.onPointerDownCapture}
+        onClickCapture={navigation.onClickCapture} onKeyDown={navigation.onKeyDown}
+        onMouseLeave={handleMouseLeave} onPointerMoveCapture={trackPointHover}
+        onLostPointerCapture={navigation.cancelDrag}
+        onDoubleClick={(event) => {
+          if (!(event.target instanceof Element && event.target.closest('[data-scatter-hover-target]'))) onResetZoom();
+        }}>
       <ResponsiveContainer width="100%" height="100%">
         <ScatterChart margin={SCATTER_MARGIN}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#dfe4ec" />
+          <Customized component={<ScatterGrid xTicks={xTicks} yTicks={yTicks} />} />
           <XAxis
             dataKey="x"
             type="number"
             name={xLabel}
-            tick={{ fill: '#626f83', fontSize: 11 }}
-            label={{ value: xLabel, position: 'bottom', fill: '#626f83', fontSize: 12 }}
-            stroke="#dfe4ec"
+            tickLine={false}
+            tickMargin={8}
+            tick={({ x, y, payload }) => {
+              const label = xTicks.format(payload.value);
+              const halfWidth = label.length * 3.2;
+              const anchor = x - halfWidth < PLOT_INSET.left ? 'start'
+                : x + halfWidth > chartDimensions.width - SCATTER_MARGIN.right ? 'end' : 'middle';
+              return <text className="recharts-cartesian-axis-tick-value" x={x} y={y} dy={11}
+                fill="var(--muted, #626f83)" fontSize={11} textAnchor={anchor}>{label}</text>;
+            }}
+            label={{ value: xLabel, position: 'insideBottom', offset: 0, fill: 'var(--muted, #626f83)', fontSize: 12 }}
+            stroke="var(--plot-axis, #b2bed0)"
             domain={mainZoom ? [mainZoom[0], mainZoom[1]] : [bounds.initialXMin, bounds.initialXMax]}
             allowDataOverflow
-            tickFormatter={(v) => formatValue(v).toString()}
+            height={X_AXIS_HEIGHT}
+            ticks={xTicks.ticks}
+            interval={0}
+            tickFormatter={xTicks.format}
           />
           <YAxis
             dataKey="y"
             type="number"
             name={yLabel}
-            tick={{ fill: '#626f83', fontSize: 11 }}
+            tickLine={false}
+            tickMargin={8}
+            tick={{ fill: 'var(--muted, #626f83)', fontSize: 11 }}
             label={{
               value: yLabel,
               angle: -90,
               position: 'insideLeft',
-              fill: '#626f83',
+              offset: 0,
+              style: { textAnchor: 'middle' },
+              fill: 'var(--muted, #626f83)',
               fontSize: 12,
             }}
-            stroke="#dfe4ec"
+            stroke="var(--plot-axis, #b2bed0)"
             domain={mainZoom ? [mainZoom[2], mainZoom[3]] : [bounds.initialYMin, bounds.initialYMax]}
             allowDataOverflow
-            tickFormatter={(v) => formatValue(v).toString()}
+            width={Y_AXIS_WIDTH}
+            ticks={yTicks.ticks}
+            interval={0}
+            tickFormatter={yTicks.format}
           />
           <ZAxis range={[100, 100]} />
           <Tooltip
-            cursor={isPanning || suppressTooltip || !hasPointHover || menuState ? false : { strokeDasharray: '3 3' }}
+            cursor={isPanning || !hasPointHover || menuState ? false : { stroke: 'var(--plot-axis, #b2bed0)', strokeDasharray: '3 4' }}
             content={<CustomScatterTooltip chartRef={chartRef} />}
             isAnimationActive={false}
-            active={isPanning || suppressTooltip || !hasPointHover || menuState ? false : undefined}
+            active={isPanning || !hasPointHover || menuState ? false : undefined}
           />
           {(showHorizontalErrorBars || showVerticalErrorBars) && (
             <Customized
@@ -799,7 +657,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
               name="Datasheet"
               data={datasheetData}
               line={{
-                stroke: '#806b20',
+                stroke: 'var(--warning, #806b20)',
                 strokeWidth: 2,
                 strokeDasharray: '7 4',
                 fill: 'none',
@@ -818,6 +676,8 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
           />
         </ScatterChart>
       </ResponsiveContainer>
+      {navigation.box && <div className={styles.zoomBox} data-scatter-zoom-box="true" style={navigation.box} />}
+      </div>
 
       {/* Point Selection Menu */}
       {menuState && (

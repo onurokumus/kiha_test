@@ -54,14 +54,14 @@ export function ScatterRangeBars({
           return (
             <g key={point.id} data-range-point-id={point.id}>
               {horizontal && Number.isFinite(xLow) && Number.isFinite(xHigh) && (
-                <g data-range-axis="x" stroke="#405994">
+                <g data-range-axis="x" stroke="var(--accent, #405994)">
                   <line x1={xLow} y1={cy - CAP} x2={xLow} y2={cy + CAP} />
                   <line x1={xLow} y1={cy} x2={xHigh} y2={cy} />
                   <line x1={xHigh} y1={cy - CAP} x2={xHigh} y2={cy + CAP} />
                 </g>
               )}
               {vertical && Number.isFinite(yLow) && Number.isFinite(yHigh) && (
-                <g data-range-axis="y" stroke="#806b20">
+                <g data-range-axis="y" stroke="var(--warning, #806b20)">
                   <line x1={cx - CAP} y1={yLow} x2={cx + CAP} y2={yLow} />
                   <line x1={cx} y1={yLow} x2={cx} y2={yHigh} />
                   <line x1={cx - CAP} y1={yHigh} x2={cx + CAP} y2={yHigh} />

@@ -1,5 +1,17 @@
 # TODO
 
+## Requested scatter grid and navigation (2026-09-28)
+
+Latest follow-up: removed the visible drag hint text; build/lint pass.
+
+Follow-up complete: combine Filters/count and navigation into one row, move export/plot actions into More, and prevent a mouse drag from displaying the keyboard-focus border. Build/lint and 19 toolbar browser groups pass, including active filters, export/focus and 125%/150% zoom.
+
+- [x] Improve the scatter grid in light/dark themes and make pan/zoom controls clear and reliable. Adaptive grid, accurate geometry, fixed toolbar, box zoom, cancellation and keyboard controls complete. Build/lint, 77 helper tests, 24 browser groups (including actual 125%/150% zoom), independent interaction/point-menu checks and 14 light/dark PNG parity downloads pass. See IMPLEMENTATION.md.
+
+## Requested dark mode switch (2026-09-28)
+
+- [x] Add a persistent header theme switch, readable dark controls and plots across all sections, and preserve analysis state and light PNG exports. Validate storage/system preferences, desktop resizing, keyboard access and browser zoom. Build/lint, 60 helper tests, 11 app browser groups and seven plot-mode groups pass; see IMPLEMENTATION.md.
+
 ## Correct scatter-filter branch placement (2026-09-28)
 
 - [x] Integrate the separately committed scatter-filter fixes into the Codex rework, preserving its NumericField, funnel control, light styling and scatter exports. Build/lint, 60 frontend tests, six filter browser groups (including actual 125%/150% zoom) and 13 CSV/PNG downloads pass. This correction targets only codex/ptt-ui-rework-2026-09-28; see IMPLEMENTATION.md.

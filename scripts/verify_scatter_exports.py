@@ -65,11 +65,14 @@ class Fixture:
 def settled(page):
     page.wait_for_load_state('networkidle');page.locator('.recharts-surface').first.wait_for()
     page.evaluate('() => new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
-    expect(page.get_by_role('button',name='Export scatter plot',exact=True)).to_be_visible()
+    expect(page.get_by_role('button',name='More',exact=True)).to_be_visible()
 
 def open_dialog(page):
+    more=page.get_by_role('button',name='More',exact=True);more.focus();page.keyboard.press('Enter')
+    expect(more).to_have_attribute('aria-expanded','true')
     trigger=page.get_by_role('button',name='Export scatter plot',exact=True);trigger.focus();page.keyboard.press('Enter')
     dialog=page.get_by_role('dialog',name='Export scatter plot',exact=True);expect(dialog).to_be_visible()
+    expect(more).to_have_attribute('aria-expanded','false')
     expect(dialog.get_by_role('checkbox',name='Include analysis metadata (ZIP)',exact=True)).to_have_count(0)
     assert dialog.evaluate('el=>el.contains(document.activeElement)');return dialog
 
@@ -148,7 +151,7 @@ def check_browser_zoom(url):
                 tag='browser-zoom-'+str(round(factor*100))
                 results.append(check_csv(download(page,dialog,'CSV',out,tag),VALID))
                 results.append(png(page,dialog,out,tag));page.screenshot(path=str(out/(tag+'-dialog.png')))
-                close(page,dialog);expect(page.get_by_role('button',name='Export scatter plot',exact=True)).to_be_focused()
+                close(page,dialog);expect(page.get_by_role('button',name='More',exact=True)).to_be_focused()
             assert not fixture.blocked and not fixture.errors and not errors,(fixture.blocked,fixture.errors,errors)
         finally: context.close()
     (out/'browser-zoom-results.json').write_text(json.dumps(results,indent=2),encoding='utf-8')
@@ -170,10 +173,10 @@ def main():
             dialog=open_dialog(page)
             # Native dialog may hand focus to browser chrome at the end of a Tab cycle.
             for _ in range(6): page.keyboard.press('Tab');assert dialog.evaluate('el=>el.contains(document.activeElement)||document.activeElement===document.body')
-            close(page,dialog);expect(page.get_by_role('button',name='Export scatter plot',exact=True)).to_be_focused()
+            close(page,dialog);expect(page.get_by_role('button',name='More',exact=True)).to_be_focused()
             bounds=canvas.bounding_box();px,py=bounds['x']+bounds['width']*.55,bounds['y']+bounds['height']*.42;before=page.locator('.recharts-xAxis').text_content();page.mouse.move(px,py);page.mouse.wheel(0,-500);page.wait_for_function("before=>document.querySelector('.recharts-xAxis').textContent!==before",arg=before)
             page.mouse.move(px,py);page.mouse.down();page.mouse.move(px+35,py+20,steps=8);page.mouse.up();settled(page);dialog=open_dialog(page);zoomed=download(page,dialog,'CSV',out,'zoomed-panned');assert baseline.read_bytes()==zoomed.read_bytes();report['checks'].append(png(page,dialog,out,'zoomed-panned'));close(page,dialog)
-            page.get_by_role('button',name='Reset zoom',exact=True).click();toggle(page,'Cluster overlapping scatter points',False);expect(page.locator('.recharts-scatter-symbol')).to_have_count(4);dialog=open_dialog(page);assert baseline.read_bytes()==download(page,dialog,'CSV',out,'unclustered').read_bytes();close(page,dialog)
+            page.get_by_role('group',name='Scatter navigation',exact=True).get_by_role('button',name='Reset zoom',exact=True).click();toggle(page,'Cluster overlapping scatter points',False);expect(page.locator('.recharts-scatter-symbol')).to_have_count(4);dialog=open_dialog(page);assert baseline.read_bytes()==download(page,dialog,'CSV',out,'unclustered').read_bytes();close(page,dialog)
             toggle(page,'Show datasheet line from '+DS,True);expect(page.locator('.datasheet-scatter-series .recharts-scatter-symbol')).to_have_count(2);dialog=open_dialog(page);report['checks'].append(check_csv(download(page,dialog,'CSV',out,'with-datasheet'),VALID,True));report['checks'].append(png(page,dialog,out,'with-datasheet',datasheet=True));close(page,dialog)
             page.get_by_role('button',name=re.compile('^Filters')).click();region=page.get_by_role('region',name='Scatter filters');region.get_by_role('button',name='Labels',exact=True).click();region.get_by_role('checkbox',name='other',exact=True).check();region.get_by_role('button',name='Close filters',exact=True).click();settled(page);dialog=open_dialog(page);report['checks'].append(check_csv(download(page,dialog,'CSV',out,'label-filter'),[(A,9.125)],True));close(page,dialog)
             page.get_by_role('button',name=re.compile('^Filters')).click();region.get_by_role('checkbox',name=B+' (1)',exact=True).check();region.get_by_role('button',name='Close filters',exact=True).click();settled(page);dialog=open_dialog(page);report['checks'].append(check_csv(download(page,dialog,'CSV',out,'datasheet-only'),[],True));report['checks'].append(png(page,dialog,out,'datasheet-only',False,True));close(page,dialog)

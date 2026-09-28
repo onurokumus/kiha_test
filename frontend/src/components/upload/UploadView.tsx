@@ -91,13 +91,13 @@ const fmtCount = (n?: number | null): string =>
 /** Colored status chip; active states pulse via inline animation class. */
 const StatusChip: React.FC<{ status: string }> = ({ status }) => {
   const palette: Record<string, { color: string; bg: string }> = {
-    ready: { color: '#237c66', bg: '#e7f4ee' },
-    error: { color: '#b84343', bg: '#fff1f0' },
-    receiving: { color: '#263685', bg: '#e5edff' },
-    ingesting: { color: '#263685', bg: '#e5edff' },
-    rebuilding: { color: '#263685', bg: '#e5edff' },
+    ready: { color: 'var(--success, #237c66)', bg: 'var(--success-bg, #e7f4ee)' },
+    error: { color: 'var(--danger, #b84343)', bg: 'var(--danger-bg, #fff1f0)' },
+    receiving: { color: 'var(--accent, #263685)', bg: 'var(--selected-bg, #e5edff)' },
+    ingesting: { color: 'var(--accent, #263685)', bg: 'var(--selected-bg, #e5edff)' },
+    rebuilding: { color: 'var(--accent, #263685)', bg: 'var(--selected-bg, #e5edff)' },
   };
-  const { color, bg } = palette[status] ?? { color: '#626f83', bg: '#dfe4ec' };
+  const { color, bg } = palette[status] ?? { color: 'var(--muted, #626f83)', bg: 'var(--border, #dfe4ec)' };
   const active = isBusyStatus(status);
   return (
     <span
@@ -120,15 +120,15 @@ const thStyle: React.CSSProperties = {
   textAlign: 'left',
   fontSize: 11,
   fontWeight: 600,
-  color: '#626f83',
+  color: 'var(--muted, #626f83)',
   padding: '9px 12px',
-  borderBottom: '1px solid #dfe4ec',
+  borderBottom: '1px solid var(--border, #dfe4ec)',
   whiteSpace: 'nowrap',
 };
 const thRight: React.CSSProperties = { ...thStyle, textAlign: 'right' };
 const tdStyle: React.CSSProperties = {
   padding: '10px 12px',
-  borderBottom: '1px solid #f2f4f8',
+  borderBottom: '1px solid var(--border-subtle, #f2f4f8)',
   fontSize: 12,
   whiteSpace: 'nowrap',
   verticalAlign: 'middle',
@@ -521,7 +521,7 @@ export default function UploadView({
             style={{
               flex: 1,
               height: 6,
-              background: '#dfe4ec',
+              background: 'var(--border, #dfe4ec)',
               borderRadius: 3,
               overflow: 'hidden',
             }}
@@ -532,7 +532,7 @@ export default function UploadView({
                 width: pct === null ? '100%' : `${pct}%`,
                 height: '100%',
                 background:
-                  u.phase === 'paused' ? '#626f83' : u.phase === 'error' ? '#b84343' : '#263685',
+                  u.phase === 'paused' ? 'var(--muted, #626f83)' : u.phase === 'error' ? 'var(--danger, #b84343)' : 'var(--accent-solid, #263685)',
                 transition: 'width 0.2s ease',
               }}
             />
@@ -540,14 +540,14 @@ export default function UploadView({
           <span
             style={{
               fontSize: 10,
-              color: u.phase === 'error' ? '#b84343' : '#263685',
+              color: u.phase === 'error' ? 'var(--danger, #b84343)' : 'var(--accent, #263685)',
               whiteSpace: 'nowrap',
             }}
           >
             {phase}
           </span>
         </div>
-        <span style={{ fontSize: 9, color: '#707b8c', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 9, color: 'var(--subtle, #707b8c)', whiteSpace: 'nowrap' }}>
           {fmtBytes(u.committedBytes)} verified
           {u.totalBytes ? ` / ${fmtBytes(u.totalBytes)}` : ''}
           {u.totalChunks ? ` • ${u.completedChunks}/${u.totalChunks} chunks` : ''}
@@ -572,7 +572,7 @@ export default function UploadView({
             style={{
               flex: 1,
               height: 6,
-              background: '#dfe4ec',
+              background: 'var(--border, #dfe4ec)',
               borderRadius: 3,
               overflow: 'hidden',
             }}
@@ -582,15 +582,15 @@ export default function UploadView({
               style={{
                 width: pct === null ? '100%' : `${pct}%`,
                 height: '100%',
-                background: '#263685',
+                background: 'var(--accent-solid, #263685)',
               }}
             />
           </div>
-          <span style={{ fontSize: 10, color: '#263685', whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: 10, color: 'var(--accent, #263685)', whiteSpace: 'nowrap' }}>
             {pct === null ? 'receiving…' : `${pct}%`}
           </span>
         </div>
-        <span style={{ fontSize: 9, color: '#707b8c', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 9, color: 'var(--subtle, #707b8c)', whiteSpace: 'nowrap' }}>
           {fmtBytes(committed)} verified
           {total ? ` / ${fmtBytes(total)}` : ''}
           {test.total_chunks ? ` • ${test.received_chunks ?? 0}/${test.total_chunks} chunks` : ''}
@@ -619,7 +619,7 @@ export default function UploadView({
           {u.sessionId ? (
             <button
               className="btn"
-              style={{ color: '#b84343' }}
+              style={{ color: 'var(--danger, #b84343)' }}
               onClick={() => onCancelUpload(u.id)}
             >
               Cancel
@@ -637,7 +637,7 @@ export default function UploadView({
         <button className="btn" onClick={() => onPauseUpload(u.id)}>
           Pause
         </button>
-        <button className="btn" style={{ color: '#b84343' }} onClick={() => onCancelUpload(u.id)}>
+        <button className="btn" style={{ color: 'var(--danger, #b84343)' }} onClick={() => onCancelUpload(u.id)}>
           Cancel
         </button>
       </span>
@@ -975,7 +975,7 @@ export default function UploadView({
                       className="btn"
                       disabled={busyRow !== null}
                       onClick={() => handleCancelReceiving(test)}
-                      style={{ color: '#b84343' }}
+                      style={{ color: 'var(--danger, #b84343)' }}
                     >
                       {busyRow === test.name ? 'canceling…' : 'Cancel'}
                     </button>
@@ -1245,7 +1245,7 @@ export default function UploadView({
                                   disabled={busyRow !== null}
                                   aria-label={`Delete ${t.name}`}
                                   onClick={() => handleDelete(t.name)}
-                                  style={{ color: '#b84343' }}
+                                  style={{ color: 'var(--danger, #b84343)' }}
                                 >
                                   Delete
                                 </button>

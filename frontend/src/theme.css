@@ -1,0 +1,60 @@
+/* Dark overrides are semantic; each usage retains its original light fallback. */
+:root[data-theme='dark'] {
+  --page: #101824;
+  --surface: #172131;
+  --surface-raised: #1d2a3c;
+  --input-bg: #121c2b;
+  --hover-bg: #25334a;
+  --selected-bg: #26385a;
+  --brush-fill: rgba(166, 184, 255, .14);
+  --text: #e5ebf5;
+  --text-secondary: #c1cde0;
+  --muted: #a2b1c8;
+  --subtle: #8596b0;
+  --border: #35445d;
+  --border-subtle: #29384e;
+  --border-strong: #50627d;
+  --plot-grid-minor: #233247;
+  --plot-grid: #33445d;
+  --plot-zero: #667c9c;
+  --plot-axis: #526780;
+  --accent: #a6b8ff;
+  --accent-solid: #5369c4;
+  --accent-hover: #5970ca;
+  --on-accent: #fff;
+  --focus: #9bb2ff;
+  --danger: #f2a5a0;
+  --danger-bg: #3e272e;
+  --danger-border: #75434c;
+  --warning: #e5c37e;
+  --warning-bg: #352e21;
+  --warning-border: #705d38;
+  --success: #8bd2ac;
+  --success-bg: #19372d;
+  --success-border: #3d6954;
+  --shadow: rgba(0, 0, 0, .35);
+  --backdrop: rgba(3, 8, 17, .72);
+}
+
+.theme-toggle {
+  display: inline-flex;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  color: var(--muted, #626f83);
+  background: transparent;
+  border: 1px solid var(--border, #dfe4ec);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.theme-toggle:hover { color: var(--accent, #263685); background: var(--hover-bg, #edf1f8); }
+.theme-toggle svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+:root[data-theme='dark'] :is(input, textarea)::placeholder { color: var(--subtle); opacity: 1; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) { background: #101824; }
+}

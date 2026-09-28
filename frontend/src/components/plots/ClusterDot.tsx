@@ -19,7 +19,7 @@ const ClusterDotComponent: React.FC<ClusterDotProps> = ({
   const baseRadius = Math.min(10 + Math.log10(count) * 5, 20);
   const activeRadius = isHovered ? baseRadius + 2 : baseRadius;
   const strokeWidth = isHovered ? 2 : 1;
-  const strokeColor = isHovered ? '#263685' : '#f7f8fa';
+  const strokeColor = isHovered ? 'var(--accent, #263685)' : 'var(--text-secondary, #f7f8fa)';
   const fillColor = isHovered ? '#3a6fa0' : '#2e5c8a';
 
   return (
@@ -75,7 +75,9 @@ const arePropsEqual = (prev: ClusterDotProps, next: ClusterDotProps) => {
   return (
     prev.cx === next.cx &&
     prev.cy === next.cy &&
-    prev.count === next.count
+    prev.count === next.count &&
+    // A cluster can retain its center/count while its member points change.
+    prev.onClick === next.onClick
   );
 };
 

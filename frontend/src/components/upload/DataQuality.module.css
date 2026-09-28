@@ -6,7 +6,7 @@
   padding: 3px 0;
   border: 0;
   background: none;
-  color: #63748b;
+  color: var(--muted, #63748b);
   font: inherit;
   font-size: 11px;
   text-align: left;
@@ -16,13 +16,13 @@
 }
 
 .summary[data-tone='warning'] {
-  color: #806b20;
+  color: var(--warning, #806b20);
 }
 .summary[data-tone='blocked'] {
-  color: #b84343;
+  color: var(--danger, #b84343);
 }
 .summary[data-tone='ok'] {
-  color: #237c66;
+  color: var(--success, #237c66);
 }
 .summary:hover {
   text-decoration: underline;
@@ -30,9 +30,9 @@
 
 .details {
   padding: 16px 18px 20px;
-  border-bottom: 1px solid #d4dcea;
-  background: #f7f9fc;
-  color: #41516b;
+  border-bottom: 1px solid var(--border, #d4dcea);
+  background: var(--surface-raised, #f7f9fc);
+  color: var(--text-secondary, #41516b);
   font-size: 12px;
   font-weight: 400;
   line-height: 1.65;
@@ -66,21 +66,21 @@
 }
 .facts h4 {
   margin: 0 0 8px;
-  color: #344666;
+  color: var(--text, #344666);
   font-size: 12px;
 }
 .facts p {
   margin: 7px 0;
 }
 .note {
-  color: #63748b;
+  color: var(--muted, #63748b);
   font-size: 11px;
 }
 .warning {
-  color: #806b20;
+  color: var(--warning, #806b20);
 }
 .examples summary {
-  color: #405994;
+  color: var(--accent, #405994);
   cursor: pointer;
 }
 .examples {
@@ -105,7 +105,7 @@
 .counts th,
 .counts td {
   padding: 5px 6px;
-  border-bottom: 1px solid #dfe4ec;
+  border-bottom: 1px solid var(--border, #dfe4ec);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -118,11 +118,11 @@
 }
 .counts small {
   display: block;
-  color: #806b20;
+  color: var(--warning, #806b20);
 }
 .summary:focus-visible,
 .details :focus-visible {
-  outline: 2px solid #263685;
+  outline: 2px solid var(--focus, #263685);
   outline-offset: 2px;
 }
 

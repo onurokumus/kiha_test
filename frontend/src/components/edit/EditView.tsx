@@ -1193,11 +1193,11 @@ export default function EditView({
         </div>
       </header>
       {pendingAction && (
-        <div role="status" aria-live="polite" style={{ fontSize: 11, color: '#405994' }}>
+        <div role="status" aria-live="polite" style={{ fontSize: 11, color: 'var(--accent, #405994)' }}>
           {pendingAction}…
         </div>
       )}
-      {status && <div role="status" aria-live="polite" style={{ fontSize: 11, color: '#405994', padding: '0 4px' }}>{status}</div>}
+      {status && <div role="status" aria-live="polite" style={{ fontSize: 11, color: 'var(--accent, #405994)', padding: '0 4px' }}>{status}</div>}
 
       <div className="feature-edit-overview">
         {/* test info + metadata */}
@@ -1206,7 +1206,7 @@ export default function EditView({
             {meta.n_rows.toLocaleString()} rows × {meta.n_columns} columns · <span title={`Sample rate: ${meta.fs_hz} Hz`}>{Number(meta.fs_hz.toPrecision(6))} Hz</span> ·{' '}
             {meta.duration_s.toFixed(1)} s
             {(meta.missing_rows_inserted ?? 0) > 0 ? (
-              <span style={{ color: '#806b20' }}>
+              <span style={{ color: 'var(--warning, #806b20)' }}>
                 {' '}· ⚠ {meta.missing_rows_inserted?.toLocaleString()} missing
                 {' '}row{meta.missing_rows_inserted === 1 ? '' : 's'} preserved
                 {' '}as NaN across {meta.time_gap_count?.toLocaleString()}
@@ -1214,7 +1214,7 @@ export default function EditView({
               </span>
             ) : (
               meta.jitter_warning && (
-                <span style={{ color: '#806b20' }}>
+                <span style={{ color: 'var(--warning, #806b20)' }}>
                   {' '}· ⚠ time jitter &gt;1%
                 </span>
               )
@@ -1230,7 +1230,7 @@ export default function EditView({
               rename test
             </button>
             <span style={{ flex: 1 }} />
-            <button className="btn" style={{ borderColor: '#a04040', color: '#b84343' }} onClick={doDelete}>
+            <button className="btn" style={{ borderColor: 'var(--danger-border, #a04040)', color: 'var(--danger, #b84343)' }} onClick={doDelete}>
               delete test
             </button>
           </div>
@@ -1246,10 +1246,10 @@ export default function EditView({
               aria-invalid={!!descriptionError} aria-describedby="edit-description-help"
               onChange={(event) => { setDescription(event.target.value); setStatus(''); }} />
           </label>
-          <span id="edit-description-help" style={{ fontSize: 10, color: '#626f83' }}>
+          <span id="edit-description-help" style={{ fontSize: 10, color: 'var(--muted, #626f83)' }}>
             Shown in Uploads. {textLength(description).toLocaleString()} / {MAX_DESCRIPTION_LENGTH.toLocaleString()}
           </span>
-          {descriptionError && <span role="alert" style={{ color: '#b84343' }}>{descriptionError}</span>}
+          {descriptionError && <span role="alert" style={{ color: 'var(--danger, #b84343)' }}>{descriptionError}</span>}
           </div>
           <div className={styles.noteField}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1260,14 +1260,14 @@ export default function EditView({
               aria-invalid={!!notesError} aria-describedby="edit-notes-help"
               onChange={(event) => { setNotes(event.target.value); setStatus(''); }} />
           </label>
-          <span id="edit-notes-help" style={{ fontSize: 10, color: '#626f83' }}>
+          <span id="edit-notes-help" style={{ fontSize: 10, color: 'var(--muted, #626f83)' }}>
             Test-level observations. {textLength(notes).toLocaleString()} / {MAX_NOTES_LENGTH.toLocaleString()}
           </span>
-          {notesError && <span role="alert" style={{ color: '#b84343' }}>{notesError}</span>}
+          {notesError && <span role="alert" style={{ color: 'var(--danger, #b84343)' }}>{notesError}</span>}
           </div>
           </div>
 
-          {savedSetsError && <p role="alert" style={{ color: '#b84343', fontSize: 11, lineHeight: 1.5 }}>
+          {savedSetsError && <p role="alert" style={{ color: 'var(--danger, #b84343)', fontSize: 11, lineHeight: 1.5 }}>
             {savedSetsError}. Add replacement sets and save to repair them. Saving notes alone preserves the saved component settings.
           </p>}
           <details className="feature-inline-disclosure" ref={componentsSectionRef}>
@@ -1278,7 +1278,7 @@ export default function EditView({
 
           <details className="feature-inline-disclosure">
             <summary>Additional metadata{' '}<span className={styles.sectionHint}>{rows.length} {rows.length === 1 ? 'field' : 'fields'}</span>{!sameMetaRows(rows, savedRows) && <>{' '}<span className={styles.sectionDraft}>Unsaved changes</span></>}</summary>
-          <div style={{ fontSize: 10, color: '#626f83' }}>
+          <div style={{ fontSize: 10, color: 'var(--muted, #626f83)' }}>
             Other descriptors, such as ambient conditions. Legacy fields remain separate from component associations.
           </div>
           {rows.map((r, i) => (
@@ -1302,7 +1302,7 @@ export default function EditView({
           <summary>Data cleanup{' '}<span>{nanTotal > 0 ? `${nanTotal.toLocaleString()} missing values` : 'Missing values and trim'}</span>{(nanPolicyDirty || trimDirty) && <>{' '}<span className={styles.sectionDraft}>Unsaved changes</span></>}</summary>
           <div className="feature-disclosure-body feature-cleanup-body">
           <div className="section-title">NaN policy</div>
-          <div style={{ fontSize: 11, color: '#626f83' }}>
+          <div style={{ fontSize: 11, color: 'var(--muted, #626f83)' }}>
             {nanTotal > 0
               ? `${nanTotal.toLocaleString()} missing values across ${Object.keys(meta.nan_counts ?? {}).length} column(s)`
               : 'no missing values in this test'}
@@ -1315,25 +1315,25 @@ export default function EditView({
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>
-            <span style={{ fontSize: 10, color: '#626f83' }}>{NAN_POLICY_HELP[nanPolicy]}</span>
+            <span style={{ fontSize: 10, color: 'var(--muted, #626f83)' }}>{NAN_POLICY_HELP[nanPolicy]}</span>
             <span style={{ flex: 1 }} />
             <button className="btn" onClick={applyNanPolicy} disabled={!nanPolicyDirty}>apply</button>
           </div>
-          <div style={{ fontSize: 10, color: '#626f83' }}>
+          <div style={{ fontSize: 10, color: 'var(--muted, #626f83)' }}>
             ('drop rows' is not offered — it would break the uniform sample rate)
           </div>
 
           <div className="section-title" style={{ marginTop: 8 }}>Trim</div>
           <div className="feature-cleanup-row">
-            <span style={{ fontSize: 11, color: '#626f83' }}>keep</span>
+            <span style={{ fontSize: 11, color: 'var(--muted, #626f83)' }}>keep</span>
             <NumericField className="input" style={{ width: 110 }} step="0.1" unit="s"
                    aria-label="Trim start (s)" error={trimRangeError}
                    value={trim0} onChange={(e) => setTrim0(e.target.value)} />
-            <span style={{ fontSize: 11, color: '#626f83' }}>–</span>
+            <span style={{ fontSize: 11, color: 'var(--muted, #626f83)' }}>–</span>
             <NumericField className="input" style={{ width: 110 }} step="0.1" unit="s"
                    aria-label="Trim end (s)" error={trimRangeError}
                    value={trim1} onChange={(e) => setTrim1(e.target.value)} />
-            <span style={{ fontSize: 11, color: '#626f83' }}>Data: {tStart.toFixed(1)}–{tEnd.toFixed(1)} s</span>
+            <span style={{ fontSize: 11, color: 'var(--muted, #626f83)' }}>Data: {tStart.toFixed(1)}–{tEnd.toFixed(1)} s</span>
             <span style={{ flex: 1 }} />
             <button className="btn" onClick={applyTrim} disabled={!trimDirty || !!trimError}>apply</button>
           </div>
@@ -1843,15 +1843,15 @@ export default function EditView({
           Rename or remove existing columns{' '}
           <span className="badge">{dataColumns.length}</span>
         </div>
-        <div style={{ marginBottom: 7, fontSize: 10, color: '#626f83' }}>
+        <div style={{ marginBottom: 7, fontSize: 10, color: 'var(--muted, #626f83)' }}>
           Type a new name beside any existing column. Leave it blank to keep the
           current name; check remove only when the column should be deleted.
         </div>
         <div className="feature-column-grid">
-          <span style={{ color: '#626f83' }}>existing column name</span>
-          <span style={{ color: '#626f83' }}>new column name (optional)</span>
-          <span style={{ color: '#626f83' }}>missing</span>
-          <span style={{ color: '#626f83' }}>remove</span>
+          <span style={{ color: 'var(--muted, #626f83)' }}>existing column name</span>
+          <span style={{ color: 'var(--muted, #626f83)' }}>new column name (optional)</span>
+          <span style={{ color: 'var(--muted, #626f83)' }}>missing</span>
+          <span style={{ color: 'var(--muted, #626f83)' }}>remove</span>
           {dataColumns.map((c) => (
             <ColumnRow key={c} name={c}
               nanCount={meta.nan_counts?.[c] ?? 0}
@@ -1868,7 +1868,7 @@ export default function EditView({
         </div>
         <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
           <button className="btn" onClick={applyColumns} disabled={!columnsDirty}>apply renames / removals</button>
-          <span style={{ fontSize: 10, color: '#626f83' }}>
+          <span style={{ fontSize: 10, color: 'var(--muted, #626f83)' }}>
             time column '{meta.time_column}' is protected; units live in the column name (e.g. thrust_n)
           </span>
         </div>
@@ -1889,13 +1889,13 @@ function ColumnRow({ name, nanCount, rename, dropped, onRename, onDrop }: {
 }) {
   return (
     <>
-      <span style={{ color: dropped ? '#707b8c' : '#202c42', textDecoration: dropped ? 'line-through' : 'none', lineHeight: '24px' }}>
+      <span style={{ color: dropped ? 'var(--subtle, #707b8c)' : 'var(--text, #202c42)', textDecoration: dropped ? 'line-through' : 'none', lineHeight: '24px' }}>
         {name}
       </span>
       <input className="input" placeholder="enter a new name" value={rename}
              aria-label={`Rename column ${name}`}
              disabled={dropped} onChange={(e) => onRename(e.target.value)} />
-      <span style={{ color: nanCount > 0 ? '#806b20' : '#707b8c', lineHeight: '24px' }}>
+      <span style={{ color: nanCount > 0 ? 'var(--warning, #806b20)' : 'var(--subtle, #707b8c)', lineHeight: '24px' }}>
         {nanCount > 0 ? nanCount.toLocaleString() : '—'}
       </span>
       <input type="checkbox" checked={dropped} aria-label={`Remove column ${name}`}

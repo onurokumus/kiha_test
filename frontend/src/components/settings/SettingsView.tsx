@@ -345,10 +345,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </details>
         </div>
         </header>
-        {importError && <div style={{ color: '#b84343', fontSize: 11 }}>{importError}</div>}
+        {importError && <div style={{ color: 'var(--danger, #b84343)', fontSize: 11 }}>{importError}</div>}
         <div className={styles.feedback} aria-live="polite">
-          {publishMessage && <div style={{ color: '#237c66', fontSize: 11 }}>{publishMessage}</div>}
-          {publishError && <div style={{ color: '#b84343', fontSize: 11 }}>{publishError}</div>}
+          {publishMessage && <div style={{ color: 'var(--success, #237c66)', fontSize: 11 }}>{publishMessage}</div>}
+          {publishError && <div style={{ color: 'var(--danger, #b84343)', fontSize: 11 }}>{publishError}</div>}
         </div>
 
         <div className={styles.sections}>
@@ -505,7 +505,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               >
                 <span className={styles.cellLabel}>Plot {i + 1}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontSize: 10, color: '#626f83', width: 14 }}>X</span>
+                  <span style={{ fontSize: 10, color: 'var(--muted, #626f83)', width: 14 }}>X</span>
                   <ColSelect
                     value={view.xyXCols[i] ?? ''}
                     onChange={(v) => {
@@ -520,7 +520,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontSize: 10, color: '#626f83', width: 14 }}>Y</span>
+                  <span style={{ fontSize: 10, color: 'var(--muted, #626f83)', width: 14 }}>Y</span>
                   <ColSelect
                     value={view.xyYCols[i] ?? ''}
                     onChange={(v) => {

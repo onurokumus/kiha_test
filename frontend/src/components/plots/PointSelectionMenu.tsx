@@ -2,6 +2,8 @@ import React, { useState, useMemo, useRef, useEffect, useLayoutEffect } from 're
 import { createPortal } from 'react-dom';
 import { ScatterDataPoint } from '../../types';
 import styles from './PointSelectionMenu.module.css';
+import { useTheme } from '../../hooks/useTheme';
+import { themeSeriesColor } from '../../constants/uplotTheme';
 
 interface PointSelectionMenuProps {
   points: ScatterDataPoint[];
@@ -18,6 +20,8 @@ export const PointSelectionMenu: React.FC<PointSelectionMenuProps> = ({
   onClose,
   onHover,
 }) => {
+  const theme = useTheme();
+  const pointColor = (color: string) => themeSeriesColor(color, theme === 'dark');
   const [searchText, setSearchText] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const [adjustedPosition, setAdjustedPosition] = useState(position);
@@ -110,12 +114,12 @@ export const PointSelectionMenu: React.FC<PointSelectionMenuProps> = ({
             onMouseEnter={() => onHover?.(point.id)} onMouseLeave={() => onHover?.(null)}
             onFocus={() => onHover?.(point.id)} onBlur={() => onHover?.(null)}>
             <span className={styles.swatch} aria-hidden="true"
-              style={{ background: point.color, borderColor: point.isSelected ? point.color : 'transparent' }} />
+              style={{ background: pointColor(point.color), borderColor: point.isSelected ? pointColor(point.color) : 'transparent' }} />
             <span className={styles.description}>
               <span className={styles.name}>{point.name}</span>
               <span className={styles.details}>{point.test}{point.label ? ` — ${point.label}` : ''}</span>
             </span>
-            {point.isSelected && <span className={styles.selected} style={{ color: point.color }}>✓ Selected</span>}
+            {point.isSelected && <span className={styles.selected} style={{ color: pointColor(point.color) }}>✓ Selected</span>}
           </button>
         ))}
       </div>

@@ -1,6 +1,74 @@
 import type uPlot from 'uplot';
 
-// Shared uPlot styling for the light engineering workspace.
+// Shared live chart colors. Exports opt one plot into its original light palette.
+const lightExports = new WeakSet<uPlot>();
+
+export function plotColor(plot: uPlot, token: string, fallback: string): string {
+  return lightExports.has(plot) ? fallback
+    : getComputedStyle(plot.root).getPropertyValue(token).trim() || fallback;
+}
+
+/** Keep source hues/identities while lifting dark traces onto the dark canvas. */
+export function themeSeriesColor(color: string, dark: boolean): string {
+  const match = /^#([\da-f]{6})([\da-f]{2})?$/i.exec(color);
+  if (!dark || !match) return color;
+  const channels = [0, 2, 4].map(offset => parseInt(match[1].slice(offset, offset + 2), 16));
+  const luminance = (mix: number) => channels.reduce((sum, channel, index) => {
+    const value = (channel + (255 - channel) * mix) / 255;
+    return sum + (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+      * [0.2126, 0.7152, 0.0722][index];
+  }, 0);
+  if (luminance(0) >= 0.32) return color;
+  let low = 0, high = 1;
+  for (let step = 0; step < 12; step++) {
+    const middle = (low + high) / 2;
+    if (luminance(middle) < 0.32) low = middle; else high = middle;
+  }
+  return '#' + channels.map(channel => Math.round(channel + (255 - channel) * high)
+    .toString(16).padStart(2, '0')).join('') + (match[2] ?? '');
+}
+
+export function plotSeriesColor(plot: uPlot, color: string): string {
+  return themeSeriesColor(color, !lightExports.has(plot) && document.documentElement.dataset.theme === 'dark');
+}
+
+/** Redraw in place: do not set data, auto-fit scales, or publish range changes. */
+export function redrawPlotTheme(plot: uPlot): void {
+  plot.batch(() => plot.redraw(false, true));
+  // uPlot initializes HTML legend colors once; canvas colors are evaluated per draw.
+  const rows = plot.root.querySelectorAll<HTMLElement>('.u-series');
+  const offset = plot.series.length - rows.length;
+  rows.forEach((row, rowIndex) => {
+    const index = rowIndex + offset;
+    const series = plot.series[index];
+    if (!series || index === 0) return;
+    const stroke = typeof series.stroke === 'function' ? series.stroke(plot, index) : series.stroke;
+    const fill = typeof series.fill === 'function' ? series.fill(plot, index) : series.fill;
+    const marker = row.querySelector<HTMLElement>('.u-marker');
+    if (marker) {
+      if (typeof stroke === 'string') marker.style.borderColor = stroke;
+      if (typeof fill === 'string') marker.style.background = fill;
+    } else {
+      const label = row.querySelector<HTMLElement>('.u-label');
+      const color = series.width ? stroke : fill;
+      if (label && typeof color === 'string') label.style.color = color;
+    }
+  });
+}
+
+/** Synchronous capture keeps theme changes invisible and always restores the live chart. */
+export function withLightPlot<T>(plot: uPlot, capture: () => T): T {
+  if (plot.status !== 1 || !plot.root.isConnected ||
+      document.documentElement.dataset.theme !== 'dark' || lightExports.has(plot)) return capture();
+  lightExports.add(plot);
+  try {
+    redrawPlotTheme(plot);
+    return capture();
+  } finally {
+    lightExports.delete(plot);
+    redrawPlotTheme(plot);
+  }
+}
 
 /** Cursor-sync groups: all plots in a mode track the same x position. */
 export const TP_SYNC_KEY = 'ptt-tp-x'; // TP-overlay plots (relative time)
@@ -26,9 +94,9 @@ const axisSize = (plot: uPlot, values: string[] | null, axisIndex: number) => {
 };
 
 export const AXIS_STYLE = {
-  stroke: '#626f83',
-  grid: { stroke: '#dfe4ec', width: 1 },
-  ticks: { stroke: '#dfe4ec', width: 1, size: 4 },
+  stroke: (plot: uPlot) => plotColor(plot, '--muted', '#626f83'),
+  grid: { stroke: (plot: uPlot) => plotColor(plot, '--border-subtle', '#dfe4ec'), width: 1 },
+  ticks: { stroke: (plot: uPlot) => plotColor(plot, '--border', '#dfe4ec'), width: 1, size: 4 },
   font: AXIS_FONT,
   labelFont: AXIS_FONT,
   gap: 3,

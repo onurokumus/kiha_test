@@ -9,7 +9,7 @@
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: #626f83;
+  color: var(--muted, #626f83);
   font: inherit;
   font-size: 11px;
   text-align: left;
@@ -17,18 +17,18 @@
 }
 .triggerLabel { flex: none; }
 .triggerValue { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; font-variant-numeric: tabular-nums; }
-.chevron { flex: none; width: 10px; height: 10px; fill: none; stroke: #626f83; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+.chevron { flex: none; width: 10px; height: 10px; fill: none; stroke: var(--muted, #626f83); stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
 .trigger[aria-expanded='true'] .chevron { transform: rotate(180deg); }
 .summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 7px; }
-.method { margin-top: 8px; font-size: 11px; color: #626f83; }
+.method { margin-top: 8px; font-size: 11px; color: var(--muted, #626f83); }
 .method summary { cursor: pointer; }
 .trigger:hover, .trigger[aria-expanded='true'] {
-  color: #263685;
-  background: #edf1f8;
+  color: var(--accent, #263685);
+  background: var(--hover-bg, #edf1f8);
 }
 .trigger:focus-visible,
 .panel :focus-visible {
-  outline: 2px solid #5773a8;
+  outline: 2px solid var(--focus, #5773a8);
   outline-offset: 2px;
 }
 .panel {
@@ -39,12 +39,12 @@
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);
   overflow: auto;
-  background: #fff;
-  border: 1px solid #dfe4ec;
+  background: var(--surface-raised, #fff);
+  border: 1px solid var(--border, #dfe4ec);
   border-radius: 5px;
   padding: 12px;
-  color: #202c42;
-  box-shadow: 0 8px 24px #202c421a;
+  color: var(--text, #202c42);
+  box-shadow: 0 8px 24px var(--shadow, #202c421a);
   font-size: 12px;
 }
 .heading {
@@ -57,9 +57,9 @@
   overflow-wrap: anywhere;
 }
 .panel button {
-  background: #f8f9fc;
-  color: #202c42;
-  border: 1px solid #dfe4ec;
+  background: var(--surface-raised, #f8f9fc);
+  color: var(--text, #202c42);
+  border: 1px solid var(--border, #dfe4ec);
   border-radius: 5px;
   padding: 3px 8px;
   cursor: pointer;
@@ -69,7 +69,7 @@
 }
 .panel p {
   margin: 8px 0;
-  color: #626f83;
+  color: var(--muted, #626f83);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -87,13 +87,13 @@
 .tableScroll td {
   text-align: left;
   padding: 7px;
-  border-bottom: 1px solid #dfe4ec;
+  border-bottom: 1px solid var(--border-subtle, #dfe4ec);
   vertical-align: top;
 }
 .tableScroll thead th {
   position: sticky;
   top: 0;
-  background: #f8f9fc;
+  background: var(--surface-raised, #f8f9fc);
   white-space: nowrap;
 }
 .tableScroll tbody th {
@@ -106,12 +106,12 @@
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
-.tableScroll td[title] { white-space: nowrap; color: #26344d; font-weight: 500; }
+.tableScroll td[title] { white-space: nowrap; color: var(--text-secondary, #26344d); font-weight: 500; }
 .tableScroll thead th:not(:first-child), .tableScroll td:not([colspan]) { text-align: right; }
 .context {
   display: block;
   margin-top: 3px;
-  color: #626f83;
+  color: var(--muted, #626f83);
   font-size: 10px;
 }
 .point {
@@ -120,7 +120,7 @@
   padding-left: 6px;
 }
 .panel .notice {
-  color: #806b20;
+  color: var(--warning, #806b20);
 }
 .retry {
   margin: 2px 0;
