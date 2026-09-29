@@ -86,7 +86,7 @@ export function AnalysisOptionsPopover({ contextKey, available, summary, childre
     onFocusCapture={() => { focusInside.current = true; }}>
     <button ref={trigger} type="button" className={styles.optionsButton}
       disabled={!available} aria-label="Options" aria-expanded={open} aria-controls={open ? id : undefined}
-      title={available ? (open ? undefined : 'Options') : 'No additional options for this view'}
+      data-tooltip={available ? (open ? undefined : 'Options') : 'No additional options for this view'}
       onClick={() => setOpening(open ? null : contextKey)}
       onKeyDown={event => {
         if (event.key === 'Tab' && !event.shiftKey && open) {

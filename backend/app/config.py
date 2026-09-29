@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 
@@ -30,9 +31,11 @@ def _cors_origins() -> tuple[str, ...]:
 
 CORS_ORIGINS = _cors_origins()
 
-# repo_root/data/tests/<test_name>/...
+# Production data lives independently of the Linux application checkout.
+# Windows/macOS development retains repo_root/data; an explicit override wins.
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = Path(os.environ.get("KIHA_DATA_DIR", REPO_ROOT / "data"))
+DEFAULT_DATA_DIR = Path("/data/ptt/data") if sys.platform == "linux" else REPO_ROOT / "data"
+DATA_DIR = Path(os.environ.get("KIHA_DATA_DIR", DEFAULT_DATA_DIR))
 TESTS_DIR = DATA_DIR / "tests"
 TRASH_DIR = DATA_DIR / "trash"          # UUID entries wrapping preserved test data
 TRASH_MAX_AGE_S = 3600                  # existing expiry on next delete; None retains until explicit deletion

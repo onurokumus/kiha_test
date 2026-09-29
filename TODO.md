@@ -1,5 +1,13 @@
 # TODO
 
+## Requested Linux data relocation (2026-09-29)
+
+- [x] Keep production code in /progs2/ptt and default Linux persistent storage to /data/ptt/data. Preserve explicit KIHA_DATA_DIR overrides and Windows/macOS development defaults; document timestamp-preserving full-root migration, ownership and service configuration. Three new configuration tests and all 495 backend tests / 461 subtests pass. Server copy/restart remains an operator step; see deployment_guide.md and IMPLEMENTATION.md.
+
+## Requested hover-tooltip cleanup (2026-09-29)
+
+- [x] Remove redundant plot/control hints and prevent hover tooltips from remaining after mouse activation, Escape, scrolling, or control removal. Preserve keyboard help, full-name, disabled-reason, legend and data tooltips. Build/lint, 77 frontend helpers, 17 focused browser groups and six theme-tooltip groups pass, including actual 125%/150% zoom. See IMPLEMENTATION.md. Explicit user request takes priority over independent Phase 11b.
+
 ## Requested scatter grid and navigation (2026-09-28)
 
 Latest follow-up: removed the visible drag hint text; build/lint pass.

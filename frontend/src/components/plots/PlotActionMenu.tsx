@@ -120,7 +120,7 @@ export function PlotActionMenu({ label, contextKey, targetRef, exportActions, hi
 
   return <>
     {!hideTrigger && <button ref={trigger} type="button" className={styles.trigger} aria-label={`Plot actions for ${label}`}
-      title="Plot actions (also right-click the plot)" aria-haspopup="menu" aria-expanded={!!active}
+      data-tooltip={active ? undefined : 'Plot actions (also right-click the plot)'} aria-haspopup="menu" aria-expanded={!!active}
       aria-controls={active ? id : undefined} onClick={() => {
         if (active) close(); else { const rect = trigger.current!.getBoundingClientRect(); openAt(rect.left, rect.bottom + 4); }
       }} onKeyDown={(event) => {

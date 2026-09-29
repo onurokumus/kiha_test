@@ -1,5 +1,87 @@
 # Implementation handoff
 
+## Linux data relocation (2026-09-29)
+
+Completed the explicit user request ahead of independent Phase 11b in
+D:/okumus/work_v2/kiha_test, codex/ptt-ui-rework-2026-09-28. This Git checkpoint also includes the completed tooltip cleanup below. No server
+deployment, data copy, or service change was performed.
+
+backend/app/config.py now defaults Linux to /data/ptt/data while code remains
+/progs2/ptt. KIHA_DATA_DIR continues to take precedence; Windows/macOS retain
+repository data/. Audited all runtime storage: tests, resumable uploads, trash,
+component registry, formula recipes and server defaults derive from this root.
+No frontend or per-feature path changes are necessary.
+
+Updated deployment_guide.md, README.md and docs/UI_REWORK.md. Production service
+instructions explicitly set the new root and mount dependency. Migration uses
+stopped-backend cp -a of the entire root (including hidden upload state), ptt
+ownership and a service drop-in. Timestamp preservation matters because saved
+analysis-session sample revisions include data.parquet mtime_ns. Existing
+EnvironmentFile overrides must be updated too. The original data is retained.
+
+Verification: three isolated startup-configuration tests cover Linux default,
+Windows/macOS defaults and environment precedence, including tests/trash child
+paths. Full backend suite: 495 passed / 461 subtests, two existing deprecations.
+The checkout venv lacks pytest and compatible TestClient dependencies; its
+focused unittest configuration checks pass. Full suite uses the existing
+D:/okumus/kiha_test/backend/.venv/Scripts/python.exe (Python 3.13.14, matching
+pinned dependencies), PYTHONPATH=D:/okumus/work_v2/kiha_test/backend,
+KIHA_DATA_DIR=D:/okumus/work/.ptt-data-directory/test-data,
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1, with:
+python -B -m pytest backend/tests -p no:cacheprovider -q.
+Independent review and git diff --check pass. No frontend changes in this step.
+
+Next operator step: deploy code, let active imports/rebuilds finish, stop the
+backend, copy /progs2/ptt/data/. into /data/ptt/data/, apply the documented service
+configuration and restart/check the expected test catalog. Actual Linux mount
+permissions and service execution were not tested from this Windows workspace.
+Next independent implementation milestone remains Phase 11b.
+
+## Hover-tooltip cleanup (2026-09-29)
+
+Current user request, ahead of independent Phase 11b. Authoritative checkout:
+D:/okumus/work_v2/kiha_test, codex/ptt-ui-rework-2026-09-28. Included in the same Git checkpoint as the data relocation above. No deployment was performed; the working tree was clean before this request.
+
+Removed the XY canvas gesture tooltip from the supplied photo (instructions
+remain in XY Details), repeated dropdown option labels/descriptions, plot slot
+numbers and Split Zoom hints. Full-name, icon, disabled-reason, scientific-value,
+colored legend and scatter-data tooltips remain. Dropdown, Options and plot-action
+triggers use data-tooltip and suppress hints while open.
+
+FeedbackProvider distinguishes pointer focus from keyboard focus. Click/drag,
+keyboard activation, Escape, scroll, resize, window blur and hidden tabs dismiss
+help. Escape focus restoration stays quiet until fresh keyboard navigation.
+A scoped active-target observer clears removed/hidden/changed controls and
+guards against old-target mutations cancelling the next hint. Empty native-title
+sentinels preserve React title updates/removals without restoring stale text.
+
+Acceptance: reproduce the stuck pointer-focus hint, verify dismissal and useful
+keyboard/data hints, keep XY gestures/details and maximize/restore working, and
+check desktop resizing plus actual 125%/150% browser zoom.
+
+Verification complete: frontend build/lint, all 77 helper tests, 17 focused
+browser groups and six theme-tooltip groups pass. Actual 125%/150% browser zoom,
+960/1100px desktop widths, maximize/restore, single-Escape dialog closure,
+dynamic title changes/removal, ARIA cleanup, scatter data and colored legends
+are covered. No JavaScript errors or API writes; independent final review found
+no blockers. The old build reproduced both the clicked-control and XY canvas
+focus persistence bugs. Tests use isolated
+copies of ptt_demo_run_a/b under D:/okumus/work/.ptt-tooltip-fix/data; all browser
+API writes are blocked. Browser-only Python/Playwright uses the existing global
+runtime; the backend uses its required Python 3.13 environment. Original data
+is unchanged. Updated verify_dark_mode.py expectations reflect activation
+dismissal; new verify_hover_tooltips.py covers the shared lifecycle and plots.
+
+Commands: npm run build; npm run lint; node --test tests/*.test.mjs (frontend);
+python -B -X utf8 scripts/verify_hover_tooltips.py;
+python -B -X utf8 scripts/verify_dark_mode.py --tooltip-only (repository root).
+Reports and before/after screenshots: %TEMP%/ptt-hover-tooltips and
+%TEMP%/ptt-dark-mode. The 150% screenshot was visually inspected.
+
+Built preview: index-cneQXkXM.js. Existing Vite bundle-size advisory remains.
+No remaining work for this request. Temporary test servers stopped after QA.
+Next independent backlog milestone remains Phase 11b.
+
 ## Complete Git checkpoint (2026-09-29)
 
 The user requested committing and pushing all remaining changes to

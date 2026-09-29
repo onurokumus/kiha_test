@@ -5,6 +5,7 @@ This guide targets the current production host and layout:
 - host: `heliweb1`
 - application URL: `http://heliweb1/ptt/`
 - checkout: `/progs2/ptt`
+- persistent data: `/data/ptt/data/` (separate from the checkout)
 - service account and checkout owner: `ptt:ptt`
 - backend service: `ptt-backend.service`
 
@@ -35,6 +36,9 @@ sudo useradd -r -M -d /progs2/ptt -s /usr/sbin/nologin ptt
 sudo install -d -o ptt -g ptt /progs2/ptt
 sudo -u ptt git clone https://github.com/onurokumus/kiha_test.git /progs2/ptt
 
+# Persistent storage; the backend service account must be able to write here.
+sudo install -d -o ptt -g ptt /data/ptt/data
+
 # backend venv — python3.11 executable explicitly
 cd /progs2/ptt/backend
 sudo -u ptt python3.11 -m venv .venv
@@ -59,8 +63,11 @@ sudo install -d /var/www/heliweb1
 sudo ln -s /progs2/ptt-releases/$PTT_RELEASE /var/www/heliweb1/ptt
 ```
 
-Test data lands in `/progs2/ptt/data/` by default (`KIHA_DATA_DIR` overrides — put it
-on a disk with room; a 1 h test is ~2 GB on disk plus the retained raw.csv).
+Linux defaults to `/data/ptt/data/`; `KIHA_DATA_DIR` overrides this location.
+Windows/macOS development defaults to the checkout's `data/` directory. The
+entire root is persistent: `tests/` (including resumable `.upload/` state),
+`trash/`, `components.json`, `formula_recipes.json`, and `default-settings.json`.
+Put it on a disk with room; a 1 h test is ~2 GB on disk plus retained `raw.csv`.
 
 ## 2. Backend service — `/etc/systemd/system/ptt-backend.service`
 
@@ -68,6 +75,7 @@ on a disk with room; a 1 h test is ~2 GB on disk plus the retained raw.csv).
 [Unit]
 Description=PTT backend (FastAPI/uvicorn, single process by design)
 After=network.target
+RequiresMountsFor=/data/ptt/data
 
 [Service]
 Type=simple
@@ -83,7 +91,7 @@ Environment=PYTHONFAULTHANDLER=1
 # Optional: complete comma-separated CORS allowlist for direct backend access.
 # /ptt is a URL path, not part of an Origin; change these if the host/scheme does.
 Environment=KIHA_CORS_ORIGINS=http://heliweb1
-# Environment=KIHA_DATA_DIR=/srv/ptt-data
+Environment=KIHA_DATA_DIR=/data/ptt/data
 # Environment=KIHA_MAX_UPLOAD_BYTES=21474836480
 # Resumable-upload defaults (values are bytes except STALE_AGE_S):
 # Environment=KIHA_UPLOAD_CHUNK_BYTES=16777216
@@ -108,6 +116,44 @@ sudo systemctl enable --now ptt-backend
 curl http://127.0.0.1:8000/api/health        # -> {"ok":true}
 sudo journalctl -u ptt-backend -f            # logs (kiha.* + uvicorn)
 ```
+
+### Move an existing installation's data
+
+Keep the code and virtual environment under `/progs2/ptt`. Let active imports
+and rebuilds finish, then stop the backend before copying so the source remains
+consistent. Use `cp -a`, which preserves sample-file timestamps used by saved
+analysis sessions to recognize unchanged data. The `/.` copies all contents,
+including hidden upload state, directly into the new root without nesting `data`.
+Use an empty destination for this one-time migration.
+
+```bash
+sudo systemctl stop ptt-backend
+sudo install -d -o ptt -g ptt /data/ptt/data
+sudo cp -a /progs2/ptt/data/. /data/ptt/data/
+sudo chown -R ptt:ptt /data/ptt/data
+
+# Persist the path for the existing service, overriding any old Environment= value.
+sudo install -d /etc/systemd/system/ptt-backend.service.d
+sudo tee /etc/systemd/system/ptt-backend.service.d/data-directory.conf >/dev/null <<'EOF'
+[Unit]
+RequiresMountsFor=/data/ptt/data
+[Service]
+Environment=KIHA_DATA_DIR=/data/ptt/data
+EOF
+
+# If your customized unit uses EnvironmentFile=, update KIHA_DATA_DIR in that
+# file too: EnvironmentFile values take precedence over Environment= entries.
+sudo systemctl daemon-reload
+sudo systemctl start ptt-backend
+curl --fail http://127.0.0.1:8000/api/health
+curl --fail http://127.0.0.1:8000/api/tests
+```
+
+Confirm the expected tests appear in PTT. Keep `/progs2/ptt/data/` as the original
+copy until verification is complete; this procedure does not delete it. Future
+uploads and edits go to `/data/ptt/data/`. Existing environment overrides always
+take precedence over the code default, so update an old `KIHA_DATA_DIR` value
+even when deploying the new code. No nginx or frontend path changes are needed.
 
 ## 3. nginx — existing `heliweb1` server
 

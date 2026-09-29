@@ -471,9 +471,6 @@ export const SearchableSelect = ({
                       aria-disabled={option.disabled || undefined}
                       data-active={active || undefined}
                       disabled={option.disabled}
-                      title={
-                        option.description ? `${option.label}\n${option.description}` : option.label
-                      }
                       tabIndex={-1}
                       onMouseDown={(event) => event.preventDefault()}
                       onPointerMove={() => {
@@ -527,7 +524,7 @@ export const SearchableSelect = ({
         aria-controls={isOpen ? listboxId : undefined}
         aria-haspopup="listbox"
         disabled={disabled || options.length === 0}
-        title={title ?? selectedOption?.label}
+        data-tooltip={isOpen ? undefined : title ?? selectedOption?.label}
         onClick={() => (isOpen ? closeMenu() : openMenu())}
         onKeyDown={handleTriggerKeyDown}
       >

@@ -641,7 +641,7 @@ function FragmentRow({ tp, sel, exportHref, isDraft, onPatch, onZoom, onRemove, 
              onFocus={onSelect}
              onChange={(e) => onPatch({ notes: e.target.value })} />
       <span style={{ display: 'flex', gap: 4 }}>
-        <button className="btn" onClick={onZoom} title="zoom to test point">Zoom</button>
+        <button className="btn" onClick={onZoom}>Zoom</button>
         <span style={{ alignSelf: 'center', color: 'var(--muted, #626f83)' }} title={`Test-point ID ${tp.id}`}>#{tp.id}</span>
         <a className="btn" href={exportHref} download
            aria-label={`Download ${isDraft ? 'draft ' : ''}CSV for TP ${tp.id}`}

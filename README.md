@@ -66,6 +66,13 @@ pyenv, and Node 18+ via nvm.
 
 Run with **`./start.sh`** (backend + UI in the background, logs in
 `backend/backend.log` and `frontend/vite.log`), stop with **`./stop.sh`**.
+Linux stores persistent data in `/data/ptt/data/` by default; the backend user
+needs write access. For local development with data inside the checkout, run
+`KIHA_DATA_DIR="$PWD/data" ./start.sh` from the repository root. Windows/macOS
+keep the checkout's `data/` default. `KIHA_DATA_DIR` overrides either default.
+See [the deployment guide](deployment_guide.md#move-an-existing-installations-data)
+for the production service setup and migration from `/progs2/ptt/data/`.
+
 Or run the two halves manually in separate terminals:
 
 ```bash

@@ -65,8 +65,9 @@ Verified source details relevant to deployment:
 - `backend/run.py` runs exactly one uvicorn worker. Locks and upload commit
   coordination are in-process; multiple workers/replicas must not share the
   data directory.
-- `KIHA_DATA_DIR` selects persistent storage; the default is repository
-  `data/`. Durable uploads live in
+- `KIHA_DATA_DIR` selects persistent storage; Linux defaults to
+  `/data/ptt/data/`, while Windows/macOS default to repository `data/`.
+  Here `data/` denotes that configured root. Durable uploads live in
   `data/tests/<name>/.upload/manifest.json`, `commits/` and
   `raw.csv.uploading`. There is no separate `data/uploads/` directory in this
   implementation. Keep hidden directories when copying or backing up data.

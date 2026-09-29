@@ -451,7 +451,6 @@ export const XYPlot: React.FC<XYPlotProps> = ({
         <div
           ref={chartRef} tabIndex={0} aria-label={`Plot canvas for ${label}`}
           className={styles.plotCanvas}
-          title="Drag to zoom · Shift-drag or middle-drag to pan · Wheel to zoom · Double-click to reset"
         />
         <PlotStateOverlay
           loading={pending}

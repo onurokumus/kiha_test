@@ -212,7 +212,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
           {plotsToShow.map(({ cfg, index }) => <div key={index} className={styles.emptySignal}
             data-select-focus-scope={`${selectFocusScope}-${index}`}
             role="group" aria-label={`Plot ${index + 1} variables`}>
-            <span className={styles.slotNumber} title={`Plot ${index + 1}`}>{index + 1}</span>
+            <span className={styles.slotNumber}>{index + 1}</span>
             {viewMode === 'xy' && <><span className={styles.axisLabel}>X</span>
               <SearchableSelect value={xyXCols[index] ?? ''} options={variableOptions}
                 onChange={column => onXYXColChange?.(index, column)}

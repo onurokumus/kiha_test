@@ -15,6 +15,13 @@ interface ConfirmRequest {
 
 const TOOLTIP_ID = 'page-hover-tooltip';
 
+function readTooltipText(target: HTMLElement): string {
+  const title = target.getAttribute('title');
+  return title === '' && target.dataset.pageTooltipTitle !== undefined
+    ? target.dataset.pageTooltipTitle
+    : title ?? target.dataset.tooltip ?? '';
+}
+
 interface TooltipLegendEntry {
   label: string;
   color: string;
@@ -47,6 +54,7 @@ function PageTooltip() {
     placement: 'top' | 'bottom';
   } | null>(null);
   const targetRef = useRef<HTMLElement | null>(null);
+  const sourceRef = useRef<'pointer' | 'keyboard'>('pointer');
   const showTimerRef = useRef<number | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
 
@@ -62,7 +70,8 @@ function PageTooltip() {
 
     const savedTitle = target.dataset.pageTooltipTitle;
     if (savedTitle !== undefined) {
-      target.setAttribute('title', savedTitle);
+      // React may have supplied a newer title while the hint was visible.
+      if (target.getAttribute('title') === '') target.setAttribute('title', savedTitle);
       delete target.dataset.pageTooltipTitle;
     }
 
@@ -90,13 +99,15 @@ function PageTooltip() {
       targetRef.current = target;
 
       const title = target.getAttribute('title');
-      const text = title ?? target.dataset.tooltip ?? target.dataset.pageTooltipTitle ?? '';
+      const text = readTooltipText(target);
       if (!text.trim()) return '';
 
       // Suppress the unstyled browser bubble while our tooltip is active.
-      if (title !== null) {
+      if (title) {
         target.dataset.pageTooltipTitle = title;
-        target.removeAttribute('title');
+        // An empty sentinel suppresses the native bubble while allowing React's
+        // later title removal to be observed instead of resurrecting old text.
+        target.setAttribute('title', '');
       }
 
       if (target.dataset.pageTooltipDescribedby === undefined) {
@@ -119,12 +130,14 @@ function PageTooltip() {
         setTooltip(null);
         setPosition(null);
       }
-      if (!prepareTarget(target)) return;
+      sourceRef.current = immediate ? 'keyboard' : 'pointer';
+      if (!prepareTarget(target)) { hide(); return; }
 
       const reveal = () => {
         showTimerRef.current = null;
-        if (targetRef.current !== target || !target.isConnected) return;
-        const text = target.getAttribute('title') ?? target.dataset.tooltip ?? target.dataset.pageTooltipTitle ?? '';
+        if (targetRef.current !== target) return;
+        if (!target.isConnected || !target.getClientRects().length) { hide(); return; }
+        const text = readTooltipText(target);
         if (!text.trim()) { hide(); return; }
         setPosition(null);
         setTooltip({ target, text, legend: readTooltipLegend(target), rect: target.getBoundingClientRect() });
@@ -138,13 +151,26 @@ function PageTooltip() {
 
   useEffect(() => {
     const selector = '[title], [data-tooltip], [data-page-tooltip-title]';
-    const findTarget = (eventTarget: EventTarget | null) =>
-      eventTarget instanceof Element ? eventTarget.closest<HTMLElement>(selector) : null;
+    let keyboardInput = true;
+    const findTarget = (eventTarget: EventTarget | null) => {
+      const target = eventTarget instanceof Element ? eventTarget.closest<HTMLElement>(selector) : null;
+      // An open control already exposes its content; don't cover it with a hint.
+      return target?.getAttribute('aria-expanded') === 'true' ? null : target;
+    };
+
+    const handlePointerDown = () => {
+      keyboardInput = false;
+      hide();
+    };
 
     const handlePointerOver = (event: PointerEvent) => {
-      if (event.pointerType === 'touch') return;
+      if (event.pointerType === 'touch' || event.buttons !== 0) return;
       const target = findTarget(event.target);
-      if (!target || target === targetRef.current) return;
+      if (!target) {
+        if (sourceRef.current === 'pointer') hide();
+        return;
+      }
+      if (target === targetRef.current) return;
       show(target, false);
     };
 
@@ -154,13 +180,14 @@ function PageTooltip() {
         return;
       }
       if (event.relatedTarget instanceof Node && activeTarget.contains(event.relatedTarget)) return;
-      if (activeTarget.matches(':focus-within')) return;
+      // Mouse focus survives clicks, but must never pin a hover tooltip.
+      if (sourceRef.current === 'keyboard' && activeTarget.matches(':focus-within')) return;
       hide();
     };
 
     const handleFocusIn = (event: FocusEvent) => {
       const target = findTarget(event.target);
-      if (target) show(target, true);
+      if (target && keyboardInput) show(target, true);
       else hide();
     };
 
@@ -170,49 +197,68 @@ function PageTooltip() {
         return;
       }
       if (event.relatedTarget instanceof Node && activeTarget.contains(event.relatedTarget)) return;
-      if (activeTarget.matches(':hover')) return;
       hide();
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && targetRef.current) hide();
+      // Escape often restores focus to a menu/dialog opener. Keep that return
+      // quiet until the user navigates again instead of immediately reopening help.
+      keyboardInput = event.key !== 'Escape';
+      if (!['Tab', 'Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) hide();
     };
 
-    const refreshPosition = () => {
-      const target = targetRef.current;
-      if (!target) return;
-      if (!target.isConnected) {
-        hide();
-        return;
-      }
-      const rect = target.getBoundingClientRect();
-      setTooltip((current) => {
-        if (!current) return current;
-        const previous = current.rect;
-        return previous.x === rect.x && previous.y === rect.y &&
-          previous.width === rect.width && previous.height === rect.height
-          ? current : { ...current, rect };
-      });
+    const handleVisibilityChange = () => {
+      if (document.hidden) hide();
     };
 
+    // Capture activation before child controls move focus or stop propagation.
+    document.addEventListener('pointerdown', handlePointerDown, true);
     document.addEventListener('pointerover', handlePointerOver);
     document.addEventListener('pointerout', handlePointerOut);
     document.addEventListener('focusin', handleFocusIn);
     document.addEventListener('focusout', handleFocusOut);
-    document.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('resize', refreshPosition);
-    document.addEventListener('scroll', refreshPosition, true);
+    document.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('blur', hide);
+    window.addEventListener('resize', hide);
+    document.addEventListener('scroll', hide, true);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
       document.removeEventListener('pointerover', handlePointerOver);
       document.removeEventListener('pointerout', handlePointerOut);
       document.removeEventListener('focusin', handleFocusIn);
       document.removeEventListener('focusout', handleFocusOut);
-      document.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('resize', refreshPosition);
-      document.removeEventListener('scroll', refreshPosition, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('blur', hide);
+      window.removeEventListener('resize', hide);
+      document.removeEventListener('scroll', hide, true);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       hide();
     };
   }, [hide, show]);
+
+  const visibleTarget = tooltip?.target;
+  useEffect(() => {
+    if (!visibleTarget) return;
+    // React can replace a control without a pointerout/focusout event. Watch
+    // only while a tooltip is visible, and ignore unrelated plot/UI mutations.
+    const observer = new MutationObserver(records => {
+      if (targetRef.current !== visibleTarget) return;
+      if (!visibleTarget.isConnected) { hide(); return; }
+      const relevant = records.filter(record => record.target instanceof Element && record.target.contains(visibleTarget));
+      if (!relevant.length) return;
+      const contentChanged = relevant.some(record => record.target === visibleTarget &&
+        ['title', 'data-tooltip', 'data-tooltip-legend'].includes(record.attributeName ?? ''));
+      if (relevant.some(record => record.target === visibleTarget && record.attributeName === 'title') &&
+          !visibleTarget.getAttribute('title')) delete visibleTarget.dataset.pageTooltipTitle;
+      if (contentChanged || !visibleTarget.getClientRects().length ||
+          getComputedStyle(visibleTarget).visibility === 'hidden' ||
+          visibleTarget.getAttribute('aria-expanded') === 'true') hide();
+    });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true,
+      attributeFilter: ['title', 'data-tooltip', 'data-tooltip-legend', 'aria-expanded', 'hidden', 'style', 'class', 'open'] });
+    return () => observer.disconnect();
+  }, [visibleTarget, hide]);
 
   useLayoutEffect(() => {
     const element = tooltipRef.current;
