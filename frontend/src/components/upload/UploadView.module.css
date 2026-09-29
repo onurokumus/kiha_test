@@ -470,3 +470,33 @@
 .manageActions > summary { cursor: pointer; padding: 5px 0; }
 .manageActions > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 5px; }
 .manageActions > summary:focus-visible { outline: 2px solid var(--focus, #405994); outline-offset: 2px; }
+
+.testNameRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.testNameRow .testName { min-width: 0; }
+.renameButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--muted, #63748b);
+  background: transparent;
+  cursor: pointer;
+}
+.renameButton:hover:not(:disabled) { color: var(--accent, #263685); background: var(--selected-bg, #edf2fd); border-color: var(--border-strong, #bdcbe4); }
+.renameButton:focus-visible { outline: 2px solid var(--focus, #263685); outline-offset: 2px; }
+.renameButton:disabled { opacity: .4; cursor: default; }
+.renameForm { display: grid; gap: 6px; min-width: 0; white-space: normal; }
+.renameForm :global(.input) { width: 100%; min-width: 0; font-size: 12px; }
+.renameActions { display: flex; flex-wrap: wrap; gap: 5px; }
+.renameActions :global(.btn) { padding: 4px 7px; font-size: 11px; }
+.renameError { margin: 0; color: var(--danger, #b84343); font-size: 11px; font-weight: 400; overflow-wrap: anywhere; }

@@ -25,6 +25,7 @@ import { ComponentSetsPicker } from '../controls/ComponentSetsPicker';
 import { useComponentCatalog } from '../../hooks/useComponentCatalog';
 import { componentSetsError, componentSetsSummary, type ComponentSet } from '../../utils/components';
 import { TrashBin } from './TrashBin';
+import TestNameEditor from './TestNameEditor';
 
 interface Props {
   tests: TestInfo[];
@@ -44,6 +45,8 @@ interface Props {
   onEditNotes: (name: string, section?: 'components') => void;
   /** A test was deleted server-side — parent drops caches + refreshes. */
   onTestDeleted: (name: string) => void;
+  onTestRename: (name: string, newName: string) => Promise<void>;
+  renameDisabled: boolean;
   /** Server-side list changed (restore) — parent refreshes the list. */
   onTestsChanged: (restoredName?: string) => void;
   /** A test's TP averages were recomputed — parent drops its stats cache. */
@@ -206,6 +209,8 @@ export default function UploadView({
   onOpenTest,
   onEditNotes,
   onTestDeleted,
+  onTestRename,
+  renameDisabled,
   onTestsChanged,
   onStatsRebuilt,
 }: Props) {
@@ -216,6 +221,8 @@ export default function UploadView({
   const uploaderRef = useRef<HTMLInputElement>(null);
   const setupRef = useRef<HTMLElement>(null);
   const [trashRevision, setTrashRevision] = useState(0);
+  const historySearchRef = useRef<HTMLInputElement>(null);
+  const [renameFocus, setRenameFocus] = useState<string | null>(null);
   const [busyRow, setBusyRow] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
   const [actionNote, setActionNote] = useState('');
@@ -395,6 +402,28 @@ export default function UploadView({
   const selectOriginalCsv = (target: UploadItem | TestInfo) => {
     resumeTargetRef.current = target;
     resumeFileRef.current?.click();
+  };
+
+  useEffect(() => {
+    if (renameFocus === null || busyRow !== null) return;
+    const button = document.getElementById(`rename-test-${encodeURIComponent(renameFocus)}`);
+    (button instanceof HTMLButtonElement && !button.disabled ? button : historySearchRef.current)?.focus();
+    setRenameFocus(null);
+  }, [renameFocus, busyRow, tests]);
+
+  const handleRename = async (name: string, newName: string) => {
+    setBusyRow(name);
+    setActionError('');
+    setActionNote('');
+    try {
+      await onTestRename(name, newName);
+      setQualityTest(current => current === name ? newName : current);
+      setSplitDownloadTest(current => current === name ? newName : current);
+      setActionNote(`Renamed ${name} to ${newName}.`);
+      setRenameFocus(newName);
+    } finally {
+      setBusyRow(null);
+    }
   };
 
   const handleDelete = async (name: string) => {
@@ -1013,6 +1042,7 @@ export default function UploadView({
               <input
                 className="input"
                 type="search"
+                ref={historySearchRef}
                 aria-label="Search upload history"
                 placeholder="Search tests, files, people, components…"
                 value={historyQuery}
@@ -1095,12 +1125,11 @@ export default function UploadView({
                       <Fragment key={t.name}>
                         <tr>
                           <td style={{ ...tdStyle, fontWeight: 600, overflow: 'hidden' }}>
-                            <span className={styles.testName} title={t.name}>
-                              {t.name}
-                            </span>
+                            <TestNameEditor name={t.name} names={tests.map(test => test.name)}
+                              disabled={busy || busyRow !== null || renameDisabled} onRename={handleRename} />
                             <div className={styles.metadataLinks}>
                             {t.status === 'ready' ? (
-                              <button className={styles.notesLink} onClick={() => onEditNotes(t.name)}
+                              <button className={styles.notesLink} disabled={renameDisabled} onClick={() => onEditNotes(t.name)}
                                 aria-label={`Edit notes for ${t.name}`} title={t.description || 'Add a description and findings'}>
                                 {t.description || 'Add notes'}
                               </button>
@@ -1109,7 +1138,7 @@ export default function UploadView({
                                 {t.description}
                               </span>
                             )}
-                            {t.status === 'ready' && <button className={styles.notesLink} onClick={() => onEditNotes(t.name, 'components')}
+                            {t.status === 'ready' && <button className={styles.notesLink} disabled={renameDisabled} onClick={() => onEditNotes(t.name, 'components')}
                               aria-label={`Edit components for ${t.name}`} title={componentSummary || 'Assign components'}>
                               {componentSummary || 'Assign components'}
                             </button>}
@@ -1192,6 +1221,7 @@ export default function UploadView({
                                 <button
                                   className={`btn ${styles.analyzeButton}`}
                                   aria-label={`Analyze ${t.name}`}
+                                  disabled={renameDisabled}
                                   onClick={() => onOpenTest(t.name)}
                                 >
                                   Analyze

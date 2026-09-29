@@ -39,6 +39,7 @@ import {
   fetchWindow,
   isAbortError,
   putDefaultSettings,
+  renameTest,
 } from './services/api';
 import { DEFAULT_FILTER_UI, FilterUi, buildFilterSpec } from './constants/filters';
 import { AppSettings, loadSettings, saveSettings, parseUploadFs } from './constants/settings';
@@ -163,6 +164,9 @@ function App() {
   const [metaErrors, setMetaErrors] = useState<Record<string, string>>({});
   // Saved preferences (localStorage) — seed the defaults below and feed the
   // Settings tab. Declared first: several states initialize from it.
+  const uploadRenameInFlight = useRef(false);
+  const testListEpoch = useRef(0);
+  const [uploadRenameBusy, setUploadRenameBusy] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   // Unsaved Settings-page edits (null = none). Hoisted here so switching tabs
   // doesn't silently discard them; nothing applies until Save.
@@ -266,7 +270,7 @@ function App() {
   const [splitBusy, setSplitBusy] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
   useUnsavedChanges({
-    isDirty: settingsDraft !== null || splitBusy || editBusy || pendingUploadFiles.length > 0,
+    isDirty: settingsDraft !== null || splitBusy || editBusy || uploadRenameBusy || pendingUploadFiles.length > 0,
   });
   const [scatterRatio, setScatterRatio] = useState(
     hasRestoredSession ? restoredSession.scatterRatio : 40
@@ -836,9 +840,13 @@ function App() {
     // exists server-side as status 'receiving' — poll so it appears in the
     // list without waiting for the POST to resolve.
     if (!busy && !uploadsActive && !rebuildPending.current && tab !== 'uploads') return;
+    let canceled = false;
     const id = window.setInterval(async () => {
+      if (uploadRenameInFlight.current) return;
+      const epoch = testListEpoch.current;
       try {
         const list = await fetchTests();
+        if (canceled || epoch !== testListEpoch.current) return;
         setTests(list);
         if (!currentTest && sessionRecoveryReady && !recoveryNeedsReview && !recoveryLegacy) {
           const firstReady = list.find((t) => t.status === 'ready');
@@ -859,7 +867,7 @@ function App() {
         // transient — keep polling
       }
     }, 2000);
-    return () => window.clearInterval(id);
+    return () => { canceled = true; window.clearInterval(id); };
     // `tab` is read in the bail-out above: without it here, opening the Uploads
     // tab would not (re)start polling unless some other dep also changed (1.17).
   }, [tests, uploadsActive, currentTest, invalidateTest, tab, sessionRecoveryReady, recoveryNeedsReview, recoveryLegacy, setTests]);
@@ -923,13 +931,14 @@ function App() {
   // Switching back from the split editor: the active test's TP definitions
   // may have changed — refetch it (and its stats).
   const confirmDiscardActiveDraft = useCallback(async (): Promise<boolean> => {
-    const busy = tab === 'split' ? splitBusy : tab === 'edit' ? editBusy : false;
+    const busy = tab === 'split' ? splitBusy : tab === 'edit' ? editBusy : tab === 'uploads' && uploadRenameBusy;
     if (busy) {
       await confirmAction({
         title: tab === 'split' ? 'Save still in progress' : 'Data change still in progress',
         description:
           tab === 'split'
             ? 'Test-point changes are still being saved. Wait for the save to finish before leaving Split.'
+            : tab === 'uploads' ? 'The test is being renamed. Wait for it to finish before leaving Uploads.'
             : 'A data change is still being submitted. Wait for it to finish before leaving Edit.',
         confirmLabel: 'Got it',
         showCancel: false,
@@ -964,7 +973,7 @@ function App() {
       if (tab === 'uploads') setPendingUploadFiles([]);
     }
     return discard;
-  }, [confirmAction, editBusy, editDirty, pendingUploadFiles.length, splitBusy, splitDirty, tab]);
+  }, [confirmAction, editBusy, editDirty, pendingUploadFiles.length, splitBusy, splitDirty, tab, uploadRenameBusy]);
 
   const handleTabChange = async (next: AppTab): Promise<boolean> => {
     if (next === tab) return true;
@@ -973,8 +982,9 @@ function App() {
     setTab(next);
     if (next === 'uploads') {
       // Fresh history immediately; the 2 s poller takes over while open.
+      const epoch = testListEpoch.current;
       fetchTests()
-        .then(setTests)
+        .then(list => { if (epoch === testListEpoch.current) setTests(list); })
         .catch(() => {});
     }
     return true;
@@ -982,6 +992,7 @@ function App() {
 
   // -- Uploads tab callbacks --
   const handleOpenTest = async (name: string, destination: 'analyze' | 'edit' = 'analyze', section?: 'components') => {
+    if (uploadRenameInFlight.current) return;
     if (await handleTestChange(name)) {
       setEditInitialSection(destination === 'edit' ? section : undefined);
       setTab(destination);
@@ -1002,6 +1013,41 @@ function App() {
       }
     } catch {
       invalidateTest(name); // poller will fix the list
+    }
+  };
+
+  const handleUploadTestRename = async (name: string, newName: string) => {
+    if (uploadRenameInFlight.current) throw new Error('A test rename is already in progress.');
+    // Capture BEFORE POST: polling may see the new name before its response.
+    // Identity recovery remaps selections, filters and ranges without resetting them.
+    const snapshot = sessionRecoveryReady && !recoveryNeedsReview && !recoveryLegacy
+      ? captureSession() : recoveryInputRef.current;
+    const wasReady = sessionRecoveryReady;
+    uploadRenameInFlight.current = true;
+    testListEpoch.current += 1;
+    setUploadRenameBusy(true);
+    setSessionRecoveryReady(false);
+    try {
+      try {
+        await renameTest(name, newName);
+      } catch (reason) {
+        setSessionRecoveryReady(wasReady);
+        throw reason;
+      }
+      if (settings.datasheetZone === name) {
+        const next = { ...settings, datasheetZone: newName };
+        setSettings(next);
+        saveSettings(next);
+      }
+      setSettingsDraft(previous => previous?.datasheetZone === name
+        ? { ...previous, datasheetZone: newName } : previous);
+      recoveryInputRef.current = snapshot;
+      // Recovery reports its own failures. A completed rename must never look
+      // like a failed POST that the editor should retry under the old name.
+      await recoverSessionRef.current();
+    } finally {
+      uploadRenameInFlight.current = false;
+      setUploadRenameBusy(false);
     }
   };
 
@@ -1206,6 +1252,7 @@ function App() {
   // Share exact original TP statistics across scatter, filters and visible
   // time plots. Additional plot columns are scanned only for selected tests.
   useEffect(() => {
+    if (loading || !sessionRecoveryReady) return;
     const common = [xAxis, yAxis, ...filterColumns];
     const selectedTests = new Set(selectedTPs.filter((s) => !hiddenTPs.has(s.id)).map((s) => s.test));
 
@@ -1265,12 +1312,12 @@ function App() {
           });
       });
     });
-  }, [tpsByTest, columnsByTest, xAxis, yAxis, filterColumns, statsCache, statsRetry, statsErrors, selectedTPs, hiddenTPs, traceColumns]);
+  }, [tpsByTest, columnsByTest, xAxis, yAxis, filterColumns, statsCache, statsRetry, statsErrors, selectedTPs, hiddenTPs, traceColumns, loading, sessionRecoveryReady]);
 
   // Fetch missing traces for selected test points (columns shown in the grid,
   // restricted to what each TP's own test actually has)
   useEffect(() => {
-    if (selectedTPs.length === 0) return;
+    if (loading || !sessionRecoveryReady || selectedTPs.length === 0) return;
 
     selectedTPs.forEach((s) => {
       const testCols = columnsByTest[s.test] ?? [];
@@ -1331,7 +1378,7 @@ function App() {
           });
         });
     });
-  }, [selectedTPs, traceColumns, columnsByTest, setSelectedTPs, traceRetry]);
+  }, [selectedTPs, traceColumns, columnsByTest, setSelectedTPs, traceRetry, loading, sessionRecoveryReady]);
 
   const retryTestPointTraces = useCallback(() => {
     traceRequestEpoch.current += 1;
@@ -1968,6 +2015,8 @@ function App() {
       onOpenTest={handleOpenTest}
       onEditNotes={(name, section) => { void handleOpenTest(name, 'edit', section); }}
       onTestDeleted={handleTestDeleted}
+      onTestRename={handleUploadTestRename}
+      renameDisabled={loading || !sessionRecoveryReady || uploadRenameBusy}
       onTestsChanged={handleTestsChanged}
       onStatsRebuilt={handleStatsRebuilt}
     />

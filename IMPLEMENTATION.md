@@ -1,13 +1,19 @@
 # Implementation handoff
 
-## Dark-mode and scatter Git checkpoint (2026-09-28)
+## Complete Git checkpoint (2026-09-29)
 
-This checkpoint includes the header theme switch, themed controls/plots and light
-PNG exports, adaptive scatter grid/navigation, the combined filter/control row,
-More-menu export/reset actions, and the pointer-focus/drag-hint follow-ups.
-Target: origin/codex/ptt-ui-rework-2026-09-28. The separate Uploads inline-rename
-feature remains local and is excluded from this checkpoint. Verification below
-applies to these changes; no deployment is included.
+The user requested committing and pushing all remaining changes to
+origin/codex/ptt-ui-rework-2026-09-28. This checkpoint includes the Uploads
+inline test-name editor, rename/recovery integration, styles and browser test.
+The dark-mode and scatter work was already committed and pushed as efe6d28.
+Earlier local/uncommitted status notes below describe the implementation stage.
+
+Fresh verification: frontend build/lint and all 77 helper tests pass; all nine
+isolated Uploads rename browser groups pass against the built frontend,
+including failure/retry, state recovery and actual 125%/150% browser zoom.
+All browser API writes were simulated. Independent review found no blockers;
+git diff --check passes. No deployment or user dataset changes. No feature work
+remains in this checkpoint; the next independent backlog milestone is Phase 11b.
 
 ## Scatter grid and navigation (2026-09-28)
 
@@ -136,6 +142,41 @@ Verification:
 Built preview: http://127.0.0.1:8087/ptt/, index--iILnIwo.js. Changes remain
 local/uncommitted alongside the independent Uploads rename work; no push or
 deployment. No remaining dark-mode work. Next independent milestone: Phase 11b.
+
+## Inline test rename in Uploads (2026-09-28)
+
+Completed the explicit user request ahead of the independent Phase 11b backlog.
+Target: D:/okumus/work_v2/kiha_test, codex/ptt-ui-rework-2026-09-28. Changes are
+local/uncommitted; the rebuilt preview at http://127.0.0.1:8087/ptt/ serves
+index-BDI_zM6m.js. No deployment or user dataset changes.
+
+A compact pencil beside each history test name opens an inline editor with
+Save name/Cancel rename, Enter/Escape, selected input text and focus return.
+Trimmed names follow the existing rename API character rules; blank, unchanged
+and duplicate names cannot submit. Server errors retain the draft for retry.
+Busy tests and concurrent row actions cannot rename. Search stays unchanged;
+if the renamed row leaves its results, focus returns to history search.
+
+TestNameEditor.tsx reuses UploadView.module.css; UploadView wires status and row
+focus. App.tsx reuses renameTest and identity-aware recovery, capturing the live
+workspace before POST. Active/inactive renames preserve TP selections, hidden
+state/colors, filters, axes and zoom, and remap datasheet settings. Recovery
+failures retry separately from a completed rename. Navigation guards and list
+response epochs prevent concurrent changes/stale polls from replacing recovery;
+statistics and trace loaders wait for verified source recovery.
+
+Verification:
+- Frontend build/lint and all 60 helper tests pass (existing bundle-size advisory).
+- Python 3.13 backend suite: 492 pass / 456 subtests, two existing deprecations.
+- python -X utf8 scripts/verify_upload_rename.py: nine groups pass, including
+  mouse/keyboard save/cancel, failures/retry, duplicate submissions, delayed stale
+  list responses, current/inactive tests, filtered history focus, page reload,
+  recovery outage, datasheet rename, 1100px and actual 125%/150% browser zoom.
+  All API mutations are simulated; only expected injected 409/503 console errors.
+- python -X utf8 scripts/verify_scatter_reload.py: all existing reload checks pass.
+- Independent review resolved navigation/focus and stale-list races. The 150%
+  screenshot was visually inspected; evidence: %TEMP%/ptt-upload-rename.
+- git diff --check passes. Next independent backlog milestone remains Phase 11b.
 
 ## Scatter-filter fixes integrated into Codex rework (2026-09-28)
 

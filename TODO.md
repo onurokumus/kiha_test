@@ -12,6 +12,13 @@ Follow-up complete: combine Filters/count and navigation into one row, move expo
 
 - [x] Add a persistent header theme switch, readable dark controls and plots across all sections, and preserve analysis state and light PNG exports. Validate storage/system preferences, desktop resizing, keyboard access and browser zoom. Build/lint, 60 helper tests, 11 app browser groups and seven plot-mode groups pass; see IMPLEMENTATION.md.
 
+## Requested inline Uploads test rename (2026-09-28)
+
+- [x] Add a small edit button beside uploaded test names, with inline Save/Cancel, Enter/Escape, name validation and failure retry. Preserve the active analysis through renames. Build/lint, 60 frontend tests, 492 backend tests/456 subtests, nine isolated rename browser groups and existing scatter reload checks pass; see IMPLEMENTATION.md.
+
+Included in the user-requested complete Git checkpoint (2026-09-29). Fresh
+build/lint, all 77 frontend tests and all nine rename browser groups pass.
+
 ## Correct scatter-filter branch placement (2026-09-28)
 
 - [x] Integrate the separately committed scatter-filter fixes into the Codex rework, preserving its NumericField, funnel control, light styling and scatter exports. Build/lint, 60 frontend tests, six filter browser groups (including actual 125%/150% zoom) and 13 CSV/PNG downloads pass. This correction targets only codex/ptt-ui-rework-2026-09-28; see IMPLEMENTATION.md.
