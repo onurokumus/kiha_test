@@ -1,5 +1,9 @@
 # TODO
 
+## Requested distinct Full test variable colors (2026-09-30)
+
+- [x] Prevent identical or very similar colors for variables overlaid in Full test. Resolve colors against the selected comparison in both themes; keep plot, dropdown, legend and PNG colors aligned, preserve existing colors when appending, and regenerate the same colors for unchanged reopened sessions. Explicit request takes priority over independent Phase 11b. Build/lint, 84 frontend tests and nine isolated browser groups pass, including six variables, saved sessions, actual 125%/150% zoom and PNG/metadata parity. See FULL_TEST_VARIABLES_VERIFICATION.md.
+
 ## Requested Linux data relocation (2026-09-29)
 
 - [x] Keep production code in /progs2/ptt and default Linux persistent storage to /data/ptt/data. Preserve explicit KIHA_DATA_DIR overrides and Windows/macOS development defaults; document timestamp-preserving full-root migration, ownership and service configuration. Three new configuration tests and all 495 backend tests / 461 subtests pass. Server copy/restart remains an operator step; see deployment_guide.md and IMPLEMENTATION.md.

@@ -156,7 +156,8 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
     expandedPlot === null ? densityClass[density] : styles.gridExpanded
   }`;
 
-  const allConfigs: TimePlotConfig[] = columns.map((c) => ({ key: c, label: c }));
+  const allConfigs = useMemo<TimePlotConfig[]>(() =>
+    columns.map((c) => ({ key: c, label: c })), [columns]);
 
   const handleConfigChange = (index: number, newKey: string) => {
     if (onPlotConfigChange) {

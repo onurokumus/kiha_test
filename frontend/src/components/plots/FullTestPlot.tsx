@@ -25,7 +25,7 @@ import { capturePlotPng, downloadPlotPng } from '../../utils/plotPngExport';
 import { usePlotExportRegistration, type RegisterPlotExport } from '../../utils/plotExportRegistry';
 import type { PlotExportData, PlotExportRequest } from '../../types';
 import { FullTestVariables } from './FullTestVariables';
-import { fullTestVariableColor } from '../../utils/fullTestVariables';
+import { createFullTestColorResolver } from '../../utils/fullTestVariables';
 import {
   AXIS_STYLE,
   PLOT_PADDING,
@@ -160,7 +160,8 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     entries.findIndex((candidate) => candidate.key === config.key) === index).slice(0, 6);
   const columnsKey = JSON.stringify(configs.map((config) => config.key));
   const columns = useMemo<string[]>(() => JSON.parse(columnsKey), [columnsKey]);
-  const colorsKey = JSON.stringify(columns.map((key) => fullTestVariableColor(key, allConfigs)));
+  const resolveColors = useMemo(() => createFullTestColorResolver(allConfigs), [allConfigs]);
+  const colorsKey = JSON.stringify(resolveColors(columns));
   const colors = useMemo<string[]>(() => JSON.parse(colorsKey), [colorsKey]);
   const plotLabel = configs.map((config) => config.label).join(' + ');
   const chartRef = useRef<HTMLDivElement>(null);
@@ -616,6 +617,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
     >
       <PlotHeader label={plotLabel} isExpanded={isExpanded} onToggleExpand={onToggleExpand}
         identityControl={<FullTestVariables configs={configs} allConfigs={allConfigs}
+          colors={colors} resolveColors={resolveColors}
           showingOverlay={showingOverlay}
           onPrimaryChange={onConfigChange} onAdditionalColumnsChange={onAdditionalColumnsChange} />}
         status={(ferror || filterNeedsAttention) && <span title={ferror || 'Open Filter settings in the plot menu'} style={{ color: 'var(--warning, #806b20)' }}>Filter needs attention</span>}

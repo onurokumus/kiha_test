@@ -1,5 +1,57 @@
 # Implementation handoff
 
+## Distinct Full test variable colors (2026-09-30)
+
+Current user request, ahead of independent Phase 11b. Target remains
+D:/okumus/work_v2/kiha_test, codex/ptt-ui-rework-2026-09-28. The working tree was
+clean at ff810fd before this work. This fix is included in the user-requested
+Full test color Git checkpoint.
+
+The preferred source-column color generator could collide: source indices 6/287
+produce the same hex, while 6/13 and the demo electrical_power_w/ambient_temp_c
+are nearly identical. FullTestPlot now resolves the ordered comparison against
+all assigned colors, checking Oklab separation in both light and dark rendering.
+The first trace keeps its source hue; later traces keep theirs when separated,
+otherwise choosing the most separated color from a bounded non-blue palette.
+Broader chroma supports six simultaneous traces. Existing original/filtered
+opacity/dash and envelope styling remain on the same variable hue.
+
+FullTestPlot shares resolved colors with FullTestVariables; canvas, header,
+hover/popup legend, dropdown previews and PNG provenance use the same assignment.
+Add previews use the existing comparison; primary previews use the new first
+variable. Appending cannot recolor earlier traces. Removing/replacing variables
+may release preferred hues for later ones; source colors are preferences rather
+than a global uniqueness promise. Identical ordered variables/catalog reproduce
+the same colors on reload/session reopen. No session schema, scientific-data,
+backend, export format, theme or test-point selection changes.
+
+Verification complete: frontend build/lint and all 84 helper tests pass
+(seven new tests). Tests cover all 130,816 pairs in a 512-column catalog at
+minimum 0.12 Oklab distance in both themes, exact/near collisions, six-variable
+adversarial/random groups, append/re-add/reopen determinism and missing keys.
+Independent palette probe: 50,000 six-key groups had minimum 0.09657; target
+separation is 0.12 with maximum available separation at higher counts. Every
+fallback has at least 3:1 contrast against white; 512-column dropdown previews
+average about 1.4 ms. Coordinates cache per catalog; TimeSeriesGrid memoizes the
+catalog by source columns so unrelated updates retain caches. No dependencies added.
+
+Nine isolated browser groups pass with native Python 3.13 and copied demo data:
+canvas/header/legend/dropdown agreement; six variables and stable append;
+primary replacement; reload and actual Save/Open; original/filtered line and
+envelope in both themes; maximize/restore and actual 125%/150% zoom; real PNG
+colors/metadata from dark mode. No app errors; source file hashes unchanged.
+Independent source review found no blockers. Detailed commands and evidence:
+FULL_TEST_VARIABLES_VERIFICATION.md. Owned backend/Vite test servers stopped.
+
+Entry points: utils/fullTestVariables.ts; plots/FullTestPlot.tsx and
+FullTestVariables.tsx and TimeSeriesGrid.tsx; frontend/tests/fullTestVariables.test.mjs;
+scripts/verify_full_test_colors.py. Method source:
+https://bottosson.github.io/posts/oklab/ (public-domain conversion).
+
+No implementation or verification work remains for this request.
+Build: index-DfOopB_m.js; existing Vite bundle-size advisory remains.
+Next independent backlog milestone remains Phase 11b.
+
 ## Linux data relocation (2026-09-29)
 
 Completed the explicit user request ahead of independent Phase 11b in

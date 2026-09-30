@@ -1,26 +1,28 @@
 import { useTheme } from '../../hooks/useTheme';
 import { themeSeriesColor } from '../../constants/uplotTheme';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { TimePlotConfig } from '../../types';
-import { fullTestVariableColor } from '../../utils/fullTestVariables';
+import type { FullTestColorResolver } from '../../utils/fullTestVariables';
 import { SearchableSelect } from '../controls/SearchableSelect';
 import styles from './FullTestVariables.module.css';
 
 interface Props {
   configs: TimePlotConfig[];
   allConfigs: TimePlotConfig[];
+  colors: readonly string[];
+  resolveColors: FullTestColorResolver;
   showingOverlay: boolean;
   onPrimaryChange?: (column: string) => void;
   onAdditionalColumnsChange?: (columns: string[]) => void;
 }
 
 /** The same swatches accompany selection and the folded-away trace legend. */
-export function FullTestVariables({ configs, allConfigs,
+export function FullTestVariables({ configs, allConfigs, colors, resolveColors,
   showingOverlay, onPrimaryChange, onAdditionalColumnsChange }: Props) {
   const [open, setOpen] = useState(false);
   const theme = useTheme();
-  const variableColor = (key: string) => themeSeriesColor(fullTestVariableColor(key, allConfigs), theme === 'dark');
+  const variableColor = (key: string) => themeSeriesColor(colors[configs.findIndex(config => config.key === key)], theme === 'dark');
   const [position, setPosition] = useState({ left: 0, top: 0, width: 300, maxHeight: 360 });
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -28,8 +30,20 @@ export function FullTestVariables({ configs, allConfigs,
   const primary = configs[0];
   const extras = configs.slice(1).map(config => config.key);
   const selected = new Set(configs.map(config => config.key));
-  const options = allConfigs.map(config => ({ value: config.key, label: config.label,
-    color: variableColor(config.key), keywords: [config.key] }));
+  const columnsKey = JSON.stringify(configs.map(config => config.key));
+  const { primaryOptions, additionalOptions } = useMemo(() => {
+    const keys: string[] = JSON.parse(columnsKey);
+    const remaining = keys.slice(1);
+    const option = (config: TimePlotConfig, color: string) => ({ value: config.key, label: config.label,
+      color: themeSeriesColor(color, theme === 'dark'), keywords: [config.key] });
+    return {
+      primaryOptions: allConfigs.map(config => ({
+        ...option(config, resolveColors([config.key])[0]), disabled: remaining.includes(config.key),
+      })),
+      additionalOptions: allConfigs.filter(config => !keys.includes(config.key)).map(config =>
+        option(config, resolveColors([...keys, config.key])[keys.length])),
+    };
+  }, [allConfigs, columnsKey, resolveColors, theme]);
   const legendEntries = configs.map(config => ({ label: config.label,
     color: variableColor(config.key) }));
   const canAdd = configs.length < 6 && allConfigs.some(config => !selected.has(config.key));
@@ -68,7 +82,7 @@ export function FullTestVariables({ configs, allConfigs,
   return <div className={styles.controls} data-full-test-variables>
       <SearchableSelect value={primary.key} onChange={key => {
         onPrimaryChange?.(key);
-      }} options={options.map(option => ({ ...option, disabled: extras.includes(option.value) }))}
+      }} options={primaryOptions}
         ariaLabel="Plot variable" title="Change the primary variable" searchPlaceholder="Search plot variables..."
         optionNoun="variable" appearance="title" className={styles.primary} />
       <SearchableSelect value="" onChange={key => {
@@ -80,7 +94,7 @@ export function FullTestVariables({ configs, allConfigs,
           allConfigs.some(config => !selected.has(config.key) && config.key !== key);
         if (!canAddAfter) trigger.current?.focus({ preventScroll: true });
       }}
-        options={options.filter(option => !selected.has(option.value))}
+        options={additionalOptions}
         ariaLabel="Add variable to plot" title={configs.length >= 6 ? 'Maximum 6 variables per plot' : 'Add variable to this plot'}
         searchPlaceholder="Search variables to add..." optionNoun="variable" appearance="plot" size="compact"
         className={styles.add} disabled={!canAdd}
