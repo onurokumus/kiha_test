@@ -1,4 +1,6 @@
 import { usePlotTheme } from '../../utils/usePlotTheme';
+import { plotHoverPlugin } from '../../utils/uplotHover';
+import { usePlotHoverGroup } from '../../utils/usePlotHoverGroup';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import uPlot from 'uplot';
@@ -162,9 +164,9 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
 } & ViewportProps) {
   const host = useRef<HTMLDivElement>(null);
   const plot = useRef<uPlot | null>(null);
+  const hoverGroup = usePlotHoverGroup();
   usePlotTheme(plot);
   const [box, setBox] = useState({ width: 0, height: 0 });
-  const [hover, setHover] = useState('');
   const control = usePlotViewport(plot, { viewport, viewportContext, onViewportChange }, 'manual');
   const reg = useRef(register); reg.current = register;
   const data = trace.data;
@@ -180,7 +182,6 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
   }, []);
   useEffect(() => {
     if (!host.current || box.width < 40 || box.height < 40) return;
-    setHover('');
     const f = data.frequency_edges_hz, t = data.time_edges_s;
     const rows = data.magnitude.length, cols = data.magnitude[0]?.length ?? 0;
     const bitmap = document.createElement('canvas'); bitmap.width = Math.max(1, cols); bitmap.height = Math.max(1, rows);
@@ -228,19 +229,24 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
           { ...AXIS_STYLE, label: 'Elapsed time (s)' }],
         series: [{}, { label: trace.label, paths: () => null, points: { show: false } }],
         cursor: { drag: { x: true, y: true } },
-        plugins: [axisTitlesPlugin('Elapsed time (s)'), xPanZoomPlugin(undefined, control.setY), control.plugin],
-        hooks: { draw: [draw], setCursor: [(u) => {
-          if (!rows || !cols) { setHover(''); return; }
-          if (u.cursor.left == null || u.cursor.top == null || u.cursor.left < 0 || u.cursor.top < 0) { setHover(''); return; }
+        plugins: [plotHoverPlugin(u => {
+          const empty = { heading: trace.label, columns: ['Value'], rows: [] };
+          if (!rows || !cols || u.cursor.left == null || u.cursor.top == null ||
+              u.cursor.left < 0 || u.cursor.top < 0) return empty;
           const x = cellAt(f, u.posToVal(u.cursor.left, 'x')), y = cellAt(t, u.posToVal(u.cursor.top, 'y'));
-          if (x < 0 || y < 0) { setHover(''); return; }
-          setHover(`${fmt(f[x])}–${fmt(f[x+1])} Hz · ${fmt(t[y])}–${fmt(t[y+1])} s · ${fmt(data.magnitude[y][x])} U${data.reduction.method === 'max' ? ' (cell max)' : ''} · source frame centers ${fmt(data.source_frame_start_s[y])}–${fmt(data.source_frame_end_s[y])} s`);
-        }] },
+          if (x < 0 || y < 0) return empty;
+          return { ...empty, rows: [
+            { label: 'Hz', values: [`${fmt(f[x])}–${fmt(f[x+1])}`] },
+            { label: 's', values: [`${fmt(t[y])}–${fmt(t[y+1])}`] },
+            { label: 'U', values: [`${fmt(data.magnitude[y][x])}${data.reduction.method === 'max' ? ' (max)' : ''}`] },
+          ] };
+        }, hoverGroup, 'waterfall:frequency', 'waterfall:elapsed'), axisTitlesPlugin('Elapsed time (s)'), xPanZoomPlugin(undefined, control.setY), control.plugin],
+        hooks: { draw: [draw] },
       }, [[0, defaultXMax], [defaultYMin, defaultYMax]], host.current!);
       plot.current = u; reg.current(u);
     });
     return () => { reg.current(null); plot.current?.destroy(); plot.current = null; bitmap.width = bitmap.height = 0; };
-  }, [data, trace.label, box, expanded, lo, hi, logColor, control, defaultXMax, defaultYMin, defaultYMax]);
+  }, [data, trace.label, box, expanded, lo, hi, logColor, control, defaultXMax, defaultYMin, defaultYMax, hoverGroup]);
   useEffect(() => {
     if (!plot.current) return;
     control.sync(() => {
@@ -250,12 +256,11 @@ function Heatmap({ trace, scale, logColor, expanded, frequencyBand, viewport, vi
       });
     });
   }, [viewport, viewportContext, control, data, defaultXMax, defaultYMin, defaultYMax]);
-  return <section className={styles.facet} aria-label={`Waterfall source ${trace.label}`}>
+  return <section className={styles.facet} data-plot-hover-area aria-label={`Waterfall source ${trace.label}`}>
     <div className={styles.source} title={trace.label}>{trace.label}</div>
     <div ref={host} className={styles.chart} tabIndex={0} aria-label={`Waterfall canvas for ${trace.label}`}
-      onMouseLeave={() => setHover('')}
       onKeyDown={e => { if (e.key === 'Home') { e.preventDefault(); control.reset(); } }} />
-    <div className={styles.readout}>{data.magnitude.length ? hover : 'No FFT cells in this view. Press Home to reset axes.'}</div>
+    {!data.magnitude.length && <div className={styles.readout}>No FFT cells in this view. Press Home to reset axes.</div>}
   </section>;
 }
 

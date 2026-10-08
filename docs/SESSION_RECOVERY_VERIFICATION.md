@@ -1,5 +1,10 @@
 # Phase 8a — source-safe automatic session recovery
 
+Historical verification report. On 2026-10-08 the Sessions feature and recovery
+review/notices/reconnect actions were removed. Compatible browser state now
+restores quietly and unverifiable references are skipped. The former UI suite
+was retired; current regression: `scripts/verify_sessions_removal.py`.
+
 Completed 2026-09-10 on `feature/resumable-multipart-upload` (baseline
 `873c80c`, existing dirty Phase 1–7d work preserved).
 

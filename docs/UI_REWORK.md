@@ -18,7 +18,7 @@ zoom and expanded plots remain the target; no phone-specific workflow is added.
 The shell keeps Analyze, Split, Edit, Uploads, Components and Settings visible.
 Secondary controls and explanatory text are grouped so the working data stays
 prominent. The selection limit remains **20 test points**, including selection
-recovery and saved sessions. This is a per-workspace selection limit, not a
+quiet browser restoration. This is a per-workspace selection limit, not a
 server-user limit.
 
 This remains an internal application without login, signup or userSystem.
@@ -30,7 +30,7 @@ offline ZIP is rebuilt as part of this UI update.
 
 | Area | Preserved capabilities and presentation |
 | --- | --- |
-| Analyze | Multi-test/test-point selection, scatter filters and clustering, linked time inspection, expansion/reset, plot actions and exports, original/filtered traces, FFT, Welch, waterfall FFT, XY including measured/generated time, saved sessions and recovery. Full-test plots retain multiple variables rather than reverting to the older single-variable implementation. |
+| Analyze | Multi-test/test-point selection, scatter filters and clustering, linked time inspection, expansion/reset, plot actions and exports, original/filtered traces, FFT, Welch, waterfall FFT, XY including measured/generated time, quiet browser restoration. Full-test plots retain multiple variables rather than reverting to the older single-variable implementation. |
 | Uploads | CSV staging and import time-basis/sample-rate setup, uploader and description fields, component sets, resumable multipart transfers with progress/pause/resume/cancel/retry, recovery of server-only receiving sessions, search/status filters, notes/components links, quality details, original and split CSV downloads. Analyze and CSV actions remain visible; Recompute and Delete are grouped under Manage. |
 | Split | Up to nine linked signal plots, per-plot selectors/removal, manual intervals and boundary dragging, multiple-variable auto-split rules and proposal preview, explicit Apply-to-draft/Save, notes/labels/open ends, JSON import/export, exact draft/saved CSV export, unsaved-change guards and load-failure protection. Primary actions use Add test point, Import JSON, Export JSON, Save test points and Discard changes. |
 | Edit | Descriptions and findings remain prominent. Manage test, Component sets and telemetry, Additional metadata, Data cleanup, Derived variables, and Rename or remove columns are named disclosures. Metadata revisions/draft guards, all formula/recipe/dependency/preview/rebuild controls, missing-value treatment, trim, column changes and existing confirmations remain connected to their original handlers. |

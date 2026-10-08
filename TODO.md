@@ -1,5 +1,29 @@
 # TODO
 
+The completed plot-values and Sessions-removal requests below are included in
+the user-requested complete Git checkpoint (2026-10-08) on
+codex/ptt-ui-rework-2026-09-28. Next independent milestone: Phase 11b.
+
+## Requested Values dropdown styling (2026-10-08)
+
+- [x] Style the Values trigger and dropdown menu, keep Current/All/None fully readable without clipped labels, and preserve keyboard/mouse selection, focus, persistence and plot behavior. Use existing themed selector; verify desktop resize/zoom and both themes. Explicit follow-up takes priority over Phase 11b. Styled SearchableSelect reuses existing selection/focus handlers; Values hides search/footer and uses a full-width label/chevron. Build/lint, 96 helpers and 43 isolated browser groups pass, including mouse/keyboard, Escape/outside/Tab focus, menu/label geometry in both themes at 100/125/150% zoom, resize/maximize and unchanged plot/export/data behavior. See docs/PLOT_HOVER_VALUES_VERIFICATION.md.
+
+## Requested three-way Values selector (2026-10-08)
+
+- [x] Add Current, All and None choices to Values; remember the selected mode while preserving previous on/off preferences. Cover all plot types and 1/4/9/maximized views with keyboard access, compact sizing, unchanged data/axes and existing gestures/exports. Explicit follow-up takes priority over Phase 11b. Build/lint, 96 helpers and 42 isolated browser groups pass, including current-only ownership, keyboard selection/reload, legacy/invalid preferences, both Waterfall sources, resize/125%/150% zoom and PNG/data integrity. See docs/PLOT_HOVER_VALUES_VERIFICATION.md.
+
+## Requested shared plot values and toggle (2026-10-08)
+
+- [x] Show compact values in all visible 1/4/9 plots at once when hovering any plot, with a shared Values toggle. Cover every analysis mode and maximized views; preserve numeric axis meaning, independent crops, gestures, exports, compact sizing and browser persistence. Explicit follow-up takes priority over Phase 11b. Build/lint, 93 frontend helpers and 41 isolated browser groups pass, including both Waterfall sources, keyboard toggle/reload, actual 125%/150% zoom, resize, maximize/restore and PNG/data integrity. See docs/PLOT_HOVER_VALUES_VERIFICATION.md.
+
+## Requested Sessions removal (2026-10-08)
+
+- [x] Remove the Sessions button, named session Save/Open and session recovery warnings/review actions. Restore compatible browser state quietly, skip unverifiable sources and changed test points, choose an available active test, and allow autosave without dismissal. Preserve normal analysis/export, identity checks, network retry and resumable uploads. This explicit request takes priority over the unfinished hover-values verification and independent Phase 11b. Build/lint, 88 frontend tests, 13 new browser groups, eight reload groups and nine rename groups pass. See docs/SESSIONS_REMOVAL_VERIFICATION.md. Concurrent hover work is preserved and now has its own completed verification below.
+
+## Requested values in normal-size plots (2026-10-08)
+
+- [x] Show point values while hovering every right-side plot without maximizing it. Use a compact shared hover box for Time, Full test, FFT/PSD, XY and Waterfall; preserve source identity, unavailable samples, envelope/log units and existing gestures, expanded legends and exports. Explicit request takes priority over independent Phase 11b. Follow-up removes headings/table headers/repeated source text and tightens each trace to one row. Build/lint, 90 helper tests and 24 isolated browser groups pass. Final shared build also passes alongside concurrent session-control changes. See docs/PLOT_HOVER_VALUES_VERIFICATION.md and IMPLEMENTATION.md.
+
 ## Requested distinct Full test variable colors (2026-09-30)
 
 - [x] Prevent identical or very similar colors for variables overlaid in Full test. Resolve colors against the selected comparison in both themes; keep plot, dropdown, legend and PNG colors aligned, preserve existing colors when appending, and regenerate the same colors for unchanged reopened sessions. Explicit request takes priority over independent Phase 11b. Build/lint, 84 frontend tests and nine isolated browser groups pass, including six variables, saved sessions, actual 125%/150% zoom and PNG/metadata parity. See FULL_TEST_VARIABLES_VERIFICATION.md.

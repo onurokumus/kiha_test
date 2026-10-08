@@ -104,24 +104,20 @@ def run():
             expect(plot.locator('.u-over')).to_be_visible()
             page.screenshot(path=str(OUT / (mode + '-1100.png')))
 
-            page.get_by_role('button', name='Sessions', exact=True).click()
-            sessions = page.get_by_role('dialog', name='Analysis sessions', exact=True)
-            saved_path = download(page, sessions.get_by_role('button', name='Save session file'), mode + '.json')
-            saved = json.loads(saved_path.read_text(encoding='utf-8'))
-            assert 'annotationsVisible' not in saved['session']
-            assert saved['session']['viewMode'] == mode
-            saved['session']['annotationsVisible'] = legacy_visibility
-            sessions.get_by_label('Session file', exact=True).set_input_files({
-                'name': 'legacy.json', 'mimeType': 'application/json',
-                'buffer': json.dumps(saved).encode('utf-8')})
-            sessions.get_by_role('button', name='Open session', exact=True).click()
-            expect(sessions).not_to_be_visible()
+            page.wait_for_function("mode=>JSON.parse(localStorage.getItem('ptt.analysis-session.v1')).viewMode===mode", arg=mode)
+            saved = page.evaluate("JSON.parse(localStorage.getItem('ptt.analysis-session.v1'))")
+            assert 'annotationsVisible' not in saved
+            assert saved['viewMode'] == mode
+            saved['annotationsVisible'] = legacy_visibility
+            page.evaluate("saved=>localStorage.setItem('ptt.analysis-session.v1',JSON.stringify(saved))", saved)
+            page.reload()
+            page.wait_for_load_state('networkidle')
             expect(plots).to_have_count(4)
             page.wait_for_function('!JSON.parse(localStorage.getItem("ptt.analysis-session.v1")).hasOwnProperty("annotationsVisible")')
             page.reload()
             page.wait_for_load_state('networkidle')
             expect(plots).to_have_count(4)
-            checks.append(mode + ': menus, PNG/ZIP, maximize, resize, legacy sessions, reload')
+            checks.append(mode + ': menus, PNG/ZIP, maximize, resize, legacy browser state, reload')
             print('PASS:', checks[-1], flush=True)
             context.close()
         browser.close()

@@ -171,7 +171,7 @@ def main():
             hidden()
             passed("Click dismisses immediately; pointer-focused controls cannot keep the tooltip after mouseout")
 
-            page.get_by_role("button", name="Sessions", exact=True).focus()
+            page.get_by_role("button", name="Import CSV", exact=True).focus()
             page.keyboard.press("Tab")
             expect(switch()).to_be_focused()
             expect(page.locator(TIP)).to_have_text("Toggle dark mode")

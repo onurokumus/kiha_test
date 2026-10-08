@@ -207,20 +207,13 @@ def main():
             passed('Changing primary variable recomputes the comparison without collisions')
             before=colors(); page.reload(); ready(); assert colors()==before
             passed('Browser session reload deterministically restores comparison colors')
-            page.get_by_role('button',name='Sessions',exact=True).click()
-            session_panel=page.get_by_role('dialog',name='Analysis sessions',exact=True)
-            session_panel.get_by_label('Session name',exact=True).fill('Variable colors')
-            with page.expect_download() as download:
-                session_panel.get_by_role('button',name='Save session file',exact=True).click()
-            session_file=out/'variable-colors-session.json';download.value.save_as(session_file)
-            session_panel.get_by_role('button',name='Close',exact=True).click()
+            saved=page.evaluate("localStorage.getItem('ptt.analysis-session.v1')")
             remove(added[-1])
-            page.get_by_role('button',name='Sessions',exact=True).click()
-            session_panel.get_by_label('Session file',exact=True).set_input_files(session_file)
-            expect(session_panel).to_contain_text('All saved source references are compatible.')
-            session_panel.get_by_role('button',name='Open session',exact=True).click();ready()
+            page.evaluate("saved=>localStorage.setItem('ptt.analysis-session.v1',saved)",saved)
+            page.reload();ready()
             assert colors()==before
-            passed('Actual session Save/Open restores the same selected variables and their resolved colors')
+            expect(page.get_by_role('button',name='Sessions',exact=True)).to_have_count(0)
+            passed('Quiet browser restoration retains selected variables and their resolved colors')
             for mode in ('line','envelope'):
                 patch({'fullPlotMode':mode,'plotFilters':[FILTER],'plotShowOriginal':[True]})
                 expect(plot()).to_have_attribute('data-filter-display','overlay')

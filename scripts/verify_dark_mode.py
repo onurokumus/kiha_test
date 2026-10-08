@@ -270,12 +270,8 @@ def main():
             readable(page, "Export dialog", 'dialog[open]')
             capture_browser_view(cdp, output / "export-dialog-dark.png")
             page.keyboard.press("Escape")
-            page.get_by_role("button", name="Sessions", exact=True).click()
-            expect(page.get_by_role("dialog", name="Analysis sessions", exact=True)).to_be_visible()
-            readable(page, "Session dialog", 'dialog[open]')
-            capture_browser_view(cdp, output / "session-dark.png")
-            page.keyboard.press("Escape")
-            passed("Portaled pickers, Options, filters, export and session dialogs follow dark mode")
+            expect(page.get_by_role("button", name="Sessions", exact=True)).to_have_count(0)
+            passed("Portaled pickers, Options, filters and export dialogs follow dark mode")
 
             for width in [960, 1100, 1241, 1300, 1301, 1600]:
                 chrome_width = page.evaluate("outerWidth-innerWidth")

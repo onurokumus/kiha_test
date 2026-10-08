@@ -1,4 +1,7 @@
 import { usePlotTheme } from '../../utils/usePlotTheme';
+import { plotHoverPlugin } from '../../utils/uplotHover';
+import { usePlotHoverGroup } from '../../utils/usePlotHoverGroup';
+import { sampleHoverRows } from '../../utils/plotHoverValues';
 import { plotSeriesColor } from '../../constants/uplotTheme';
 import { loadedAnalysis } from '../../utils/analysisMetadata';
 import React, { useEffect, useRef, useState, useMemo } from 'react';
@@ -155,6 +158,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
   const yAxisActions = useRef<TimeYAxisActions>(null);
   const exportActions = useRef<PlotExportActions>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const hoverGroup = usePlotHoverGroup();
   usePlotTheme(plotRef);
   const structKeyRef = useRef('');
   // Latest zoom-commit callback — a reused uPlot keeps its build-time closures.
@@ -459,7 +463,9 @@ export const TimePlot: React.FC<TimePlotProps> = ({
         drag: { x: true, y: false },
         sync: { key: TP_SYNC_KEY, scales: ['x', null] },
       },
-      plugins: [visibleYAutoFitPlugin(() => yRangeRef.current !== null), xPanZoomPlugin(
+      plugins: [plotHoverPlugin(u => ({ heading: cfg.label, columns: ['Time (s)', cfg.label], units: ['s', ''],
+        rows: sampleHoverRows(u, true) }), hoverGroup, 'time:relative'),
+        visibleYAutoFitPlugin(() => yRangeRef.current !== null), xPanZoomPlugin(
         (r) => onZoomChangeRef.current(r),
         (r) => {
           yRangeRef.current = r;
@@ -490,7 +496,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
     // Axis ranges stay out of the struct key. Reuse the plot, swap data
     // without transient auto-ranging, and update the controlled scales.
     const structKey = [
-      JSON.stringify(plottedTraces.map(trace => [trace.label, trace.color, trace.kind])), showingOverlay, box.w, box.h, isExpanded,
+      JSON.stringify(plottedTraces.map(trace => [trace.label, trace.color, trace.kind])), showingOverlay, box.w, box.h, isExpanded, cfg.label,
     ].join('|');
     syncPlot({
       plotRef,
@@ -523,7 +529,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
     });
     appliedXRef.current = zoomDomain;
     appliedTracesRef.current = plottedTraces;
-  }, [plottedTraces, showingOverlay, zoomDomain, yRange, box, isExpanded, zoomResetVersion]);
+  }, [plottedTraces, showingOverlay, zoomDomain, yRange, box, isExpanded, zoomResetVersion, cfg.label, hoverGroup]);
 
   const containerClass = `${styles.plotContainer} ${
     isExpanded ? styles.plotContainerExpanded : styles.plotContainerCollapsed

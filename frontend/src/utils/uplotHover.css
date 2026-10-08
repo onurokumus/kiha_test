@@ -1,0 +1,31 @@
+.plot-hover-values {
+  position: fixed;
+  z-index: 7900;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: hidden;
+  padding: 4px 6px;
+  border: 1px solid var(--border-strong, #c7d1e2);
+  border-radius: 4px;
+  background: var(--surface-raised, #ffffff);
+  color: var(--text, #202c42);
+  box-shadow: 0 5px 20px var(--shadow, #202c4224);
+  font-size: 11px;
+  line-height: 1.35;
+  pointer-events: none;
+}
+.plot-hover-values table { width: 100%; border-collapse: collapse; }
+.plot-hover-values th, .plot-hover-values td { padding: 2px 4px; text-align: left; vertical-align: middle; }
+.plot-hover-values tbody th { max-width: var(--plot-hover-label-width, 145px); font-weight: 500; }
+.plot-hover-values tbody th span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: var(--plot-hover-label-width, 145px); }
+.plot-hover-values tbody th i { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; vertical-align: middle; }
+.plot-hover-values td { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plot-hover-values small { color: var(--muted, #626f83); font-size: 10px; }
+.plot-hover-values p { margin: 5px 0 0; color: var(--muted, #626f83); }
+.plot-hover-values--narrow table { table-layout: fixed; }
+.plot-hover-values--narrow { font-size: 10px; }
+.plot-hover-values--narrow th { width: 25%; }
+.plot-hover-values--narrow td { white-space: normal; overflow-wrap: anywhere; }
+.plot-hover-values--narrow [data-hover-value] { display: inline-block; white-space: nowrap; }
+.plot-hover-values--narrow small { white-space: normal; }

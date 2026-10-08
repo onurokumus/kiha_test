@@ -555,15 +555,16 @@ Target devices and input: follow `AGENTS.md`. This application is desktop/laptop
 - Phase 8a analysis recovery uses `GET /api/analysis-sources`: ready tests lazily
   receive a separate `source_identity.json` UUID that survives rebuild/rename/
   trash/restore. Additive autosave `sources` references resolve these IDs, with
-  conservative sample/TP revision checks and explicit legacy-name reconnection.
+  conservative sample/TP revision checks. Browser state restores quietly;
+  unavailable/ambiguous/name-only references and changed TPs are skipped.
   Metadata and TP GETs accept optional `expected_source_id` guards. Retain loaded
   source references until data invalidation; do not advance old plot references
   to background metadata changes. `docs/SESSION_RECOVERY_VERIFICATION.md` records
-  the contract/limits. Phase 8b adds portable named JSON Save/Open through
-  `SessionControls` / `sessionFiles`: validate, preview, recheck sources, then
-  apply through App's shared recovery routine. Save captures live state instead
-  of reading debounced localStorage. Source checks/Close never overwrite the
-  workspace; explicit Open accepts recovered references. Spectrum X and XY X/Y
+  the original identity contract/limits. The Sessions UI, named JSON Save/Open,
+  legacy reconnect and recovery review/notices were removed at user request
+  (2026-10-08). Successful restoration autosaves the compatible state without
+  dismissal; failed source checks retain the snapshot for Retry. When the old
+  active test is unavailable, App chooses the first ready test. Spectrum X and XY X/Y
   viewports are per-slot, with UUID/revision/variable/source/interval context;
   programmatic uPlot synchronization is muted so auto-ranges cannot overwrite
   manual ranges. See `docs/SAVED_SESSIONS_VERIFICATION.md` for format and limits.

@@ -24,8 +24,7 @@ function loadTs(path) {
 
 const { defaultAnalysisSession, normalizeAnalysisSession, loadAnalysisSession, saveAnalysisSession } =
   loadTs(fileURLToPath(new URL('../src/services/analysisSession.ts', import.meta.url)));
-const { parseSessionFile } =
-  loadTs(fileURLToPath(new URL('../src/services/sessionFiles.ts', import.meta.url)));
+const roundTrip = value => normalizeAnalysisSession(JSON.parse(JSON.stringify(value)));
 const { resolveSessionSources } =
   loadTs(fileURLToPath(new URL('../src/services/sessionSources.ts', import.meta.url)));
 const { validWaterfallColorRange, waterfallColorTicks, normalizeWaterfallColorRanges, changeWaterfallColorRange } =
@@ -48,7 +47,7 @@ test('new workspaces and sessions predating Waterfall use the fine low-band pres
   delete older.waterfallOverlap;
   delete older.waterfallResolution;
   delete older.waterfallBand;
-  assert.deepEqual(waterfall(parseSessionFile(JSON.stringify(older)).session), expected);
+  assert.deepEqual(waterfall(roundTrip(older)), expected);
 });
 
 test('legacy window-only sessions retain manual analysis and full frequency band', () => {
@@ -59,34 +58,20 @@ test('legacy window-only sessions retain manual analysis and full frequency band
   legacy.waterfallOverlap = 50;
   legacy.specMode = 'waterfall';
   legacy.specSource = 'tp';
-  const reopened = parseSessionFile(JSON.stringify(legacy)).session;
+  const reopened = roundTrip(legacy);
   assert.deepEqual(waterfall(reopened), { window: 8192, overlap: 50, resolution: null, band: 'full' });
   assert.equal(reopened.specSource, 'tp');
   delete legacy.waterfallOverlap;
   assert.equal(normalizeAnalysisSession(legacy).waterfallOverlap, 50);
 });
 
-test('named session files preserve every supported spacing and manual null', () => {
+test('browser restoration preserves every supported spacing and manual null', () => {
   for (const resolution of [0.5, 0.25, 0.1, null]) {
     for (const band of ['low', 'full']) {
       const session = { ...defaultAnalysisSession(), waterfallResolution: resolution,
         waterfallBand: band, waterfallWindow: 16384, waterfallOverlap: 0 };
-      const file = parseSessionFile(JSON.stringify({ format: 'ptt-analysis-session', version: 1,
-        name: 'Fine vibration', savedAt: '2026-09-11T10:00:00Z', session }));
-      assert.equal(file.name, 'Fine vibration');
-      assert.deepEqual(waterfall(file.session), waterfall(session));
+      assert.deepEqual(waterfall(roundTrip(session)), waterfall(session));
     }
-  }
-});
-
-test('session import rejects unsupported settings instead of silently changing the analysis', () => {
-  for (const resolution of [0, -0.1, 0.01, 0.125, 1, '0.25', true, [], {}]) {
-    assert.throws(() => parseSessionFile(JSON.stringify({ ...defaultAnalysisSession(),
-      waterfallResolution: resolution })), /Invalid session waterfallResolution/);
-  }
-  for (const band of [null, '', '0-200', 'LOW', 200, true, [], {}]) {
-    assert.throws(() => parseSessionFile(JSON.stringify({ ...defaultAnalysisSession(),
-      waterfallBand: band })), /Invalid session waterfallBand/);
   }
 });
 
@@ -209,13 +194,13 @@ test('changing one color mode preserves the other and prevents cross-variable li
   assert.deepEqual(saved, { column: 'vibration', linear: [0, 0.5], log: [-7, -1] });
 });
 
-test('new and legacy sessions use Auto; session files retain per-slot linear and log limits', () => {
+test('new and legacy browser state uses Auto; reload retains per-slot linear and log limits', () => {
   const empty = Array(9).fill(null);
   assert.deepEqual(defaultAnalysisSession().waterfallColorRanges, empty);
   const legacy = defaultAnalysisSession();
   delete legacy.waterfallColorRanges;
   assert.deepEqual(normalizeAnalysisSession(legacy).waterfallColorRanges, empty);
-  assert.deepEqual(parseSessionFile(JSON.stringify(legacy)).session.waterfallColorRanges, empty);
+  assert.deepEqual(roundTrip(legacy).waterfallColorRanges, empty);
   const ranges = normalizeWaterfallColorRanges([
     { column: 'vibration', linear: [0, 0.5], log: [-7, -1] },
     { column: 'vibration', linear: [0.1, 0.2], log: null },
@@ -223,13 +208,12 @@ test('new and legacy sessions use Auto; session files retain per-slot linear and
   ]);
   const session = { ...legacy, plotConfigs: ['vibration', 'vibration', 'temperature'],
     waterfallColorRanges: ranges, specLogY: true };
-  const file = parseSessionFile(JSON.stringify({ format: 'ptt-analysis-session', version: 1,
-    name: 'Comparable color limits', savedAt: '2026-09-14T10:00:00Z', session }));
-  assert.deepEqual(file.session.waterfallColorRanges, ranges);
-  assert.equal(file.session.specLogY, true);
+  const restored = roundTrip(session);
+  assert.deepEqual(restored.waterfallColorRanges, ranges);
+  assert.equal(restored.specLogY, true);
 });
 
-test('session files reject malformed color limits while browser recovery keeps valid slots', () => {
+test('browser restoration clears malformed color limits while keeping valid slots', () => {
   const valid = { column: 'vibration', linear: [0, 0.5], log: [-7, -1] };
   const invalid = [false, [], {}, { ...valid, column: '' }, { ...valid, column: 2 },
     { column: 'vibration', linear: [0, 1] }, { ...valid, linear: [-1, 2] },
@@ -238,12 +222,12 @@ test('session files reject malformed color limits while browser recovery keeps v
     { ...valid, log: [-Number.MAX_VALUE, Number.MAX_VALUE] }];
   for (const entry of invalid) {
     const session = { ...defaultAnalysisSession(), waterfallColorRanges: [valid, entry] };
-    assert.throws(() => parseSessionFile(JSON.stringify(session)), /Invalid session waterfall color ranges/);
     assert.deepEqual(normalizeAnalysisSession(session).waterfallColorRanges.slice(0, 2), [valid, null]);
   }
   for (const ranges of [null, {}, 'bad', Array(10).fill(null)]) {
-    assert.throws(() => parseSessionFile(JSON.stringify({ ...defaultAnalysisSession(),
-      waterfallColorRanges: ranges })), /Invalid session waterfallColorRanges/);
+    const restored = roundTrip({ ...defaultAnalysisSession(), waterfallColorRanges: ranges });
+    assert.equal(restored.waterfallColorRanges.length, 9);
+    assert.deepEqual(restored.waterfallColorRanges, Array(9).fill(null));
   }
 });
 
@@ -256,9 +240,8 @@ test('source recovery retains manual color limits across rename, changed data an
       revision: 'before', test_points: [] }] };
   const recovery = resolveSessionSources(saved, [{ name: 'renamed', id: 'same-id',
     revision: 'after', test_points: [], status: 'ready', columns: ['temperature'] }]);
-  assert.equal(recovery.session.currentTest, 'renamed');
-  assert.deepEqual(recovery.session.waterfallColorRanges, ranges);
-  assert.deepEqual(recovery.session.plotConfigs, ['vibration']);
-  assert.equal(recovery.session.plotsUserEdited, true);
-  assert.ok(recovery.messages.some(message => message.includes('vibration is unavailable')));
+  assert.equal(recovery.currentTest, 'renamed');
+  assert.deepEqual(recovery.waterfallColorRanges, ranges);
+  assert.deepEqual(recovery.plotConfigs, ['vibration']);
+  assert.equal(recovery.plotsUserEdited, true);
 });

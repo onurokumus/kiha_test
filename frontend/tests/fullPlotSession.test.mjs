@@ -24,24 +24,20 @@ function loadTs(path) {
 const { defaultAnalysisSession, normalizeAnalysisSession, normalizeFullPlotExtraColumns,
   loadAnalysisSession, saveAnalysisSession } =
   loadTs(fileURLToPath(new URL('../src/services/analysisSession.ts', import.meta.url)));
-const { parseSessionFile } =
-  loadTs(fileURLToPath(new URL('../src/services/sessionFiles.ts', import.meta.url)));
+const roundTrip = value => normalizeAnalysisSession(JSON.parse(JSON.stringify(value)));
 const { resolveSessionSources } =
   loadTs(fileURLToPath(new URL('../src/services/sessionSources.ts', import.meta.url)));
 const emptySlots = () => Array.from({ length: 9 }, () => []);
 
-test('legacy time-note visibility is ignored when reopening and resaving sessions', () => {
+test('legacy time-note visibility is ignored when restoring browser state', () => {
   for (const annotationsVisible of [true, false]) {
     const current = { ...defaultAnalysisSession(), currentTest: 'legacy-test',
       viewMode: 'full', plotConfigs: ['rpm'], timeZoom: [1, 4] };
     const legacy = { ...current, annotationsVisible };
     const restored = normalizeAnalysisSession(legacy);
-    const imported = parseSessionFile(JSON.stringify({ format: 'ptt-analysis-session', version: 1,
-      name: 'Legacy notes', savedAt: '2026-09-28T10:00:00Z', session: legacy })).session;
     assert.deepEqual(restored, normalizeAnalysisSession(current));
-    assert.deepEqual(imported, normalizeAnalysisSession(current));
     assert.equal('annotationsVisible' in restored, false);
-    assert.equal(JSON.stringify(imported).includes('annotationsVisible'), false);
+    assert.equal(JSON.stringify(roundTrip(legacy)).includes('annotationsVisible'), false);
   }
 });
 
@@ -53,10 +49,10 @@ test('new and legacy sessions have nine independent empty comparison slots', () 
   assert.deepEqual(defaultAnalysisSession().fullPlotExtraColumns, emptySlots());
   delete session.fullPlotExtraColumns;
   assert.deepEqual(normalizeAnalysisSession(session).fullPlotExtraColumns, emptySlots());
-  assert.deepEqual(parseSessionFile(JSON.stringify(session)).session.fullPlotExtraColumns, emptySlots());
+  assert.deepEqual(roundTrip(session).fullPlotExtraColumns, emptySlots());
 });
 
-test('named session reopening preserves nine positional comparisons, filters and overlays', () => {
+test('browser restoration preserves nine positional comparisons, filters and overlays', () => {
   const session = defaultAnalysisSession();
   session.viewMode = 'full';
   session.plotConfigs = Array(9).fill('rpm');
@@ -64,8 +60,7 @@ test('named session reopening preserves nine positional comparisons, filters and
     [`thrust ${index}`, 'Temperature / C', 'Torque', 'power', 'vibration']);
   session.plotFilters[3] = { ...session.plotFilters[3], kind: 'despike' };
   session.plotShowOriginal[3] = true;
-  const reopened = parseSessionFile(JSON.stringify({ format: 'ptt-analysis-session', version: 1,
-    name: 'Full test comparisons', savedAt: '2026-09-16T10:00:00Z', session })).session;
+  const reopened = roundTrip(session);
   assert.deepEqual(reopened.fullPlotExtraColumns, session.fullPlotExtraColumns);
   assert.deepEqual(reopened.plotFilters, session.plotFilters);
   assert.deepEqual(reopened.plotShowOriginal, session.plotShowOriginal);
@@ -84,17 +79,6 @@ test('browser recovery sanitizes comparisons without shifting slots or variable 
   ]);
   for (const value of [undefined, null, true, 'rpm', {}]) {
     assert.deepEqual(normalizeFullPlotExtraColumns(value, ['rpm']), emptySlots());
-  }
-});
-
-test('explicit session files reject malformed, duplicate, primary and orphan comparisons', () => {
-  const base = { ...defaultAnalysisSession(), plotConfigs: ['rpm', 'thrust'] };
-  const invalid = [null, {}, 'rpm', Array(10).fill([]), [null], ['rpm'], [[1]], [['']],
-    [['rpm']], [['Torque', 'Torque']], [['a', 'b', 'c', 'd', 'e', 'f']],
-    [[], [], ['orphan']], [[], ['thrust']]];
-  for (const fullPlotExtraColumns of invalid) {
-    assert.throws(() => parseSessionFile(JSON.stringify({ ...base, fullPlotExtraColumns })),
-      /Invalid session fullPlotExtraColumns/);
   }
 });
 
@@ -126,30 +110,30 @@ test('source recovery preserves comparison slots while metadata is unavailable o
     { name: 'renamed', id: 'same-id', revision: 'after', test_points: [], status: 'ready', columns: ['rpm'] },
   ]) {
     const recovery = resolveSessionSources(saved, [source]);
-    assert.equal(recovery.session.currentTest, 'renamed');
-    assert.equal(recovery.session.plotsUserEdited, true);
-    assert.deepEqual(recovery.session.plotConfigs, saved.plotConfigs);
-    assert.deepEqual(recovery.session.fullPlotExtraColumns, extras);
+    assert.equal(recovery.currentTest, 'renamed');
+    assert.equal(recovery.plotsUserEdited, true);
+    assert.deepEqual(recovery.plotConfigs, saved.plotConfigs);
+    assert.deepEqual(recovery.fullPlotExtraColumns, extras);
   }
 });
 
 
-test('full-test Y and spectrum Y crops survive session files while older sessions remain valid', () => {
+test('full-test Y and spectrum Y crops survive reload while older browser state remains valid', () => {
   const session = defaultAnalysisSession();
   assert.deepEqual(session.plotViewports.full, Array(9).fill(null));
   session.plotViewports.full[2] = { context: 'full-source-and-columns', x: [2, 8], y: [-0.2, 0.7] };
   session.plotViewports.spectrum[0] = { context: 'fft-source', x: [20, 100], y: [-6, -2] };
-  const reopened = parseSessionFile(JSON.stringify(session)).session;
+  const reopened = roundTrip(session);
   assert.deepEqual(reopened.plotViewports, session.plotViewports);
   const legacy = defaultAnalysisSession();
   delete legacy.plotViewports.full;
-  assert.deepEqual(parseSessionFile(JSON.stringify(legacy)).session.plotViewports.full, Array(9).fill(null));
+  assert.deepEqual(roundTrip(legacy).plotViewports.full, Array(9).fill(null));
 });
 
-test('explicit full-test ranges reject malformed or reversed Y bounds', () => {
+test('browser restoration clears malformed or reversed full-test Y bounds', () => {
   for (const full of [{}, 'bad', Array(10).fill(null), [{context:'full', x:[0,1], y:[4,2]}]]) {
     const session = defaultAnalysisSession();
     session.plotViewports.full = full;
-    assert.throws(() => parseSessionFile(JSON.stringify(session)), /Invalid session full ranges/);
+    assert.deepEqual(roundTrip(session).plotViewports.full, Array(9).fill(null));
   }
 });

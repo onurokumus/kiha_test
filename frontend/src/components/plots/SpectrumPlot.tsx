@@ -1,4 +1,7 @@
 import { usePlotTheme } from '../../utils/usePlotTheme';
+import { plotHoverPlugin } from '../../utils/uplotHover';
+import { usePlotHoverGroup } from '../../utils/usePlotHoverGroup';
+import { sampleHoverRows } from '../../utils/plotHoverValues';
 import { plotSeriesColor } from '../../constants/uplotTheme';
 import { usePlotViewport, ViewportProps } from '../../utils/plotViewport';
 import { loadedAnalysis } from '../../utils/analysisMetadata';
@@ -143,6 +146,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
   const analysisActions = useRef<SpectrumAnalysisActions>(null);
   const exportActions = useRef<PlotExportActions>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const hoverGroup = usePlotHoverGroup();
   usePlotTheme(plotRef);
   const viewportControl = usePlotViewport(plotRef, {viewport, viewportContext, onViewportChange}, 'manual');
   const structKeyRef = useRef('');
@@ -296,7 +300,12 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
       // Left-drag selects X/Y/both; manual Y survives auto-fitting and restore.
       // Wheel-zoom / shift-drag pan are client-side too (no commit target).
       cursor: { dataIdx: sortedFacetedDataIdx, drag: { x: true, y: false } },
-      plugins: [axisTitlesPlugin(`${specMode === 'welch' ? 'PSD (U²/Hz)' : 'Magnitude (U)'}${logY ? ' · log10' : ''}`), visibleYAutoFitPlugin(() => viewportControl.yRange() !== null), xPanZoomPlugin(undefined, viewportControl.setY), viewportControl.plugin],
+      plugins: [plotHoverPlugin(u => ({ heading: `${cfg.label} · ${specMode === 'welch' ? 'PSD' : 'FFT'}`,
+        units: [axisMode === 'per_rev' ? 'ord' : 'Hz', `${logY ? 'log10(' : ''}${specMode === 'welch' ? 'U²/Hz' : 'U'}${logY ? ')' : ''}`],
+        columns: [axisMode === 'per_rev' ? 'Order (cycles/rev)' : 'Frequency (Hz)',
+          `${specMode === 'welch' ? 'PSD (U²/Hz)' : 'Magnitude (U)'}${logY ? ' · log10' : ''}`],
+        rows: sampleHoverRows(u, true) }), hoverGroup, `spectrum:${axisMode}`),
+        axisTitlesPlugin(`${specMode === 'welch' ? 'PSD (U²/Hz)' : 'Magnitude (U)'}${logY ? ' · log10' : ''}`), visibleYAutoFitPlugin(() => viewportControl.yRange() !== null), xPanZoomPlugin(undefined, viewportControl.setY), viewportControl.plugin],
       series,
     });
 
@@ -308,7 +317,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
     // Axis labels and series colors are structural, so log mode and colors
     // must participate in the key used to reuse the existing canvas.
     const structKey = [
-      JSON.stringify(traces.map(trace => [trace.label, trace.color])), box.w, box.h, isExpanded, axisMode, logY, specMode,
+      JSON.stringify(traces.map(trace => [trace.label, trace.color])), box.w, box.h, isExpanded, axisMode, logY, specMode, cfg.label,
     ].join('|');
     viewportControl.sync(() => syncPlot({
       plotRef,
@@ -327,7 +336,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
         }
       },
     }));
-  }, [viewportControl, viewportContext, traces, logY, box, isExpanded, axisMode, specMode]);
+  }, [viewportControl, viewportContext, traces, logY, box, isExpanded, axisMode, specMode, cfg.label, hoverGroup]);
 
   const containerClass = `${styles.plotContainer} ${
     isExpanded ? styles.plotContainerExpanded : styles.plotContainerCollapsed

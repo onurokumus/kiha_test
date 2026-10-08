@@ -1,4 +1,7 @@
 import { usePlotTheme } from '../../utils/usePlotTheme';
+import { plotHoverPlugin } from '../../utils/uplotHover';
+import { usePlotHoverGroup } from '../../utils/usePlotHoverGroup';
+import { sampleHoverRows, nearestXYDataIdx } from '../../utils/plotHoverValues';
 import { plotSeriesColor } from '../../constants/uplotTheme';
 import { usePlotViewport, ViewportProps } from '../../utils/plotViewport';
 import { loadedAnalysis } from '../../utils/analysisMetadata';
@@ -89,6 +92,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   const detailsDialog = useRef<HTMLDialogElement>(null);
   const detailsOpener = useRef<HTMLElement | null>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const hoverGroup = usePlotHoverGroup();
   usePlotTheme(plotRef);
   const viewportControl = usePlotViewport(plotRef, {viewport, viewportContext, onViewportChange}, true);
   const structKeyRef = useRef('');
@@ -215,8 +219,10 @@ export const XYPlot: React.FC<XYPlotProps> = ({
       },
       axes: [{ ...AXIS_STYLE, label: xCol }, { ...AXIS_STYLE, label: cfg.label }],
       legend: { show: isExpanded, live: true },
-      cursor: { drag: { x: true, y: true } },
-      plugins: [axisTitlesPlugin(cfg.label), xyPanZoomPlugin(), boxZoomPlugin(viewportControl.setY), viewportControl.plugin],
+      cursor: { dataIdx: nearestXYDataIdx, drag: { x: true, y: true } },
+      plugins: [plotHoverPlugin(u => ({ heading: `${cfg.label} · XY`, columns: [xCol, cfg.label], prefixes: ['x', 'y'],
+        rows: sampleHoverRows(u, true) }), hoverGroup, `xy:${xCol}`, `xy:${cfg.key}`),
+        axisTitlesPlugin(cfg.label), xyPanZoomPlugin(), boxZoomPlugin(viewportControl.setY), viewportControl.plugin],
       series,
     });
 
@@ -245,7 +251,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
         }
       },
     }));
-  }, [viewportControl, viewportContext, traces, box, isExpanded, xCol, cfg.label]);
+  }, [viewportControl, viewportContext, traces, box, isExpanded, xCol, cfg.label, cfg.key, hoverGroup]);
 
   const containerClass = `${styles.plotContainer} ${
     isExpanded ? styles.plotContainerExpanded : styles.plotContainerCollapsed

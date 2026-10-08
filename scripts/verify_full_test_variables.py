@@ -228,22 +228,14 @@ def run(web, api, dataset, temporary, output):
             export('PNG', 'three-both-image')
             passed('Same-hue filtered/original envelope pairs; real full-resolution CSV + PNG + all-variable metadata downloads')
 
-            page.get_by_role('button', name='Sessions', exact=True).click()
-            session_panel = page.get_by_role('dialog', name='Analysis sessions', exact=True)
-            session_panel.get_by_label('Session name', exact=True).fill('Compare variables')
-            with page.expect_download() as download:
-                session_panel.get_by_role('button', name='Save session file', exact=True).click()
-            session_path = output / 'comparison-session.json'
-            download.value.save_as(session_path)
-            saved = json.loads(session_path.read_text())['session']['fullPlotExtraColumns']
+            page.wait_for_function("cols=>JSON.stringify(JSON.parse(localStorage.getItem('ptt.analysis-session.v1')).fullPlotExtraColumns[0])===JSON.stringify(cols)", arg=COLS[1:3])
+            browser_state = page.evaluate("localStorage.getItem('ptt.analysis-session.v1')")
+            saved = json.loads(browser_state)['fullPlotExtraColumns']
             assert saved[0] == COLS[1:3] and saved[1:] == [[]]*8, saved
-            session_panel.get_by_role('button', name='Close', exact=True).click()
             page.get_by_role('button', name='Edit plots', exact=True).click()
             remove(COLS[1])
-            page.get_by_role('button', name='Sessions', exact=True).click()
-            session_panel.get_by_label('Session file', exact=True).set_input_files(session_path)
-            expect(session_panel).to_contain_text('All saved source references are compatible.')
-            session_panel.get_by_role('button', name='Open session', exact=True).click()
+            page.evaluate("saved=>localStorage.setItem('ptt.analysis-session.v1',saved)", browser_state)
+            page.reload()
             settled()
             assert len(snapshot()['series']) == 12
             page.get_by_role('button', name='Test points', exact=True).click()
@@ -255,7 +247,7 @@ def run(web, api, dataset, temporary, output):
             page.reload()
             settled()
             assert len(snapshot()['series']) == 12
-            passed('Actual session Save/Open, independent slots, legacy defaults, mode switch retention and browser reload')
+            passed('Quiet browser restoration, independent slots, legacy defaults and mode switch retention')
 
             page.get_by_role('button', name='Line', exact=True).click()
             settled()

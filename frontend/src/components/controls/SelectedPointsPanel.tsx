@@ -12,6 +12,7 @@ import { WATERFALL_WINDOWS, WATERFALL_OVERLAPS, WATERFALL_RESOLUTIONS, Waterfall
 import { SearchableSelect } from './SearchableSelect';
 import { TestSelect } from './TestSelect';
 import { AnalysisOptionsPopover } from './AnalysisOptionsPopover';
+import type { PlotHoverMode } from '../../utils/plotHoverGroup';
 import styles from './SelectedPointsPanel.module.css';
 
 type PanelViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
@@ -19,6 +20,8 @@ type PanelSource = 'tp' | 'full';
 type AnalysisView = 'time' | 'spectrum' | 'xy';
 
 interface SelectedPointsPanelProps {
+  plotValuesMode: PlotHoverMode;
+  onPlotValuesModeChange: (mode: PlotHoverMode) => void;
   exportTargetRef: React.Ref<HTMLDivElement>;
   detailTargetRef: React.Ref<HTMLSpanElement>;
   selectedTPs: SelectedTestPoint[];
@@ -84,6 +87,12 @@ const DENSITIES: Array<{ value: PlotDensity; label: string; description: string 
   { value: 'nine', label: '9', description: 'Show nine plots' },
 ];
 
+const PLOT_VALUES_OPTIONS = [
+  { value: 'current', label: 'Current' },
+  { value: 'all', label: 'All' },
+  { value: 'none', label: 'None' },
+] as const;
+
 const FULL_PLOT_MODES: Array<{
   value: WindowDisplayMode;
   label: string;
@@ -107,6 +116,8 @@ const FULL_PLOT_MODES: Array<{
 ];
 
 export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
+  plotValuesMode,
+  onPlotValuesModeChange,
   exportTargetRef,
   detailTargetRef,
   selectedTPs,
@@ -386,6 +397,16 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
             </AnalysisOptionsPopover>
         <div className={styles.toolGroup} aria-label="Plot tools">
           <span ref={detailTargetRef} className={styles.displayDetailTarget} />
+          <SearchableSelect ariaLabel="Plot values" value={plotValuesMode}
+            options={PLOT_VALUES_OPTIONS} searchable={false} showFooter={false} title=""
+            menuMinWidth={150} menuMaxWidth={172}
+            className={`${styles.valuesControl} ${plotValuesMode === 'none' ? styles.valuesOff : ''}`}
+            onChange={value => onPlotValuesModeChange(value as PlotHoverMode)}
+            triggerContent={<>
+              <span className={styles.valuesLabel}>Values</span>
+              <span className={styles.valuesMode}>{PLOT_VALUES_OPTIONS.find(option => option.value === plotValuesMode)?.label}</span>
+              <svg className={styles.valuesChevron} viewBox="0 0 16 16" aria-hidden="true"><path d="m4.25 6.25 3.75 3.5 3.75-3.5" /></svg>
+            </>} />
           <div className={styles.densityControl}>
             <div className={styles.densityButtons} role="group" aria-label="Plot layout">
               {DENSITIES.map(density => (

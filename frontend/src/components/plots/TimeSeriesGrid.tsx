@@ -23,11 +23,14 @@ import { createPlotExportRegistry } from '../../utils/plotExportRegistry';
 import { MultiPlotExportControls } from '../controls/MultiPlotExportControls';
 import { SearchableSelect } from '../controls/SearchableSelect';
 import styles from './TimeSeriesGrid.module.css';
+import { PlotHoverProvider } from '../../utils/PlotHoverContext';
+import type { PlotHoverMode } from '../../utils/plotHoverGroup';
 
 export type TimeViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
 export type TimeSeriesGridDensity = 'single' | 'quad' | 'nine';
 
 interface TimeSeriesGridProps {
+  plotValuesMode: PlotHoverMode;
   detailTarget: HTMLSpanElement | null;
   exportTarget: HTMLDivElement | null;
   viewports?: PlotViewports;
@@ -91,6 +94,7 @@ interface TimeSeriesGridProps {
 }
 
 export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
+  plotValuesMode,
   detailTarget,
   exportTarget,
   viewMode,
@@ -246,6 +250,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
     : details.map(detail => `${detail.label}: 1:${detail.level} (${detail.mode === 'envelope' ? 'min/max groups' : 'sampled line'})`).join('\n'));
 
   return (
+    <PlotHoverProvider mode={plotValuesMode}>
     <div className={styles.gridShell}>
       {detailTarget && firstDetail && createPortal(
         <span className={styles.displayDetail} tabIndex={0} data-plot-resolution
@@ -345,7 +350,8 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
           };
 
           return (
-            <div key={`plot-${idx}`} className={wrapperClass} data-select-focus-scope={`${selectFocusScope}-${idx}`}>
+            <div key={`plot-${idx}`} className={wrapperClass} data-select-focus-scope={`${selectFocusScope}-${idx}`}
+              data-plot-hover-slot={idx + 1}>
               {viewMode === 'tp' && (
                 <TimePlot
                   key={`tp:${cfg.key}:${visibleSelectionFingerprint}`}
@@ -445,5 +451,6 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
         })}
       </div>
     </div>
+    </PlotHoverProvider>
   );
 };

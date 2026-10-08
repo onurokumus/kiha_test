@@ -42,6 +42,7 @@ interface SearchableSelectProps {
   menuMinWidth?: number;
   menuMaxWidth?: number;
   triggerContent?: ReactNode;
+  showFooter?: boolean;
 }
 
 interface MenuPosition {
@@ -115,6 +116,7 @@ export const SearchableSelect = ({
   menuMinWidth = 286,
   menuMaxWidth = 440,
   triggerContent,
+  showFooter = true,
 }: SearchableSelectProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -408,7 +410,7 @@ export const SearchableSelect = ({
                 aria-activedescendant={
                   visibleOptions[activeIndex] ? `${listboxId}-option-${activeIndex}` : undefined
                 }
-                aria-describedby={statusId}
+                aria-describedby={showFooter ? statusId : undefined}
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -493,14 +495,14 @@ export const SearchableSelect = ({
             )}
           </div>
 
-          <div className={styles.menuFooter}>
+          {showFooter && <div className={styles.menuFooter}>
             <span id={statusId} role="status" aria-live="polite">
               {resultSummary}
             </span>
             <span className={styles.keyHints} aria-hidden="true">
               <kbd>↑↓</kbd> move <kbd>Enter</kbd> choose
             </span>
-          </div>
+          </div>}
         </div>,
         document.body
       )

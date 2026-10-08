@@ -1,4 +1,7 @@
 import { usePlotTheme } from '../../utils/usePlotTheme';
+import { plotHoverPlugin } from '../../utils/uplotHover';
+import { usePlotHoverGroup } from '../../utils/usePlotHoverGroup';
+import { sampleHoverRows } from '../../utils/plotHoverValues';
 import { plotSeriesColor } from '../../constants/uplotTheme';
 import { ViewportProps } from '../../utils/plotViewport';
 import { AxisRange } from '../../utils/timePlotRanges';
@@ -167,6 +170,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
   const chartRef = useRef<HTMLDivElement>(null);
   const exportActions = useRef<PlotExportActions>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const hoverGroup = usePlotHoverGroup();
   usePlotTheme(plotRef);
   const structKeyRef = useRef('');
   const yRange = viewport?.context === viewportContext ? viewport?.y ?? null : null;
@@ -445,6 +449,9 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
         sync: { key: FULL_SYNC_KEY, scales: ['x', null] },
       },
       plugins: [
+        plotHoverPlugin(u => ({ heading: displayedWindow.mode === 'envelope' ? 'Full test · envelope' : 'Full test',
+          columns: ['Time (s)', 'Value'], units: ['s', ''], rows: sampleHoverRows(u, false).map(row => ({ ...row,
+            label: showingOverlay ? row.label : row.label.replace(/ original(?= (?:max|min)$|$)/, '') })) }), hoverGroup, 'time:absolute'),
         visibleYAutoFitPlugin(() => yRangeRef.current !== null),
         xRangeHighlightsPlugin(() => highlightsRef.current),
         xPanZoomPlugin((r) => onRangeChangeRef.current(r), r => {
@@ -498,7 +505,7 @@ export const FullTestPlot: React.FC<FullTestPlotProps> = ({
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayedWindow, showingFiltered, showingOverlay, win, box, isExpanded, columns, colors]);
+  }, [displayedWindow, showingFiltered, showingOverlay, win, box, isExpanded, columns, colors, hoverGroup]);
 
   // Selection changes do not alter the trace data or uPlot structure. Redraw
   // the reused canvas so newly selected (or revealed) test-point bars appear

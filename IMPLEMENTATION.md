@@ -1,5 +1,140 @@
 # Implementation handoff
 
+## Complete Git checkpoint (2026-10-08)
+
+The user requested committing and pushing all pending changes on
+codex/ptt-ui-rework-2026-09-28, starting from 3e0b26d. This checkpoint includes
+compact hover values for all plot types, synchronized Current/All/None modes,
+the themed Values dropdown, Sessions removal, regression coverage and docs.
+The final combined frontend passes build/lint, 96 helpers and 43 native
+plot-values browser groups; Sessions removal additionally passed 13 groups,
+eight reload groups and nine rename groups. Details are in the reports below.
+No implementation work remains in these requests. The next independent
+milestone is Phase 11b's collapsible variable/filter controls.
+
+## Plot Values selector (2026-10-08)
+
+Completed explicit compact hover / three-way / styling follow-ups on
+codex/ptt-ui-rework-2026-09-28, ahead of Phase 11b. Values uses the existing
+styled SearchableSelect: Current shows only the hovered plot, All shows every
+visible plot, and None hides compact boxes. Its trigger sizes to the complete
+Values + mode label with a chevron; the themed popup has three checked/hoverable
+rows. Search/footer/redundant tooltip are omitted only for Values; other shared
+selectors preserve their defaults. This fixes Current clipping in the supplied
+native-control screenshot. ptt.plot-values.v1 remembers choices and migrates
+old true/false to All/None; invalid/blocked storage safely defaults to All.
+
+The coordinator shares actual coordinates for matching axes, relative positions
+for unlike XY variables and actual nearest samples; no analysis/data/scale changes.
+Mode changes cancel pending frames and stale boxes. Waterfall can use its source
+label area to retain Hz/time/U in tiny nine-slot/150% canvases; scrolled-out facets
+stay hidden. Existing expanded legends and analysis/export handlers remain.
+Acceptance complete: all modes/layouts/maximize, full labels/styled menu, pointer
+and keyboard choice/focus/dismissal/reload, preference migration, compact desktop
+resize/zoom and unaffected scientific values, axes/data/gestures/exports.
+
+Verification: build/lint, all 96 helpers and 43 copied-demo native Chromium groups
+pass. Current/All/None cover Time, Full line/envelope/comparisons, FFT/PSD/log/order,
+XY and both Waterfall sources in 1/4/9/maximized views. Menu checks cover all three
+checked choices, no search/footer or clipped labels, Escape/outside/Tab/focus,
+both themes and actual 100/125/150% zoom; 1000x750 resize passes. The verifier
+waits for listbox focus before keyboard navigation/commit. None/Current reload,
+legacy/invalid preferences, retained uPlot instances/axes/data, drag and PNG/canvas
+parity pass. No page errors, dataset writes or changed original/copied fingerprints.
+Owned servers stopped; user servers unchanged. Menu screenshots visually reviewed.
+Final bundle index-B-cpAS3P.js; existing size advisory remains. Backend tests were
+not rerun for frontend-only changes. No remaining scope; details/commands in
+docs/PLOT_HOVER_VALUES_VERIFICATION.md.
+
+Entry points: SelectedPointsPanel TSX/CSS, SearchableSelect's optional footer,
+App, TimeSeriesGrid, PlotHoverContext, plotHoverGroup and hover tests/verifier.
+Included alongside Sessions removal in the user-requested complete Git checkpoint.
+Next independent milestone: Phase 11b collapsible variable/filter controls.
+
+## Sessions removal (2026-10-08)
+
+Completed the explicit request on codex/ptt-ui-rework-2026-09-28 ahead of
+independent Phase 11b.
+Started at 3e0b26d with the hover plot/helpers/tests/script and these two handoff
+files already modified. The concurrent hover work is preserved and now records
+its own completed verification below; this request did not edit those files.
+
+Removed the Sessions header slot, Save/Open dialog, file parser/downloader,
+recovery notice/review/reconnect UI and CSS. Browser persistence remains quiet:
+dataset IDs and TP revisions still gate restoration; skipped references no longer
+pause autosave, and an unavailable active test falls back to the first ready test.
+Network/catalog failure still retains the saved workspace and supports Retry.
+Name-only legacy references are skipped; no automatic name matching is introduced.
+Resumable upload sessions remain essential transfer state and are unchanged.
+
+Acceptance: no Sessions control/dialog/recovery notices for clean, compatible,
+renamed, changed, missing, replacement or legacy state; valid choices/selections
+survive reload, stale crops reset, autosave proceeds, network failure/retry keeps
+saved data, analysis/export and desktop keyboard/resize/zoom remain usable.
+Entry points: App.tsx, Header.tsx, App.css, services/sessionSources.ts. Existing
+Full-test/Waterfall persistence tests now cover browser state; file-only import
+validation cases retired with the feature. The two dedicated session UI scripts
+were retired; six existing browser scripts now use quiet persistence or assert
+absence instead of invoking the removed dialog. Historical session reports are
+marked superseded. All seven changed/new browser scripts pass syntax checks.
+
+Verification complete: build/lint and all 88 current helper tests pass (two
+file-import-only cases retired from the earlier 90-test suite). The new isolated
+GET-only suite passes 13 groups: clean/compatible/renamed/changed/missing/replaced/
+legacy/ambiguous startup, autosave/reload, connection failure/retry, maximize/
+restore, keyboard menus/focus, CSV, 960x500, dark theme and real 125%/150% zoom.
+Existing staggered reload (eight groups) and Uploads rename (nine groups) pass;
+rename mutations are simulated. No application errors or user dataset writes.
+Screenshots visually reviewed; git diff --check passes. Native/backend tests
+were not rerun for this frontend-only removal. Older adapted native browser
+suites were syntax-checked, not rerun. Details: docs/SESSIONS_REMOVAL_VERIFICATION.md.
+Final bundle: index-CD9J9749.js; existing Vite bundle-size advisory remains.
+Owned preview stopped after verification; pre-existing servers were untouched.
+No remaining work for this request; included in the complete Git checkpoint.
+Next independent backlog milestone remains Phase 11b (collapsible controls panel).
+
+## Hover values in normal-size plots (2026-10-08)
+
+Explicit current request, ahead of independent Phase 11b, on
+codex/ptt-ui-rework-2026-09-28 in D:/okumus/work_v2/kiha_test. Started from
+clean 3e0b26d. Shared body-level hover boxes are implemented for collapsed Time,
+Full test, Spectrum and XY cards, plus Waterfall at either size. No canvas space
+is reserved. Expanded legends remain. Faceted traces use independent actual
+sample indices; XY resolves the nearest visible pair in screen space, including
+unsorted/repeated X. Full envelopes and Spectrum log units remain explicit.
+Missing values display an em dash. Mouse-only active ownership prevents synced
+plots from opening multiple boxes. Drag, key, scroll, resize and destruction
+dismiss the card. Extremely large comparisons show a remaining-trace count.
+
+User follow-up: the supplied Test_ID box was too large/text-heavy. Removed all
+visible headings and column headers; retained those labels for accessibility.
+One row per trace now uses a colored marker, short TP name, X/time and value.
+Repeated same-test names and unneeded Original text are removed; cross-test,
+overlay, min/max, log and axis identities remain. Numbers use six significant
+digits/scientific notation. Waterfall shows only Hz, elapsed seconds and linear
+U (max where reduced); source-frame provenance remains in data/exports. The
+supplied case is approximately 140x30 CSS pixels, verified in a native browser.
+
+Acceptance: readable and accurate values on every small right-side plot;
+multiple traces/variables, nulls, FFT/PSD/log/order, XY and waterfall semantics;
+no clipped boxes at nine-slot desktop sizes or actual 125%/150% zoom; preserve
+maximize/restore, zoom/pan, keyboard controls, exports and source data.
+Verification complete for this request: build/lint, all 90 helpers (six new)
+and 24 copied-demo browser groups pass, including four/nine-card views, actual
+125%/150% zoom, both themes, resize, gestures, maximize/restore and real PNG.
+No application errors/dataset writes; original datasets and copied CSV/Parquet
+sources unchanged. Owned Python 3.13/Vite servers stopped; existing user servers
+were untouched. Details/commands: docs/PLOT_HOVER_VALUES_VERIFICATION.md.
+Entry points: utils/plotHoverValues.ts, utils/uplotHover.ts/css, five plot
+components, frontend/tests/plotHoverValues.test.mjs and the browser verifier.
+
+Concurrent work appeared afterward in App.tsx/App.css/Header.tsx/sessionSources
+and deleted SessionControls/sessionFiles. Those changes are preserved. The
+temporary session-recovery type mismatch was resolved by that work; the final
+shared build passes (index-CD9J9749.js). Latest focused hover tests and lint pass.
+No hover implementation work remains; next independent milestone is Phase 11b.
+Included in the user-requested complete Git checkpoint above.
+
 ## Distinct Full test variable colors (2026-09-30)
 
 Current user request, ahead of independent Phase 11b. Target remains

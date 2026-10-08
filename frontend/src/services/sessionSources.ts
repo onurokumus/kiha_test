@@ -43,56 +43,34 @@ export function captureSessionSources(session: AnalysisSession, sources: Analysi
   });
 }
 
-export interface SessionRecovery {
-  session: AnalysisSession;
-  messages: string[];
-  legacy: boolean;
-  needsReview: boolean;
-}
-
-/** Shared resolver for automatic recovery and session-file previews/reopening.
- * All name-based state is remapped before any plots can mount. */
+/** Quietly restore compatible browser state before any plots can mount.
+ * Unverifiable sources and changed test points are skipped without a review
+ * step. Name-only legacy state is never attached to an unrelated dataset. */
 export function resolveSessionSources(
-  saved: AnalysisSession, sources: AnalysisSource[], reconnectLegacy = false
-): SessionRecovery {
+  saved: AnalysisSession, sources: AnalysisSource[]
+): AnalysisSession {
   sources = retainPendingSourceReferences(sources, saved.sources);
-  const messages: string[] = [];
   const names = referencedNames(saved);
-  const legacy = saved.sources === undefined && names.length > 0;
   const mapping = new Map<string, AnalysisSource>();
   const changed = new Set<string>();
   for (const name of names) {
     const refs = saved.sources?.filter(source => source.name === name) ?? [];
     const reference = refs.length === 1 ? refs[0] : undefined;
-    const matches = legacy && reconnectLegacy
-      ? sources.filter(source => source.name === name)
-      : reference?.id ? sources.filter(source => source.id === reference.id) : [];
+    const matches = reference?.id ? sources.filter(source => source.id === reference.id) : [];
     const current = matches.length === 1 ? matches[0] : undefined;
-    if (!current || current.error || !current.id) {
-      messages.push(`${name}: ${legacy && !reconnectLegacy ? 'legacy name-only reference needs reconnection' :
-        current?.error || (matches.length > 1 ? 'dataset identity is ambiguous' :
-          sources.some(source => source.name === name) ? 'saved identity does not match the available test' : 'test is missing or in the trash')}.`);
-      continue;
-    }
+    if (!current || current.error || !current.id) continue;
     mapping.set(name, current);
-    if (current.status !== 'ready') messages.push(`${current.name}: ${current.status}; saved selections will wait for the test to become ready.`);
-    if (name !== current.name) messages.push(`${name} → ${current.name}: recovered the same dataset after rename or restore.`);
     if (current.revision && reference?.revision && current.revision !== reference.revision) {
       changed.add(name);
-      messages.push(`${current.name}: sample data or variables changed; saved axis ranges were reset. Analysis uses current data.`);
     }
   }
-  if (legacy && reconnectLegacy) messages.push('Legacy references were reconnected by name at your request. Original dataset identity could not be verified.');
   const resolvePoint = (test: string, tpId: number): string | null => {
     const current = mapping.get(test);
     if (!current) return null;
     if (current.status !== 'ready') return current.name;
     const point = current.test_points?.find(p => p.id === tpId);
     const previous = saved.sources?.find(s => s.name === test)?.test_points.find(p => p.id === tpId);
-    if (!point || (!legacy && (!previous || point.revision !== previous.revision))) {
-      messages.push(`${current.name} TP ${tpId}: ${point ? 'saved interval changed' : 'test point is missing'}; selection skipped.`);
-      return null;
-    }
+    if (!point || !previous || point.revision !== previous.revision) return null;
     return current.name;
   };
   const selections = saved.selections.flatMap(selection => {
@@ -133,19 +111,6 @@ export function resolveSessionSources(
     plotsUserEdited: saved.plotConfigs.length > 0 || saved.plotsUserEdited,
     axesUserSet: !!(saved.xAxis || saved.yAxis) || saved.axesUserSet,
   };
-  const allColumns = new Set(sources.flatMap(source => source.columns ?? []));
-  const gridSources = (saved.viewMode === 'tp' || (saved.viewMode === 'spectrum' && saved.specSource === 'tp') ||
-    (saved.viewMode === 'xy' && saved.xySource === 'tp')) ? selections.map(s => s.test) : [];
-  const gridColumns = new Set(sources.filter(source => gridSources.includes(source.name) || source.name === currentTest)
-    .flatMap(source => source.columns ?? []));
-  saved.plotConfigs.forEach((column, index) => {
-    if (column && !gridColumns.has(column)) messages.push(`Plot ${index + 1}: ${column} is unavailable. Its slot and filter settings were retained; choose a variable in Edit Plots.`);
-  });
-  for (const column of [saved.xAxis, saved.yAxis, ...saved.filterState.parameterFilters.map(f => f.column)]) {
-    if (column && !allColumns.has(column)) messages.push(`${column}: comparison variable is unavailable.`);
-  }
-  if (saved.filterState.tpKeys.length && !tpKeys.length) messages.push('No saved test-point filters could be recovered; the comparison now shows all available test points.');
   session.sources = captureSessionSources(session, sources);
-  return { session, messages: [...new Set(messages)], legacy: legacy && !reconnectLegacy,
-    needsReview: mapping.size !== names.length || selections.length !== saved.selections.length || tpKeys.length !== saved.filterState.tpKeys.length };
+  return session;
 }

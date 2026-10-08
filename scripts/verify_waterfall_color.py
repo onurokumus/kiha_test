@@ -349,31 +349,21 @@ def run(web, api, dataset, temporary, output):
             plot().screenshot(path=str(output / 'per-slot-limits.png'))
             passed('Three slots preserve independent per-variable limits; an all-zero source maps to the low color endpoint in linear and log modes')
 
-            page.get_by_role('button', name='Sessions', exact=True).click()
-            session_panel = page.get_by_role('dialog', name='Analysis sessions', exact=True)
-            session_panel.get_by_label('Session name', exact=True).fill('Waterfall color limits')
-            with page.expect_download() as download:
-                session_panel.get_by_role('button', name='Save session file', exact=True).click()
-            session_path = output / 'color-session.json'
-            download.value.save_as(session_path)
-            saved = json.loads(session_path.read_text())['session']['waterfallColorRanges']
-            assert saved[:3] == [
+            expected_ranges = [
                 {'column': 'signal_N', 'linear': [.1, 1.1], 'log': None},
                 {'column': 'reference_V', 'linear': [.05, .8], 'log': None},
                 {'column': 'quiet_U', 'linear': [.1, 2], 'log': [-2, 1]},
-            ], saved
-            session_panel.get_by_role('button', name='Close', exact=True).click()
+            ]
+            page.wait_for_function("ranges=>JSON.stringify(JSON.parse(localStorage.getItem('ptt.analysis-session.v1')).waterfallColorRanges.slice(0,3))===JSON.stringify(ranges)", arg=expected_ranges)
+            browser_state = page.evaluate("localStorage.getItem('ptt.analysis-session.v1')")
             apply(.5, 5)
-            page.get_by_role('button', name='Sessions', exact=True).click()
-            session_panel.get_by_label('Session file', exact=True).set_input_files(session_path)
-            expect(session_panel).to_contain_text('All saved source references are compatible.')
-            session_panel.get_by_role('button', name='Open session', exact=True).click()
-            expect(session_panel).not_to_be_visible()
+            page.evaluate("saved=>localStorage.setItem('ptt.analysis-session.v1',saved)", browser_state)
+            page.reload()
             settled(('signal_N', 'reference_V', 'quiet_U'))
             assert_color([.1, 1.1])
             assert_color([.05, .8], column='reference_V')
             assert_color([.1, 2], column='quiet_U')
-            passed('Real session JSON download and Open session restore all three slots and both linear/log limits')
+            passed('Quiet browser restoration retains all three slots and both linear/log limits')
 
             patch_session({'plotConfigs': ['signal_N', 'signal_N', 'quiet_U']})
             settled(('signal_N', 'quiet_U'))

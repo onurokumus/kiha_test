@@ -1,7 +1,6 @@
 import { PlotViewports } from './utils/plotViewport';
-import { SessionControls } from './components/controls/SessionControls';
+import { parsePlotHoverMode, type PlotHoverMode } from './utils/plotHoverGroup';
 import { AnalysisSession } from './services/analysisSession';
-import { SessionRecovery } from './services/sessionSources';
 import { CSSProperties, useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { AppTab, Header } from './components/layout/Header';
 import { AxisControls } from './components/controls/AxisControls';
@@ -51,7 +50,7 @@ import {
   PlotDensity,
   saveAnalysisSession,
 } from './services/analysisSession';
-import { AnalysisSource, captureSessionSources, referencedNames, resolveSessionSources, retainPendingSourceReferences } from './services/sessionSources';
+import { AnalysisSource, captureSessionSources, resolveSessionSources, retainPendingSourceReferences } from './services/sessionSources';
 import {
   DatasheetDataPoint,
   ScatterDataPoint,
@@ -130,12 +129,9 @@ function App() {
   const [plotViewports, setPlotViewports] = useState<PlotViewports>(restoredSession.plotViewports);
   const [hasRestoredSession] = useState(hasSavedAnalysisSession);
   const [sessionRecoveryReady, setSessionRecoveryReady] = useState(false);
-  const [recoveryMessages, setRecoveryMessages] = useState<string[]>([]);
-  const [recoveryLegacy, setRecoveryLegacy] = useState(false);
-  const [recoveryNeedsReview, setRecoveryNeedsReview] = useState(false);
   const [sourceCatalog, setSourceCatalog] = useState<AnalysisSource[]>([]);
   const [sourceRefreshVersion, setSourceRefreshVersion] = useState(0);
-  const recoverSessionRef = useRef<(legacy?: boolean) => Promise<void>>(async () => {});
+  const recoverSessionRef = useRef<() => Promise<void>>(async () => {});
   const recoveryAttemptRef = useRef(0);
   const recoveredOrderRef = useRef<string[]>([]);
   const [tests, setTestList] = useState<TestInfo[]>([]);
@@ -281,6 +277,15 @@ function App() {
   const [plotDensity, setPlotDensity] = useState<PlotDensity>(
     hasRestoredSession ? restoredSession.plotDensity : 'nine'
   );
+  const [plotValuesMode, setPlotValuesMode] = useState(() => {
+    try { return parsePlotHoverMode(localStorage.getItem('ptt.plot-values.v1')); }
+    catch { return 'all' as PlotHoverMode; }
+  });
+  const changePlotValuesMode = (mode: PlotHoverMode) => {
+    setPlotValuesMode(mode);
+    try { localStorage.setItem('ptt.plot-values.v1', mode); }
+    catch { /* The toggle still works when browser storage is unavailable. */ }
+  };
   const [isResizingWorkspace, setIsResizingWorkspace] = useState(false);
   const scatterExportActions = useRef<PlotExportActions>(null);
   const [scatterNavigationHost, setScatterNavigationHost] = useState<HTMLDivElement | null>(null);
@@ -848,7 +853,7 @@ function App() {
         const list = await fetchTests();
         if (canceled || epoch !== testListEpoch.current) return;
         setTests(list);
-        if (!currentTest && sessionRecoveryReady && !recoveryNeedsReview && !recoveryLegacy) {
+        if (!currentTest && sessionRecoveryReady) {
           const firstReady = list.find((t) => t.status === 'ready');
           if (firstReady) setCurrentTest(firstReady.name);
           return;
@@ -870,7 +875,7 @@ function App() {
     return () => { canceled = true; window.clearInterval(id); };
     // `tab` is read in the bail-out above: without it here, opening the Uploads
     // tab would not (re)start polling unless some other dep also changed (1.17).
-  }, [tests, uploadsActive, currentTest, invalidateTest, tab, sessionRecoveryReady, recoveryNeedsReview, recoveryLegacy, setTests]);
+  }, [tests, uploadsActive, currentTest, invalidateTest, tab, sessionRecoveryReady, setTests]);
 
   // Auto-clear transient notices
   useEffect(() => {
@@ -1020,7 +1025,7 @@ function App() {
     if (uploadRenameInFlight.current) throw new Error('A test rename is already in progress.');
     // Capture BEFORE POST: polling may see the new name before its response.
     // Identity recovery remaps selections, filters and ranges without resetting them.
-    const snapshot = sessionRecoveryReady && !recoveryNeedsReview && !recoveryLegacy
+    const snapshot = sessionRecoveryReady
       ? captureSession() : recoveryInputRef.current;
     const wasReady = sessionRecoveryReady;
     uploadRenameInFlight.current = true;
@@ -1170,9 +1175,8 @@ function App() {
   // It loads the complete source catalog before invalidating metadata, so a
   // faster test cannot replace the chosen axes while another schema is pending.
   const reloadData = async () => {
-    if (sessionRecoveryReady && !recoveryNeedsReview && !recoveryLegacy) {
-      // Keep unresolved saved references intact when this is a recovery retry.
-      // Otherwise use today's choices, not the snapshot from page startup.
+    if (sessionRecoveryReady) {
+      // Use today's choices; a failed source check retains this snapshot for retry.
       recoveryInputRef.current = captureSession();
     }
     await recoverSessionRef.current();
@@ -1645,21 +1649,15 @@ function App() {
   );
   resetMainZoomRef.current = resetZoom;
 
-  const applyRecoveredSession = (input: AnalysisSession, recovery: SessionRecovery,
-    catalog: AnalysisSource[], list: TestInfo[], reviewed = false) => {
-    recoveryInputRef.current = input;
+  const applyRecoveredSession = (input: AnalysisSession, session: AnalysisSession,
+    catalog: AnalysisSource[], list: TestInfo[]) => {
+    recoveryInputRef.current = session;
     setTests(list);
-    const session = recovery.session;
-    setRecoveryMessages(recovery.messages);
-    setRecoveryLegacy(recovery.legacy);
-    setRecoveryNeedsReview(reviewed ? false : recovery.needsReview);
-    // Invalidate outstanding loads too; a newly opened file can refer to
-    // a source whose previous metadata request has not completed yet.
+    // Invalidate outstanding loads before applying refreshed source references.
     new Set([...Object.keys(metaByTest), ...metaInFlight.current]).forEach(invalidateTest);
     setSelectedTPs([]);
     setHiddenTPs(new Set());
-    setCurrentTest(session.currentTest || (referencedNames(input).length === 0
-      ? list.find(test => test.status === 'ready')?.name ?? '' : ''));
+    setCurrentTest(session.currentTest || list.find(test => test.status === 'ready')?.name || '');
     recoveredOrderRef.current = session.selections.map(selection => `${selection.test}:${selection.tpId}`);
     setPendingRestoredSelections(session.selections);
     setSelectionSessionHydrated(false);
@@ -1707,7 +1705,7 @@ function App() {
     setSourceCatalogError(null);
   };
 
-  recoverSessionRef.current = async (reconnectLegacy = false) => {
+  recoverSessionRef.current = async () => {
     const attempt = ++recoveryAttemptRef.current;
     setLoading(true); setError(null); setSourceCatalogError(null);
     setSessionRecoveryReady(false);
@@ -1740,22 +1738,17 @@ function App() {
       const catalog = catalogResult.value;
       const input = recoveryInputRef.current;
       if (input) {
-        applyRecoveredSession(input, resolveSessionSources(input, catalog.sources, reconnectLegacy), catalog.sources, list);
+        applyRecoveredSession(input, resolveSessionSources(input, catalog.sources), catalog.sources, list);
       } else {
         setCurrentTest(list.find(test => test.status === 'ready')?.name ?? '');
         setSourceCatalog(catalog.sources);
         setSessionRecoveryReady(true);
       }
     } catch (err) {
-      if (attempt === recoveryAttemptRef.current) setError(err instanceof Error ? err.message : 'Source identities could not be checked. Retry recovery.');
+      if (attempt === recoveryAttemptRef.current) setError(err instanceof Error ? err.message : 'Source identities could not be checked. Try again.');
     } finally {
       if (attempt === recoveryAttemptRef.current) setLoading(false);
     }
-  };
-
-  const retrySavedRecovery = async (legacy = false) => {
-    if (!(await handleTabChange('analyze'))) return;
-    await recoverSessionRef.current(legacy);
   };
 
   // New uploads and lifecycle changes need source references too. Keep a
@@ -1832,14 +1825,12 @@ function App() {
   };
   const liveSession = captureSession();
   const serializedSession = JSON.stringify(liveSession);
-  const sessionSaveDisabled = loading || !sessionRecoveryReady ? 'Wait for source recovery to finish.'
-    : recoveryLegacy || recoveryNeedsReview ? 'Review session recovery before saving.'
-    : !selectionSessionHydrated ? 'Wait for saved selections to load.' : null;
+  const persistenceReady = !loading && sessionRecoveryReady && selectionSessionHydrated;
   useEffect(() => {
-    if (sessionSaveDisabled) return;
+    if (!persistenceReady) return;
     const timer = window.setTimeout(() => saveAnalysisSession(JSON.parse(serializedSession)), 250);
     return () => window.clearTimeout(timer);
-  }, [serializedSession, sessionSaveDisabled]);
+  }, [serializedSession, persistenceReady]);
 
   useEffect(() => {
     if (!isResizingWorkspace) return;
@@ -2067,13 +2058,6 @@ function App() {
     <div {...dragHandlers} className="app-shell">
       {dropOverlay}
       <Header
-        sessionControls={<SessionControls onBegin={() => handleTabChange('analyze')}
-          getSession={captureSession} saveDisabledReason={sessionSaveDisabled}
-          onApply={(input, recovery, sources, list) => {
-            ++recoveryAttemptRef.current;
-            applyRecoveredSession(input, recovery, sources, list, true);
-            setLoading(false);
-          }} />}
         tests={tests}
         testListStatus={testListStatus}
         tab={tab}
@@ -2086,30 +2070,6 @@ function App() {
         onCancelUpload={cancelUpload}
         notice={notice}
       />
-      {sessionRecoveryReady && (recoveryMessages.length > 0 || recoveryLegacy) && (
-        <aside className="session-recovery" aria-label="Session recovery">
-          <details open={recoveryLegacy || recoveryNeedsReview || undefined}>
-            <summary>Session recovery · {recoveryMessages.length} notice{recoveryMessages.length === 1 ? '' : 's'}</summary>
-            <ul>{recoveryMessages.map(message => <li key={message}>{message}</li>)}</ul>
-          </details>
-          {recoveryLegacy && <p>Older sessions saved test names without dataset IDs. Reconnect only if these names still refer to your original tests. Automatic saving is paused until you choose.</p>}
-          {recoveryNeedsReview && !recoveryLegacy && <p>Some saved references could not be recovered. Your saved workspace is retained and automatic saving is paused. Restore missing tests and retry, or continue with the recovered workspace.</p>}
-          <div className="session-recovery-actions">
-            {recoveryLegacy ? <>
-              <button className="btn" disabled={loading} onClick={() => void retrySavedRecovery(true)}>Reconnect legacy session by name</button>
-              <button className="btn" onClick={() => { setRecoveryLegacy(false); setRecoveryNeedsReview(false); setRecoveryMessages(['Legacy source references were discarded. Choose tests to start a fresh analysis.']); }}>Discard legacy references</button>
-            </> : recoveryNeedsReview ? <>
-              <button className="btn" disabled={loading} onClick={() => void retrySavedRecovery()}>Retry session recovery</button>
-              <button className="btn" onClick={() => setRecoveryNeedsReview(false)}>Continue with recovered workspace</button>
-            </> : <button className="btn" disabled={!currentTest} onClick={() => setRecoveryMessages([])}>Dismiss recovery notices</button>}
-            {!currentTest && !recoveryLegacy && <label>Active test <select className="input" aria-label="Choose active test after recovery" value=""
-              onChange={event => { void handleTestChange(event.target.value); }}>
-              <option value="">Choose a test…</option>
-              {tests.filter(test => test.status === 'ready').map(test => <option key={test.name} value={test.name}>{test.name}</option>)}
-            </select></label>}
-          </div>
-        </aside>
-      )}
       {(error || sourceCatalogError) && !needsTestData && (
         <div className="app-connection-banner" role="alert">
           <span>{error ? 'The test list is unavailable. Check the connection and try again.'
@@ -2165,7 +2125,7 @@ function App() {
                 </h1>
                 <p>
                   {tests.some(test => test.status === 'ready')
-                    ? 'Review session recovery above, or open a test from Uploads.' : tests.length
+                    ? 'Open a test from Uploads.' : tests.length
                     ? 'Open Uploads to follow processing progress or resolve an interrupted import.'
                     : 'Import a test-rig CSV to explore signals and compare operating points.'}
                 </p>
@@ -2381,6 +2341,8 @@ function App() {
           {/* Right Panel - Time Series Plots */}
           <div className="analyze-plots-pane">
             <SelectedPointsPanel
+              plotValuesMode={plotValuesMode}
+              onPlotValuesModeChange={changePlotValuesMode}
               exportTargetRef={setPlotExportTarget}
               detailTargetRef={setPlotDetailTarget}
               selectedTPs={selectedTPs}
@@ -2430,6 +2392,7 @@ function App() {
               onPlotDensityChange={handlePlotDensityChange}
             />
             <TimeSeriesGrid
+              plotValuesMode={plotValuesMode}
               key={sessionEpoch}
               exportTarget={plotExportTarget}
               detailTarget={plotDetailTarget}

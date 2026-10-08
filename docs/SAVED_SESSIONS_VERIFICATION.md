@@ -1,5 +1,9 @@
 # Saved analysis sessions — Phase 8b
 
+Historical verification report. The Sessions button, named JSON Save/Open and
+their verification script were removed at user request on 2026-10-08. Browser
+state persists quietly; current regression: `scripts/verify_sessions_removal.py`.
+
 Updated 2026-09-10. Continuation of [source recovery](SESSION_RECOVERY_VERIFICATION.md).
 Scientific calculations, data storage and export methods are unchanged.
 

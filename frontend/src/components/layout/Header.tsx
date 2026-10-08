@@ -16,7 +16,6 @@ interface HeaderProps {
   onResumeUpload: (id: number) => void;
   onCancelUpload: (id: number) => void;
   notice?: string;
-  sessionControls?: React.ReactNode;
 }
 
 const chipButton: React.CSSProperties = {
@@ -133,7 +132,7 @@ export const Header: React.FC<HeaderProps> = ({
   onPauseUpload,
   onResumeUpload,
   onCancelUpload,
-  notice, sessionControls,
+  notice,
 }) => {
   const importRef = useRef<HTMLInputElement>(null);
   const theme = useTheme();
@@ -182,7 +181,6 @@ export const Header: React.FC<HeaderProps> = ({
         <button className="btn app-import-button" onClick={() => importRef.current?.click()}>
           <span aria-hidden="true">＋</span> Import CSV
         </button>
-        {sessionControls}
         <button type="button" className="theme-toggle" role="switch"
           aria-label="Dark mode" aria-checked={theme === 'dark'}
           title="Toggle dark mode"

@@ -2213,23 +2213,6 @@ input[type='checkbox'] {
 .uplot .u-cursor-y {
   border-color: var(--subtle, #6a6a6a);
 }
-.session-recovery {
-  flex: 0 0 auto;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--warning-border, #e6d4a8);
-  background: var(--warning-bg, #fff8e4);
-  color: var(--warning, #806b20);
-  max-height: 32vh;
-  overflow: auto;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-.session-recovery summary { cursor: pointer; font-weight: 600; }
-.session-recovery ul { margin: 6px 0; padding-left: 20px; }
-.session-recovery p { margin: 6px 0; }
-.session-recovery-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
-.session-recovery-actions label { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.session-recovery-actions select { max-width: min(360px, 55vw); }
 
 
 /* Shared workspace shell; keep upstream desktop resizing and dialogs. */
