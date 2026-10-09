@@ -11,6 +11,8 @@ import { MAX_SELECTED_TEST_POINTS } from '../../constants/selection';
 import { WATERFALL_WINDOWS, WATERFALL_OVERLAPS, WATERFALL_RESOLUTIONS, WaterfallBand } from '../../constants/waterfall';
 import { SearchableSelect } from './SearchableSelect';
 import { TestSelect } from './TestSelect';
+import { FlightSelectionTray } from './FlightSelection';
+import type { FullFlightComparison } from '../../utils/fullFlightComparison';
 import { AnalysisOptionsPopover } from './AnalysisOptionsPopover';
 import type { PlotHoverMode } from '../../utils/plotHoverGroup';
 import styles from './SelectedPointsPanel.module.css';
@@ -58,6 +60,10 @@ interface SelectedPointsPanelProps {
   /** Active test for full-test-sourced views (moved here from the header). */
   tests: TestInfo[];
   currentTest: string;
+  flightComparison: FullFlightComparison;
+  comparingFlights: boolean;
+  onFlightComparisonChange: (comparison: FullFlightComparison) => void;
+  flightSourceErrors: string[];
   onTestChange: (test: string) => void;
   fullPlotMode: WindowDisplayMode;
   onFullPlotModeChange: (mode: WindowDisplayMode) => void;
@@ -145,6 +151,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
   onSpecLogYChange,
   tests,
   currentTest,
+  flightComparison, comparingFlights, onFlightComparisonChange, flightSourceErrors,
   onTestChange,
   fullPlotMode,
   onFullPlotModeChange,
@@ -159,6 +166,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
     ? specSource
     : viewMode === 'xy' ? xySource : viewMode;
   const activeView: AnalysisView = viewMode === 'tp' || viewMode === 'full' ? 'time' : viewMode;
+  const flightControls = activeSource === 'full' && activeView !== 'spectrum';
 
   // Keep the existing persisted mode/source fields, but make each user action
   // carry its source across views instead of silently switching datasets.
@@ -235,7 +243,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
           </div>
         </div>
 
-          {activeSource === 'full' ? (
+          {activeSource === 'full' && !flightControls ? (
             <div className={`${styles.contextControl} ${styles.testControl}`}>
               <TestSelect
                 tests={tests}
@@ -427,7 +435,9 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
         </div>
       </div>
 
-      <div className={styles.selectionTray}>
+      {flightControls ? <FlightSelectionTray tests={tests} comparison={flightComparison}
+        comparing={comparingFlights} onChange={onFlightComparisonChange}
+        sourceErrors={flightSourceErrors} onFit={onResetTimeZoom} exportTargetRef={exportTargetRef} /> : <div className={styles.selectionTray}>
         <div className={styles.selectionHeading}>
           <span className={styles.trayTitle}>Selected points</span>
           <span
@@ -496,7 +506,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
           </ul>
           {selectedTPs.length === 0 && <span className={styles.emptyMessage}>Choose points from the scatter plot</span>}
         </div>
-      </div>
+      </div>}
     </section>
   );
 };

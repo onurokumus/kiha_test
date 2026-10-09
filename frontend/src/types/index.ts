@@ -335,6 +335,10 @@ export type WindowDisplayMode = 'auto' | 'line' | 'envelope';
 export type PlotExportData = 'original' | 'filtered' | 'both';
 export interface PlotExportSource {
   test: string;
+  /** Variables available in this flight; defaults to the request's variables. */
+  columns?: string[];
+  /** Displayed time = stored time + this offset (seconds), for Full flights. */
+  time_offset?: number;
   tp_id?: number;
   t0?: number | null;
   t1?: number | null;
@@ -351,7 +355,7 @@ export interface PlotExportRequest {
   data: PlotExportData;
   sources: PlotExportSource[];
   filter: FilterSpec | null;
-  /** Actual inclusive X sample centers, relative for TP, absolute for Full. */
+  /** Inclusive displayed sample centers: relative for TP, offset stored time for Full. */
   x_range: [number, number] | null;
 }
 
@@ -385,6 +389,8 @@ export interface SpectrumExportRequest {
 }
 export interface XYExportSource {
   test: string;
+  /** Applied only when an XY axis is this flight's actual time column. */
+  time_offset?: number;
   tp_id?: number;
   t0?: number | null;
   t1?: number | null;

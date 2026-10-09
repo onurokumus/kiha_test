@@ -27,6 +27,8 @@ interface SearchableSelectProps {
   value: string;
   options: readonly SearchableSelectOption[];
   onChange: (value: string) => void;
+  /** Multi-selection stays open after each toggle. Other selectors stay single. */
+  multipleValues?: readonly string[];
   ariaLabel: string;
   placeholder?: string;
   searchPlaceholder?: string;
@@ -101,6 +103,7 @@ export const SearchableSelect = ({
   value,
   options,
   onChange,
+  multipleValues,
   ariaLabel,
   placeholder = 'Choose an option',
   searchPlaceholder,
@@ -311,7 +314,7 @@ export const SearchableSelect = ({
   const chooseOption = (option: SearchableSelectOption | undefined) => {
     if (!option || option.disabled) return;
     onChange(option.value);
-    closeMenu(true);
+    if (!multipleValues) closeMenu(true);
   };
 
   const handleMenuKeyDown = (event: ReactKeyboardEvent) => {
@@ -436,6 +439,7 @@ export const SearchableSelect = ({
             id={listboxId}
             className={styles.optionList}
             role="listbox"
+            aria-multiselectable={multipleValues ? true : undefined}
             aria-label={ariaLabel}
             tabIndex={searchable ? undefined : -1}
             aria-activedescendant={
@@ -454,7 +458,7 @@ export const SearchableSelect = ({
               visibleOptions.map((option, index) => {
                 const previousGroup = index > 0 ? visibleOptions[index - 1].group : undefined;
                 const showGroup = Boolean(option.group && option.group !== previousGroup);
-                const selected = option.value === value;
+                const selected = multipleValues ? multipleValues.includes(option.value) : option.value === value;
                 const active = index === activeIndex;
 
                 return (
@@ -497,14 +501,15 @@ export const SearchableSelect = ({
 
           {showFooter && <div className={styles.menuFooter}>
             <span id={statusId} role="status" aria-live="polite">
-              {resultSummary}
+              {multipleValues ? `${multipleValues.length} selected · ${resultSummary}` : resultSummary}
             </span>
             <span className={styles.keyHints} aria-hidden="true">
-              <kbd>↑↓</kbd> move <kbd>Enter</kbd> choose
+              <kbd>↑↓</kbd> move <kbd>Enter</kbd> {multipleValues ? 'toggle' : 'choose'}
             </span>
           </div>}
         </div>,
-        document.body
+        // Keep a native modal's popup in its top layer and focus scope.
+        rootRef.current?.closest('dialog') ?? document.body
       )
     : null;
 

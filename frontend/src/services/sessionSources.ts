@@ -30,6 +30,7 @@ const pointKey = (key: string): [string, number] | null => {
 
 export function referencedNames(session: AnalysisSession): string[] {
   return [...new Set([session.currentTest, ...session.selections.map(s => s.test),
+    ...(session.fullFlightComparison?.flights.map(flight => flight.test) ?? []),
     ...session.filterState.tpKeys.map(key => pointKey(key)?.[0] ?? '')].filter(Boolean))];
 }
 
@@ -86,6 +87,11 @@ export function resolveSessionSources(
   const currentTest = mapping.get(saved.currentTest)?.name ?? '';
   const sourceChanged = changed.size > 0 || mapping.size !== names.length || selections.length !== saved.selections.length;
   const session: AnalysisSession = { ...saved, currentTest, selections,
+    fullFlightComparison: saved.fullFlightComparison ? { ...saved.fullFlightComparison,
+      flights: saved.fullFlightComparison.flights.flatMap(flight => {
+        const source = mapping.get(flight.test);
+        return source ? [{ ...flight, test: source.name, offset: changed.has(flight.test) ? 0 : flight.offset }] : [];
+      }) } : null,
     plotViewports: sourceChanged ? emptyPlotViewports() : saved.plotViewports,
     // Parameter filters retain their explicit column names. Missing variables
     // remain visible in controls instead of silently widening the selection.
@@ -93,6 +99,7 @@ export function resolveSessionSources(
     mainZoom: sourceChanged ? null : saved.mainZoom,
     timeZoom: sourceChanged ? null : saved.timeZoom,
     fullRange: sourceChanged ? null : saved.fullRange,
+    fullFlightRange: sourceChanged ? null : saved.fullFlightRange,
     timeYRanges: sourceChanged ? [] : saved.timeYRanges.map(item => {
       if (!item) return null;
       try {

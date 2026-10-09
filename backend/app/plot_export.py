@@ -59,6 +59,9 @@ class ExportSource(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     test: str = Field(min_length=1, max_length=256)
+    columns: list[Annotated[str, Field(min_length=1, max_length=1024)]] | None = Field(
+        default=None, min_length=1, max_length=6)
+    time_offset: float | None = None
     tp_id: StrictInt | None = None
     t0: float | None = None
     t1: float | None = None
@@ -108,8 +111,17 @@ class PlotExportRequest(BaseModel):
             raise ValueError("filtered data requires the displayed filter settings")
         if self.x_range is not None and self.x_range[0] > self.x_range[1]:
             raise ValueError("x_range must be increasing")
-        if len(self.sources) > 1 and any(s.tp_id is None for s in self.sources):
-            raise ValueError("a full-test export must contain exactly one source")
+        if any(s.tp_id is None for s in self.sources) and any(s.tp_id is not None for s in self.sources):
+            raise ValueError("full-test and test-point sources cannot be combined")
+        requested_columns = set(self.columns or [self.column])
+        for source in self.sources:
+            if source.columns is not None:
+                if len(set(source.columns)) != len(source.columns):
+                    raise ValueError("duplicate source columns")
+                if not set(source.columns) <= requested_columns:
+                    raise ValueError("source columns must be selected request columns")
+            if source.tp_id is not None and source.time_offset is not None:
+                raise ValueError("time_offset requires a full-test source")
         identities = [(os.path.normcase(s.test), s.tp_id) for s in self.sources]
         if len(set(identities)) != len(identities):
             raise ValueError("duplicate export sources")
@@ -200,8 +212,10 @@ def _add_rows(total: int, rows: int) -> int:
 
 def _resolve_export_source(source, request, resolve=None):
     """Validate every selected signal under the same source lock/snapshot."""
-    meta, i0, i1 = (resolve or _resolve)(source, request.column)
-    for column in getattr(request, "columns", None) or []:
+    columns = getattr(source, "columns", None) or getattr(request, "columns", None)
+    # A flight may lack the primary variable while still containing others.
+    meta, i0, i1 = (resolve or _resolve)(source, columns[0] if columns else request.column)
+    for column in columns or []:
         if column not in meta["columns"] or column == meta["time_column"]:
             raise HTTPException(400, f"unknown signal column '{column}' in '{source.test}'")
     return meta, i0, i1
@@ -230,15 +244,18 @@ def _filename(request: PlotExportRequest) -> str:
 def _write_source(output, source: ExportSource, columns: list[str],
                   data: str, filter_spec: FilterParameters | None,
                   x_range: tuple[float, float] | None,
-                  meta: dict, i0: int, i1: int, *, header: bool, record=None) -> int:
+                  meta: dict, i0: int, i1: int, *, header: bool, record=None,
+                  include_alignment: bool = False) -> int:
     """Write one source while its caller holds data_read; return kept rows."""
     time_column = meta["time_column"]
+    available_columns = source.columns or columns
+    time_offset = source.time_offset or 0.0
     samples = None
     if data != "original":
         progress.update('Filtering source')
         try:
             samples = dsp.filtered_samples(
-                source.test, columns, t0=source.t0, t1=source.t1,
+                source.test, available_columns, t0=source.t0, t1=source.t1,
                 px=source.px, display=source.display, tp_id=source.tp_id,
                 **filter_spec.model_dump())
         except ValueError as exc:
@@ -258,10 +275,16 @@ def _write_source(output, source: ExportSource, columns: list[str],
     else:
         batches = store._iter_parquet_slice(
             store.TESTS_DIR / source.test / "data.parquet",
-            [time_column, *columns], i0, i1)
+            [time_column, *available_columns], i0, i1)
 
     if record is not None:
         record["processing"] = samples.analysis if samples else {"method_version": "kiha-time-original-v1", "filter": None}
+        if source.columns is not None:
+            record["unavailable_variables"] = [column for column in columns if column not in available_columns]
+        if include_alignment:
+            record["display_alignment"] = {"time_offset_s": time_offset,
+                "formula": "displayed_time_s = time_s + time_offset_s",
+                "crop_coordinates": "displayed_time_s", "resampling": "none"}
     origin = None
     written = 0
     progress.update('Writing CSV', total=i1 - i0, unit='rows')
@@ -275,14 +298,14 @@ def _write_source(output, source: ExportSource, columns: list[str],
                 # at the exact saved row origin in both original/DSP paths.
                 origin = float(t[0])
             tp_time = t - origin if origin is not None else None
-            plot_time = tp_time if tp_time is not None else t
+            plot_time = tp_time if tp_time is not None else t + time_offset
             keep = (indices >= i0) & (indices < i1)
             if x_range is not None:
                 lo, hi = x_range
                 # Inclusive sample centers, with only float64 arithmetic
                 # tolerance for subtracting a large TP time origin. Never
                 # round source timestamps to the plot's six decimal places.
-                scale = max(1.0, abs(lo), abs(hi), abs(origin or 0.0),
+                scale = max(1.0, abs(lo), abs(hi), abs(origin or 0.0), abs(time_offset),
                             float(np.max(np.abs(t))) if t.size else 0.0)
                 tolerance = 8 * np.finfo(np.float64).eps * scale
                 keep &= (plot_time >= lo - tolerance) & (plot_time <= hi + tolerance)
@@ -301,15 +324,22 @@ def _write_source(output, source: ExportSource, columns: list[str],
                 (pa.array(tp_time[keep]) if tp_time is not None
                  else pa.nulls(count, type=pa.float64())),
             ]
+            if include_alignment:
+                names.extend(["displayed_time_s", "time_offset_s"])
+                arrays.extend([pa.array(plot_time[keep]), pa.repeat(time_offset, count)])
             for column in columns:
                 # Suffix every source name, including reserved identifiers.
                 # Unique selections therefore cannot collide with identity
                 # fields or one another, even if a name contains a suffix.
                 if data in {"original", "both"}:
                     names.append(f"{column} [original]")
-                    arrays.append(batch.column(batch.schema.get_field_index(column)).filter(mask))
+                    arrays.append(batch.column(batch.schema.get_field_index(column)).filter(mask)
+                                  if column in available_columns else pa.nulls(count, type=pa.float64()))
                 if data in {"filtered", "both"}:
                     names.append(f"{column} [filtered]")
+                    if column not in available_columns:
+                        arrays.append(pa.nulls(count, type=pa.float64()))
+                        continue
                     offset = start - samples.s0
                     values = samples.filtered[column][offset:offset + batch.num_rows]
                     selected_values = values[keep]
@@ -350,7 +380,8 @@ def prepare_export(request: PlotExportRequest, *,
     def write(output, source, meta, i0, i1, *, header, record=None):
         return _write_source(output, source, request.columns or [request.column], request.data,
                              request.filter, request.x_range, meta, i0, i1,
-                             header=header, record=record)
+                             header=header, record=record,
+                             include_alignment=any(s.time_offset is not None for s in request.sources))
     return stage_export(request, write, row_budget=row_budget, metadata=metadata)
 
 
@@ -382,7 +413,7 @@ def stage_export(request, write_source, *, row_budget=None, resolve=None, metada
                     if metadata is None:
                         written += write_source(output, source, meta, i0, i1, header=written == 0)
                     else:
-                        columns = list(getattr(request, 'columns', None) or
+                        columns = list(getattr(source, 'columns', None) or getattr(request, 'columns', None) or
                                        [getattr(request, 'x_column', request.column), request.column])
                         if getattr(source, 'rpm_col', None):
                             columns.append(source.rpm_col)

@@ -1,5 +1,100 @@
 # Implementation handoff
 
+## Git checkpoint (2026-10-09)
+
+The user requested committing and pushing all pending changes on
+codex/ptt-ui-rework-2026-09-28, starting from 1d61084. This checkpoint contains
+multi-flight Full test Time/XY comparison, source-aware exports, persistent
+selection/alignment, the polished flight toolbar and time basis inside Align,
+plus tests and verification documentation. Final build/lint pass; implementation
+verification includes 115 frontend helpers, 505 backend tests/469 subtests,
+26 comparison/filter browser groups and focused toolbar/modal checks below.
+No implementation work remains in these requests. Next independent milestone:
+Phase 11b's collapsible variable/filter controls.
+
+## Complete: time basis inside Align (2026-10-09)
+
+Moved the time-basis selector from the toolbar into Align above the offset rows.
+Time basis and offsets are drafted together; Apply commits both, while Cancel or
+Escape discards both. SearchableSelect portals inside its nearest native dialog
+so the menu stays in the modal's top layer/focus scope. Updated the comparison
+browser verifier for the new flow. Build/lint and five focused browser groups
+pass: popup mouse/keyboard operation within the native modal, nested Escape,
+draft cancellation, combined Apply, native plotted time values, reload, and
+compact light/dark 100/150% zoom. Screenshots visually reviewed. No page errors,
+dataset writes or changed fingerprints; owned servers stopped. Final bundle
+index-DFd70Mnb.js; existing size advisory remains. No backend/helper suite rerun
+for this control change. Evidence: ptt-flight-toolbar/basis-report.json in the
+host temp directory; details in docs/FULL_FLIGHT_COMPARISON_VERIFICATION.md.
+Included in the user-requested complete Git checkpoint above. No remaining work in this request;
+next independent milestone remains Phase 11b.
+
+## Complete: flight toolbar styling (2026-10-09)
+
+Latest copy refinement: shortened the time-basis choice to "Elapsed time" and
+narrowed its selector to 126px. Updated browser-verifier label expectations.
+Build/lint pass (index-Bi8SUViK.js); browser/backend suites were not rerun for
+this label/width-only follow-up.
+
+Polished Flights/Align/selected-flight styling in FlightSelection TSX/CSS and
+SelectedPointsPanel. The picker now sits beside selected-flight chips in one
+comparison toolbar; a count badge replaces the duplicate heading. Consistent
+32px controls, restrained flight colors, offset badges and visible hide/remove
+icons clarify actions. Alignment/Fit/export wrap as a group in narrow desktop
+panes; long chip lists scroll without displacing tools. Align now closes its
+modal before returning keyboard focus to the opener; its layout is centered with
+clear spacing between its explanation and input rows. Analysis/state/backend
+behavior and the prior uncommitted comparison implementation are preserved.
+
+Build/lint and 12 focused browser groups pass: both themes, 1500/1050px desktop
+windows, actual 100/125/150% zoom, picker/Align bounds, keyboard selection,
+hide/show/remove, Cancel/Apply/Escape/focus, and 12 long names with horizontal
+scrolling/keyboard reachability. Screenshots independently reviewed. No page
+errors, dataset writes or changed source fingerprints; owned servers stopped.
+Final centered-dialog checks also pass at 1050px/100% and 150% with 12 long names.
+Final bundle index-D98E8fWr.js; existing size advisory remains. Backend/helper
+suites were not rerun for this styling/focus change. Details and evidence:
+docs/FULL_FLIGHT_COMPARISON_VERIFICATION.md. No remaining work in this request;
+included in the complete Git checkpoint above. Next remains independent Phase 11b.
+
+## Complete: multiple full-flight comparison (2026-10-09)
+
+Implemented the approved shared flight picker for Full test Time and XY, starting
+clean at 1d61084 on codex/ptt-ui-rework-2026-09-28. Flights is now a searchable
+multi-select with persistent colors/visibility, stored or elapsed time, optional
+per-flight shifts and Fit all flights. Time preserves multiple variables through
+line patterns, lighter originals, independent filters/envelopes and variable
+visibility controls. XY keeps native paired arrays and shifts only actual time
+axes. CSV/PNG include source identities and alignment provenance. Native samples
+and calculations remain unchanged; no joining or resampling across flights.
+
+Missing signals and source/filter failures retain valid traces with coverage
+details and Retry. Adding/hiding flights preserves zoom, including the first
+transition from legacy single-flight state; alignment changes reset obsolete
+crops. Quiet reload follows durable source IDs through rename and skips replaced
+sources. Per-variable legend visibility remains transient. Spectrum/Waterfall
+retain their single active test and separate native time crop.
+
+Verification complete: production build/lint, all 115 frontend helpers, 505
+backend tests/469 subtests, 17 native comparison browser groups and nine focused
+Time filter/envelope groups pass. Desktop coverage includes both themes,
+1/4/9/maximized layouts, resize, actual 100/125/150% zoom, keyboard selection,
+hover/zoom, reload, missing schemas, retry and native CSV/PNG parity. All visible
+canvases are awaited before layout/hover assertions; screenshots visually reviewed.
+No page errors, dataset writes or changed source fingerprints. Owned servers
+stopped; user servers unchanged. Final bundle index-DtOnfjLR.js; existing bundle
+size advisory and two backend dependency warnings remain. Native test/build
+processes required approved Windows sandbox escalation. Browser harness selector
+and pending-canvas timing errors were corrected before the final successful run.
+
+Entry points: FlightSelection/SearchableSelect, App/TimeSeriesGrid,
+MultiFlightTimePlot/FullTestVariables, XYPlot, comparison/time/XY helpers,
+analysisSession/sessionSources, backend plot_export/xy_export, and their tests.
+Commands, contracts and evidence: docs/FULL_FLIGHT_COMPARISON_VERIFICATION.md.
+No implementation work remains in this request; included in the user-requested
+complete Git checkpoint above. Next independent milestone: Phase 11b's collapsible
+variable/filter controls.
+
 ## Complete Git checkpoint (2026-10-08)
 
 The user requested committing and pushing all pending changes on

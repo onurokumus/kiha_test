@@ -26,6 +26,8 @@ import { PlotHeader, PlotDetailsButton } from './PlotHeader';
 import headerStyles from './PlotHeader.module.css';
 import styles from './TimePlot.module.css';
 import type { PanelSource } from './SpectrumPlot';
+import { nativeFlightRange, type FullFlightSource } from '../../utils/fullFlightComparison';
+import { alignedXYPairs, xyFlightAxisLabel } from '../../utils/xyFlightComparison';
 
 interface XYPlotProps extends ViewportProps {
   test: string;
@@ -33,6 +35,9 @@ interface XYPlotProps extends ViewportProps {
   cfg: TimePlotConfig; // y column
   /** Data source: point clouds of the selected TPs, or of the active test. */
   source: PanelSource;
+  /** Visible full-flight sources; undefined retains the legacy single-test path. */
+  fullFlights?: FullFlightSource[];
+  timeBasis?: 'stored' | 'elapsed';
   selectedTPs: SelectedTestPoint[];
   hiddenTPs: Set<string>;
   columnsByTest: Record<string, string[]>;
@@ -54,7 +59,7 @@ const titleSelectStyle: React.CSSProperties = {
 };
 
 interface XYTrace {
-  source: Pick<XYExportSource, 'test' | 'tp_id' | 't0' | 't1'>;
+  source: Pick<XYExportSource, 'test' | 'tp_id' | 't0' | 't1' | 'time_offset'>;
   data: XYData;
   label: string;
   color: string;
@@ -75,6 +80,8 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   xCol,
   cfg,
   source,
+  fullFlights,
+  timeBasis = 'stored',
   selectedTPs,
   hiddenTPs,
   columnsByTest,
@@ -107,8 +114,17 @@ export const XYPlot: React.FC<XYPlotProps> = ({
     const columns = columnsByTest[point.test] ?? [];
     return columns.includes(xCol) && columns.includes(cfg.key);
   });
+  const comparingFlights = source === 'full' && fullFlights !== undefined;
+  const eligibleFlights = fullFlights?.filter(flight =>
+    flight.columns.includes(xCol) && flight.columns.includes(cfg.key)) ?? [];
+  const unavailableFlights = fullFlights?.filter(flight =>
+    !flight.columns.includes(xCol) || !flight.columns.includes(cfg.key)) ?? [];
   // Include exact saved rows, schema eligibility and the loaded Full interval.
-  const contextKey = JSON.stringify([source, xCol, cfg.key, source === 'full' ? [test, range]
+  const contextKey = JSON.stringify([source, xCol, cfg.key, source === 'full' ? [
+    comparingFlights ? fullFlights?.map(flight => [flight.test, flight.color, flight.timeOffset,
+      flight.timeColumn, flight.columns.includes(xCol), flight.columns.includes(cfg.key)]) : test,
+    range, comparingFlights ? timeBasis : null,
+  ]
     : eligibleTPs.map((point) => [point.id, point.tpId, point.tp.start_idx, point.tp.end_idx,
         point.tp.start_s, point.endS, point.name, point.color])]);
   const current = result.key === contextKey;
@@ -116,6 +132,11 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   const error = current ? result.error : '';
   const partialMessage = current ? result.partial : '';
   const pending = loading || !current;
+  const nativeTimeColumns = traces.map(trace => trace.data.time_column);
+  const xAxisLabel = comparingFlights ? xyFlightAxisLabel(xCol, xCol, nativeTimeColumns, timeBasis) : xCol;
+  const yAxisLabel = comparingFlights ? xyFlightAxisLabel(cfg.key, cfg.label, nativeTimeColumns, timeBasis) : cfg.label;
+  const xHoverKey = `xy:${xCol}${comparingFlights && nativeTimeColumns.includes(xCol) ? `:${timeBasis}` : ''}`;
+  const yHoverKey = `xy:${cfg.key}${comparingFlights && nativeTimeColumns.includes(cfg.key) ? `:${timeBasis}` : ''}`;
 
   useEffect(() => {
     const el = chartRef.current;
@@ -127,7 +148,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
 
   useEffect(() => {
     const empty = { key: contextKey, traces: [], error: '', partial: '' };
-    if (!xCol || !cfg.key || (source === 'full' ? !test : !eligibleTPs.length)) {
+    if (!xCol || !cfg.key || (source === 'full' ? comparingFlights ? !eligibleFlights.length : !test : !eligibleTPs.length)) {
       setResult(empty); setLoading(false); return;
     }
     let dead = false;
@@ -136,23 +157,30 @@ export const XYPlot: React.FC<XYPlotProps> = ({
     setResult((previous) => ({ ...previous, error: '', partial: '' }));
     const load = async () => {
       try {
-        const requests = source === 'full' ? [{ test, tpId: undefined, label: test, color: ACCENT }]
+        const requests = source === 'full' ? comparingFlights
+          ? eligibleFlights.map(flight => ({ test: flight.test, tpId: undefined,
+              label: flight.test, color: flight.color, timeOffset: flight.timeOffset }))
+          : [{ test, tpId: undefined, label: test, color: ACCENT, timeOffset: 0 }]
           : eligibleTPs.map((point) => ({ test: point.test, tpId: point.tpId,
-              label: `${point.name} · ${point.test} · TP ${point.tpId}`, color: point.color }));
+              label: `${point.name} · ${point.test} · TP ${point.tpId}`, color: point.color, timeOffset: 0 }));
         const results = await Promise.all(requests.map(async (item) => {
           try {
+            const nativeRange = source === 'full' ? nativeFlightRange(range, item.timeOffset) : null;
             const data = await fetchXY(item.test, xCol, cfg.key,
-              source === 'full' ? range?.[0] ?? null : null,
-              source === 'full' ? range?.[1] ?? null : null,
+              nativeRange?.[0] ?? null,
+              nativeRange?.[1] ?? null,
               source === 'full' ? 3000 : 1500, controller.signal, item.tpId);
             if (item.tpId !== undefined && data.tp_id !== item.tpId) {
               throw new Error('The backend did not confirm the requested test-point interval. Update the backend and retry.');
             }
             const pairs = data.series[cfg.key];
             if (!pairs || pairs.x.length !== pairs.y.length) throw new Error('The backend returned incomplete XY pairs.');
-            return { trace: { label: item.label, color: item.color, x: pairs.x, y: pairs.y,
+            if (comparingFlights && !data.time_column) throw new Error('The backend did not identify the native time column. Update the backend and retry.');
+            const displayedPairs = alignedXYPairs(pairs, xCol, cfg.key, data.time_column, item.timeOffset);
+            return { trace: { label: item.label, color: item.color, ...displayedPairs,
               stride: data.stride, data, source: { test: item.test, tp_id: item.tpId,
-                ...(source === 'full' ? { t0: range?.[0] ?? null, t1: range?.[1] ?? null } : {}) },
+                ...(source === 'full' ? { t0: nativeRange?.[0] ?? null, t1: nativeRange?.[1] ?? null } : {}),
+                ...(comparingFlights ? { time_offset: item.timeOffset } : {}) },
             } as XYTrace };
           } catch (cause) {
             if (isAbortError(cause)) throw cause;
@@ -217,12 +245,12 @@ export const XYPlot: React.FC<XYPlotProps> = ({
         x: { time: false, range: safeRange as uPlot.Scale.Range },
         y: { range: (u, min, max) => viewportControl.yRange() ?? safeRange(u, min, max) },
       },
-      axes: [{ ...AXIS_STYLE, label: xCol }, { ...AXIS_STYLE, label: cfg.label }],
+      axes: [{ ...AXIS_STYLE, label: xAxisLabel }, { ...AXIS_STYLE, label: yAxisLabel }],
       legend: { show: isExpanded, live: true },
       cursor: { dataIdx: nearestXYDataIdx, drag: { x: true, y: true } },
-      plugins: [plotHoverPlugin(u => ({ heading: `${cfg.label} · XY`, columns: [xCol, cfg.label], prefixes: ['x', 'y'],
-        rows: sampleHoverRows(u, true) }), hoverGroup, `xy:${xCol}`, `xy:${cfg.key}`),
-        axisTitlesPlugin(cfg.label), xyPanZoomPlugin(), boxZoomPlugin(viewportControl.setY), viewportControl.plugin],
+      plugins: [plotHoverPlugin(u => ({ heading: `${cfg.label} · XY`, columns: [xAxisLabel, yAxisLabel], prefixes: ['x', 'y'],
+        rows: sampleHoverRows(u, true) }), hoverGroup, xHoverKey, yHoverKey),
+        axisTitlesPlugin(yAxisLabel), xyPanZoomPlugin(), boxZoomPlugin(viewportControl.setY), viewportControl.plugin],
       series,
     });
 
@@ -232,7 +260,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
     ] as unknown as uPlot.AlignedData;
 
     const structKey = [
-      JSON.stringify(traces.map(trace => [trace.label, trace.color])), box.w, box.h, isExpanded, xCol, cfg.label,
+      JSON.stringify(traces.map(trace => [trace.label, trace.color])), box.w, box.h, isExpanded, xAxisLabel, yAxisLabel, xHoverKey, yHoverKey,
     ].join('|');
     viewportControl.sync(() => syncPlot({
       plotRef,
@@ -251,7 +279,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
         }
       },
     }));
-  }, [viewportControl, viewportContext, traces, box, isExpanded, xCol, cfg.label, cfg.key, hoverGroup]);
+  }, [viewportControl, viewportContext, traces, box, isExpanded, xAxisLabel, yAxisLabel, xHoverKey, yHoverKey, cfg.label, hoverGroup]);
 
   const containerClass = `${styles.plotContainer} ${
     isExpanded ? styles.plotContainerExpanded : styles.plotContainerCollapsed
@@ -273,6 +301,11 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   let emptyState: PlotEmptyState;
   if (!xCol) {
     emptyState = { title: 'Choose an X variable', detail: 'Choose X and Y in the plot title.' };
+  } else if (comparingFlights && !fullFlights?.length) {
+    emptyState = { title: 'Select flights to compare', detail: 'Choose a flight in the Flights selector, or show a hidden flight.' };
+  } else if (comparingFlights && !eligibleFlights.length) {
+    emptyState = { title: 'Signals unavailable',
+      detail: `No visible flight contains both ${cfg.label} and ${xCol}. Choose other signals or flights.`, compact: true };
   } else if (source === 'tp' && visibleTPs.length === 0) {
     emptyState = {
       title: 'Select test points to compare',
@@ -295,7 +328,16 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   }
 
   const label = `${cfg.label} versus ${xCol}`;
-  const exportScope = `Original stored ${cfg.label} (Y) and ${xCol} (X), including saved edits; no temporary filters. ${source === 'tp' ? 'Uses complete saved TP intervals.' : 'Uses the loaded Full-test time interval.'} Only visible legend sources are exported.`;
+  const axisOptions = (column: string, selectedLabel: string) => [
+    ...(column && !allConfigs.some(config => config.key === column)
+      ? [{ value: column, label: selectedLabel, keywords: [column], disabled: true,
+          description: 'Unavailable in the selected sources' }] : []),
+    ...allConfigs.map(config => ({ value: config.key, label: config.label, keywords: [config.key] })),
+  ];
+  const alignmentDescription = comparingFlights
+    ? `${timeBasis === 'elapsed' ? 'Elapsed time since each recording started' : 'Stored time'}, plus each flight's alignment offset. Only native time-column axes are shifted; other variable values retain their stored units.`
+    : 'Both axes retain their stored variable units.';
+  const exportScope = `Original stored ${cfg.label} (Y) and ${xCol} (X), including saved edits; no temporary filters. ${source === 'tp' ? 'Uses complete saved TP intervals.' : 'Uses the loaded Full-test time interval.'} ${comparingFlights ? `${alignmentDescription} ` : ''}Only visible legend sources are exported.${comparingFlights && unavailableFlights.length ? ` ${unavailableFlights.length} flights without both selected signals are excluded.` : ''}`;
   const exportReason = pending ? 'Wait for XY data to finish loading.' : error || partialMessage ||
     (!traces.length ? 'Load XY data before exporting.' : null);
   const csvReason = exportReason || (traces.some(({ data }) => data.method_version !== 'kiha-xy-v2' ||
@@ -338,6 +380,9 @@ export const XYPlot: React.FC<XYPlotProps> = ({
     const { plot, visible } = visibleExportTraces();
     return { plot, options: {
       provenance: { kind: 'xy', column: cfg.key, x_column: xCol, source_mode: source,
+        ...(comparingFlights ? { time_basis: timeBasis, displayed_time_range: range,
+          unavailable_sources: unavailableFlights.map(flight => ({ test: flight.test,
+            missing_columns: [xCol, cfg.key].filter(column => !flight.columns.includes(column)) })) } : {}),
         sources: visible.map((trace) => ({ ...trace.source, loaded: loadedAnalysis(trace.data),
           pairs: { finite_count: trace.data.series[cfg.key].finite_count ?? null,
             missing_pair_count: trace.data.series[cfg.key].missing_pair_count ?? null,
@@ -347,7 +392,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
       },
       filename: `${cfg.key}_vs_${xCol}_${source}_xy.png`, title: `${cfg.label} (Y) vs ${xCol} (X)`,
       scope: [exportScope, ...visible.map(({ label: name, data }) => `${name}: rows [${data.i0 ?? '?'}, ${data.i1 ?? '?'}); sample times ${data.time_start_s ?? '?'} to ${data.time_end_s ?? '?'} s (${data.time_column ?? 'unknown time column'}); ${data.fs_hz ?? '?'} Hz; ${data.n_raw} source rows.`)],
-      details: ['Only pairs with finite X and Y are drawn. No interpolation, sorting or resampling; both axes retain their stored variable units. CSV contains full-resolution pairs.',
+      details: [`Only pairs with finite X and Y are drawn. No interpolation, sorting or resampling. ${alignmentDescription} CSV contains full-resolution pairs and native sample times.`,
         ...visible.map(({ label: name, data, stride, x }) => {
           const pairs = data.series[cfg.key];
           return `${name}: ${pairs.finite_count ?? '?'} finite pairs; ${pairs.missing_pair_count ?? '?'} omitted nonfinite pairs; ${x.length} displayed, stride 1:${stride}${pairs.fallback_first_finite ? '; first finite pair retained because stride missed all valid pairs' : ''}. Method: ${data.method_version ?? 'unavailable (legacy response)'}; source=stored, prefilter=none.`;
@@ -373,7 +418,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
   return (
     <div className={containerClass} style={{ ...noSelect }} role="group" aria-label={`${label} XY plot`}>
       <PlotHeader label={label} isExpanded={isExpanded} onToggleExpand={onToggleExpand}
-        identityControl={allConfigs.length > 0 ? (
+        identityControl={allConfigs.length > 0 || xCol || cfg.key ? (
           <div
             style={{
               display: 'flex',
@@ -385,11 +430,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
             <SearchableSelect
               value={xCol}
               onChange={(nextKey) => onXColChange?.(nextKey)}
-              options={allConfigs.map((config) => ({
-                value: config.key,
-                label: config.label,
-                keywords: [config.key],
-              }))}
+              options={axisOptions(xCol, xCol)}
               style={titleSelectStyle}
               ariaLabel="X variable"
               title="X column (this plot only)"
@@ -402,11 +443,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
             <SearchableSelect
               value={cfg.key}
               onChange={(nextKey) => onConfigChange?.(nextKey)}
-              options={allConfigs.map((config) => ({
-                value: config.key,
-                label: config.label,
-                keywords: [config.key],
-              }))}
+              options={axisOptions(cfg.key, cfg.label)}
               style={titleSelectStyle}
               ariaLabel="Y variable"
               title="Y column"
@@ -418,9 +455,14 @@ export const XYPlot: React.FC<XYPlotProps> = ({
           </div>
         ) : undefined}
         expandLabel={`${cfg.label} versus ${xCol}`}
-        summary={missingCount > 0 ? <><span style={{ color: 'var(--warning, #806b20)' }}>
-          {missingCount.toLocaleString()} rows omitted
-        </span><PlotDetailsButton label={label} onClick={openDetails} /></> : undefined}
+        summary={missingCount > 0 || (comparingFlights && unavailableFlights.length > 0) ? <>
+          {comparingFlights && unavailableFlights.length > 0 && <span
+            title={`Missing ${xCol} or ${cfg.label}: ${unavailableFlights.map(flight => flight.test).join(', ')}`}>
+            {eligibleFlights.length} of {fullFlights?.length ?? 0} flights
+          </span>}
+          {missingCount > 0 && <span style={{ color: 'var(--warning, #806b20)' }}>
+            {missingCount.toLocaleString()} rows omitted
+          </span>}<PlotDetailsButton label={label} onClick={openDetails} /></> : undefined}
 
         actions={<>
           <PlotActionMenu label={label} targetRef={chartRef} contextKey={contextKey}
@@ -431,7 +473,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
           <PlotExportControls hideTrigger actionsRef={exportActions} label={label} contextKey={contextKey} scope={exportScope}
             defaultData="original" originalReason={csvReason} filteredReason={null} pngReason={pngReason}
             csvLabel="Original finite pairs"
-            csvDescription="Full-resolution pairs in original sample order, with source, sample and time identifiers. Rows with nonfinite X or Y are omitted. Default views export every pair; zoom and pan crop both axes. No interpolation or temporary filters."
+            csvDescription={`Full-resolution pairs in original sample order, with flight/source, sample and native time identifiers. Rows with nonfinite X or Y are omitted. Default views export every pair; zoom and pan crop both displayed axes. No interpolation or temporary filters.${comparingFlights ? ' Time alignment and displayed time are included; native time-column axes match the plot.' : ''}`}
             onCsv={(_data, signal, includeMetadata) => downloadPlotCsv({ ...buildCsvRequest(), include_metadata: includeMetadata }, signal)}
             onPng={(signal, includeMetadata) => { const { plot, options } = getPngSource(); return downloadPlotPng(plot, { ...options, signal, includeMetadata }); }} />
 
@@ -445,9 +487,17 @@ export const XYPlot: React.FC<XYPlotProps> = ({
             ? 'No visible test point contains both signals. Choose another X or Y signal, or select other test points.'
             : `${visibleTPs.length - eligibleTpCount} visible test points do not contain both signals and are excluded.`}
         </p>}
-        <p>{source === 'tp' ? `${traces.length} test points · complete saved intervals.` : range ? 'Selected full-test interval.' : 'Complete full test.'}</p>
+        {comparingFlights && unavailableFlights.length > 0 && <p>
+          Excluded flights without both signals: {unavailableFlights.map(flight =>
+            `${flight.test} (missing ${[...new Set([xCol, cfg.key])].filter(column => !flight.columns.includes(column)).join(', ')})`).join('; ')}.
+        </p>}
+        <p>{source === 'tp' ? `${traces.length} test points · complete saved intervals.`
+          : comparingFlights ? `${traces.length} flights · ${range ? 'selected displayed-time interval' : 'complete recordings'}.`
+          : range ? 'Selected full-test interval.' : 'Complete full test.'}</p>
         <p>Original stored data, including saved edits. Time-plot filters are not applied.
-          Both axes retain their stored units; pairs are not interpolated, sorted or resampled.</p>
+          {' '}{alignmentDescription} Pairs are not interpolated, sorted or resampled.</p>
+        {comparingFlights && <p>{traces.map(trace =>
+          `${trace.label}: displayed time = native ${trace.data.time_column} + ${trace.source.time_offset ?? 0} s`).join('; ')}.</p>}
         <p>Display stride 1:{maxStride}. {missingCount} source rows omitted because X or Y is nonfinite.
           Display stride may omit additional valid pairs; CSV uses full-resolution finite pairs.</p>
         <p>Drag to zoom. Shift-drag or middle-drag to pan. Wheel to zoom; double-click to reset.</p>

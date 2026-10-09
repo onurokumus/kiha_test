@@ -6,6 +6,7 @@ import type { SavedSourceReference } from './sessionSources';
 import { emptyPlotViewports, normalizePlotViewports, PlotViewports } from '../utils/plotViewport';
 import { DEFAULT_WATERFALL_SETTINGS, normalizeWaterfallSettings, WaterfallSettings } from '../constants/waterfall';
 import { normalizeWaterfallColorRanges, SavedWaterfallColorRange } from '../utils/waterfallColorRange';
+import { normalizeFullFlightComparison, type FullFlightComparison } from '../utils/fullFlightComparison';
 
 export type AnalysisViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
 export type PlotDensity = 'single' | 'quad' | 'nine';
@@ -29,6 +30,8 @@ export interface AnalysisSession extends WaterfallSettings {
   /** Absent only in pre-identity sessions. Empty is deliberately different. */
   sources?: SavedSourceReference[];
   currentTest: string;
+  fullFlightComparison: FullFlightComparison | null;
+  fullFlightRange: [number, number] | null;
   xAxis: string;
   yAxis: string;
   axesUserSet: boolean;
@@ -70,6 +73,8 @@ export const defaultAnalysisSession = (): AnalysisSession => ({
   showHorizontalErrorBars: false,
   showVerticalErrorBars: false,
   currentTest: '',
+  fullFlightComparison: null,
+  fullFlightRange: null,
   xAxis: '',
   yAxis: '',
   axesUserSet: false,
@@ -258,6 +263,8 @@ export function normalizeAnalysisSession(value: unknown): AnalysisSession {
             ? [{ id: point.id, revision: point.revision }] : []) : [] }];
     }).slice(0, 1000) : undefined,
     currentTest: stringValue(value.currentTest),
+    fullFlightComparison: normalizeFullFlightComparison(value.fullFlightComparison),
+    fullFlightRange: pair(value.fullFlightRange),
     xAxis: stringValue(value.xAxis),
     yAxis: stringValue(value.yAxis),
     axesUserSet: !!value.axesUserSet,

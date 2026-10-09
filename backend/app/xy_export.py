@@ -21,6 +21,7 @@ router = APIRouter()
 class XYSource(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     test: str = Field(min_length=1, max_length=256)
+    time_offset: float | None = None
     tp_id: StrictInt | None = None
     t0: float | None = None
     t1: float | None = None
@@ -31,6 +32,8 @@ class XYSource(BaseModel):
     @model_validator(mode="after")
     def validate_scope(self):
         shared.ExportSource.validate_scope(self)
+        if self.tp_id is not None and self.time_offset is not None:
+            raise ValueError("time_offset requires a full-test source")
         return self
 
 
@@ -50,8 +53,8 @@ class XYExportRequest(BaseModel):
         for label, bounds in (("x_range", self.x_range), ("y_range", self.y_range)):
             if bounds is not None and bounds[0] > bounds[1]:
                 raise ValueError(f"{label} must be increasing")
-        if len(self.sources) > 1 and any(s.tp_id is None for s in self.sources):
-            raise ValueError("a full-test export must contain exactly one source")
+        if any(s.tp_id is None for s in self.sources) and any(s.tp_id is not None for s in self.sources):
+            raise ValueError("full-test and test-point sources cannot be combined")
         identities = [(os.path.normcase(s.test), s.tp_id) for s in self.sources]
         if len(set(identities)) != len(identities):
             raise ValueError("duplicate export sources")
@@ -86,22 +89,30 @@ def filename(request):
     return f'{name[:60]}_{safe(request.column)}_vs_{safe(request.x_column)}_{scope}_xy.csv'
 
 
-def _inside(values, bounds):
+def _inside(values, bounds, *, arithmetic_scale=0.0):
     if bounds is None:
         return np.ones(values.size, dtype=bool)
     lo, hi = bounds
     # Generic axes can be nano/micro units: a tolerance floor of 1 would
-    # incorrectly include nearby values. Scale only to the actual bounds.
-    tolerance = 8 * np.finfo(float).eps * max(abs(lo), abs(hi))
+    # incorrectly include nearby values. Only a shifted time axis additionally
+    # needs the subtraction's origin scale; signal axes keep their own units.
+    tolerance = 8 * np.finfo(float).eps * max(abs(lo), abs(hi), arithmetic_scale)
     return (values >= lo - tolerance) & (values <= hi + tolerance)
 
 
 def prepare_export(request: XYExportRequest, *, row_budget=None, metadata=None):
+    include_alignment = any(source.time_offset is not None for source in request.sources)
     def write(output, source, meta, i0, i1, *, header, record=None):
         tcol = meta['time_column']; written = seen = 0
+        time_offset = source.time_offset or 0.0
         columns = [tcol, request.x_column, request.column]
         if record is not None:
             record["processing"] = {"method_version": store.XY_METHOD_VERSION, "filter": None, "missing_values": "omit_nonfinite_pairs", "finite_pairs": 0, "nonfinite_pairs": 0}
+            if include_alignment:
+                record["display_alignment"] = {"time_offset_s": time_offset,
+                    "formula": "displayed_time_s = time_s + time_offset_s",
+                    "time_axes": [axis for axis, column in (("x", request.x_column), ("y", request.column)) if column == tcol],
+                    "crop_coordinates": "displayed_xy", "resampling": "none"}
         with closing(store.iter_xy_batches(source.test, columns, i0, i1)) as batches:
             for start, batch in batches:
                 progress.update('Writing XY pairs', completed=seen, total=i1 - i0, unit='rows')
@@ -112,7 +123,13 @@ def prepare_export(request: XYExportRequest, *, row_budget=None, metadata=None):
                     times = store._batch_float64(batch, tcol)
                 except ValueError as exc:
                     raise HTTPException(400, f"cannot export '{source.test}': {exc}") from exc
-                keep = np.isfinite(x) & np.isfinite(y) & _inside(x, request.x_range) & _inside(y, request.y_range)
+                if request.x_column == tcol:
+                    x = x + time_offset
+                if request.column == tcol:
+                    y = y + time_offset
+                keep = (np.isfinite(x) & np.isfinite(y)
+                        & _inside(x, request.x_range, arithmetic_scale=abs(time_offset) if request.x_column == tcol else 0.0)
+                        & _inside(y, request.y_range, arithmetic_scale=abs(time_offset) if request.column == tcol else 0.0))
                 if record is not None:
                     shared.analysis.observe_rows(record, np.arange(start, start + batch.num_rows), times, keep)
                     finite = int((np.isfinite(x) & np.isfinite(y)).sum())
@@ -135,12 +152,18 @@ def prepare_export(request: XYExportRequest, *, row_budget=None, metadata=None):
                 arrays = [pa.repeat(value, count) for value in metadata.values()]
                 arrays += [pa.array(np.arange(start, start + batch.num_rows, dtype=np.int64)[keep]),
                            pa.array(times[keep], mask=~np.isfinite(times[keep]))]
+                if include_alignment:
+                    names.extend(['displayed_time_s', 'time_offset_s'])
+                    arrays.extend([pa.array(times[keep] + time_offset, mask=~np.isfinite(times[keep])),
+                                   pa.repeat(time_offset, count)])
                 mask = pa.array(keep)
                 names.append(f'{request.x_column} [X/Y]' if request.x_column == request.column else f'{request.x_column} [X]')
-                arrays.append(batch.column(batch.schema.get_field_index(request.x_column)).filter(mask))
+                arrays.append(pa.array(x[keep]) if request.x_column == tcol and include_alignment
+                              else batch.column(batch.schema.get_field_index(request.x_column)).filter(mask))
                 if request.x_column != request.column:
                     names.append(f'{request.column} [Y]')
-                    arrays.append(batch.column(batch.schema.get_field_index(request.column)).filter(mask))
+                    arrays.append(pa.array(y[keep]) if request.column == tcol and include_alignment
+                                  else batch.column(batch.schema.get_field_index(request.column)).filter(mask))
                 pa_csv.write_csv(pa.RecordBatch.from_arrays(arrays, names=names), output,
                                  write_options=pa_csv.WriteOptions(include_header=header and written == 0))
                 written += count

@@ -29,6 +29,57 @@ const { resolveSessionSources } =
   loadTs(fileURLToPath(new URL('../src/services/sessionSources.ts', import.meta.url)));
 const emptySlots = () => Array.from({ length: 9 }, () => []);
 
+test('full-flight comparison restores visibility, alignment, colors and independent time crop', () => {
+  const session = { ...defaultAnalysisSession(), currentTest: 'A', fullRange: [100, 110],
+    fullFlightRange: [2, 7], fullFlightComparison: { timeBasis: 'elapsed', flights: [
+      { test: 'A', hidden: false, color: '#d55e00', offset: 0 },
+      { test: 'B', hidden: true, color: '#21834a', offset: -12.5 },
+    ] } };
+  const normalized = roundTrip(session);
+  assert.deepEqual(normalized.fullFlightComparison, session.fullFlightComparison);
+  assert.deepEqual(normalized.fullFlightRange, [2, 7]);
+  assert.deepEqual(normalized.fullRange, [100, 110]);
+  const { fullFlightComparison, fullFlightRange, ...legacy } = session;
+  assert.equal(normalizeAnalysisSession(legacy).fullFlightComparison, null);
+  assert.equal(normalizeAnalysisSession(legacy).fullFlightRange, null);
+});
+
+test('flight recovery follows durable identities through rename and skips same-name replacements', () => {
+  const saved = { ...defaultAnalysisSession(), currentTest: 'A', fullFlightRange: [2, 7],
+    fullFlightComparison: { timeBasis: 'elapsed', flights: [
+      { test: 'A', hidden: false, color: '#d55e00', offset: 1 },
+      { test: 'B', hidden: true, color: '#21834a', offset: -5 },
+    ] }, sources: [
+      { name: 'A', id: 'a-id', revision: 'r1', test_points: [] },
+      { name: 'B', id: 'b-id', revision: 'r2', test_points: [] },
+    ] };
+  const catalog = [
+    { name: 'Renamed A', id: 'a-id', revision: 'r1', status: 'ready', test_points: [] },
+    { name: 'B', id: 'b-id', revision: 'r2', status: 'ready', test_points: [] },
+  ];
+  const renamed = resolveSessionSources(saved, catalog);
+  assert.equal(renamed.fullFlightComparison.flights[0].test, 'Renamed A');
+  assert.equal(renamed.fullFlightComparison.flights[0].offset, 1);
+  assert.deepEqual(renamed.fullFlightRange, [2, 7]);
+  assert.equal(renamed.fullFlightComparison.flights[1].hidden, true);
+  const replaced = resolveSessionSources(saved, [catalog[0], { ...catalog[1], id: 'replacement-id' }]);
+  assert.equal(replaced.fullFlightComparison.flights.length, 1);
+  assert.equal(replaced.fullFlightRange, null);
+  const changed = resolveSessionSources(saved, [catalog[0], { ...catalog[1], revision: 'changed' }]);
+  assert.equal(changed.fullFlightComparison.flights[1].offset, 0);
+  assert.equal(changed.fullFlightRange, null);
+  const legacy = resolveSessionSources({ ...saved, sources: undefined }, catalog);
+  assert.deepEqual(legacy.fullFlightComparison.flights, []);
+});
+
+test('flight references include hidden sources even when the active test differs', () => {
+  const { captureSessionSources } = loadTs(fileURLToPath(new URL('../src/services/sessionSources.ts', import.meta.url)));
+  const session = { ...defaultAnalysisSession(), currentTest: 'C', fullFlightComparison: { timeBasis: 'stored',
+    flights: [{ test: 'A', hidden: true, color: '#d55e00', offset: 0 }] } };
+  const saved = captureSessionSources(session, ['A', 'C'].map(name => ({ name, id: name + '-id', status: 'ready', test_points: [] })));
+  assert.deepEqual(saved.map(source => source.name), ['C', 'A']);
+});
+
 test('legacy time-note visibility is ignored when restoring browser state', () => {
   for (const annotationsVisible of [true, false]) {
     const current = { ...defaultAnalysisSession(), currentTest: 'legacy-test',

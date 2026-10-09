@@ -28,6 +28,7 @@ import { tpStatErrorRange } from './utils/scatterRanges';
 import { AxisRange, SavedTimeYRange, timePlotContexts } from './utils/timePlotRanges';
 import { changeWaterfallColorRange, SavedWaterfallColorRange } from './utils/waterfallColorRange';
 import { MAX_SELECTED_TEST_POINTS } from './constants/selection';
+import { comparisonViewports, flightTimeOffset, nextFlightColor, type FullFlightComparison, type FullFlightSource } from './utils/fullFlightComparison';
 import {
   fetchTests,
   fetchAnalysisSources,
@@ -205,6 +206,8 @@ function App() {
   const [fullRange, setFullRange] = useState<[number, number] | null>(
     hasRestoredSession ? restoredSession.fullRange : null
   );
+  const [fullFlightComparison, setFullFlightComparison] = useState<FullFlightComparison | null>(restoredSession.fullFlightComparison);
+  const [fullFlightRange, setFullFlightRange] = useState<[number, number] | null>(restoredSession.fullFlightRange);
   const [fullPlotMode, setFullPlotMode] = useState<WindowDisplayMode>(
     hasRestoredSession ? restoredSession.fullPlotMode : 'auto'
   );
@@ -382,6 +385,25 @@ function App() {
 
   /** Active test's meta — split/edit tabs and full/spectrum/xy modes use it. */
   const meta = metaByTest[currentTest] ?? null;
+  const flightComparison = useMemo<FullFlightComparison>(() => fullFlightComparison ?? {
+    flights: currentTest ? [{ test: currentTest, color: nextFlightColor([]), hidden: false, offset: 0 }] : [],
+    timeBasis: 'stored',
+  }, [fullFlightComparison, currentTest]);
+  const fullFlights = useMemo<FullFlightSource[] | undefined>(() => fullFlightComparison
+    ? fullFlightComparison.flights.filter(flight => !flight.hidden).flatMap(flight => {
+      const source = metaByTest[flight.test];
+      if (!source || !tests.some(test => test.name === flight.test && test.status === 'ready')) return [];
+      return [{ test: flight.test, color: flight.color, columns: source.columns,
+        timeColumn: source.time_column, fs: source.fs_hz,
+        timeOffset: flightTimeOffset(fullFlightComparison.timeBasis, source.t_start ?? 0, flight.offset) }];
+    }) : undefined, [fullFlightComparison, metaByTest, tests]);
+  const comparisonActive = fullFlightComparison !== null && (viewMode === 'full' || (viewMode === 'xy' && xySource === 'full'));
+  const flightSourceErrors = flightComparison.flights.filter(flight => !flight.hidden).flatMap(flight => {
+    const source = tests.find(test => test.name === flight.test);
+    if (!source || source.status !== 'ready') return [`${flight.test}: unavailable`];
+    if (!metaByTest[flight.test]) return [`${flight.test}: ${metaErrors[flight.test] || 'loading flight details'}`];
+    return [];
+  });
 
   /** Plottable variables of the ACTIVE test (grid, split, edit). */
   const dataColumns = useMemo(
@@ -424,9 +446,10 @@ function App() {
     [xyColumnsByTest]
   );
   const xyGridColumns = useMemo(() => {
-    const names = xySource === 'tp' ? [...selectedTPs.map((point) => point.test), currentTest] : [currentTest];
+    const names = xySource === 'tp' ? [...selectedTPs.map((point) => point.test), currentTest]
+      : fullFlightComparison ? fullFlightComparison.flights.map(flight => flight.test) : [currentTest];
     return [...new Set(names.flatMap((name) => xyColumnsByTest[name] ?? []))];
-  }, [xySource, selectedTPs, currentTest, xyColumnsByTest]);
+  }, [xySource, selectedTPs, currentTest, xyColumnsByTest, fullFlightComparison]);
 
   /** Columns across the selected test points, ordered by selection (the
    *  first-selected TP's columns come first), deduped. Drives the grid's
@@ -460,10 +483,13 @@ function App() {
    *  active-test views — so a cross-test selection can never inject a column the
    *  browsed test lacks. */
   const gridColumns = useMemo(() => {
+    if (fullFlightComparison && (viewMode === 'full' || viewMode === 'xy' && xySource === 'full')) {
+      return [...new Set(fullFlightComparison.flights.flatMap(flight => columnsByTest[flight.test] ?? []))];
+    }
     if (!selectionDriven || selectionColumns.length === 0) return dataColumns;
     const seen = new Set(selectionColumns);
     return [...selectionColumns, ...dataColumns.filter((c) => !seen.has(c))];
-  }, [selectionDriven, selectionColumns, dataColumns]);
+  }, [selectionDriven, selectionColumns, dataColumns, fullFlightComparison, viewMode, xySource, columnsByTest]);
 
   /** Candidate RPM variables for the current spectrum source. Unlike the plot
    *  grid universe, this intentionally excludes active-test filler columns
@@ -556,6 +582,10 @@ function App() {
     // whole UI to the loading screen mid-rebuild is wrong — rebuild-complete
     // calls invalidateTest to refetch the new schema (1.9).
     const knownNames = new Set(tests.map((t) => t.name));
+    setFullFlightComparison(previous => {
+      if (!previous || previous.flights.every(flight => knownNames.has(flight.test))) return previous;
+      return { ...previous, flights: previous.flights.filter(flight => knownNames.has(flight.test)) };
+    });
 
     setMetaByTest((prev) => {
       const stale = Object.keys(prev).filter((n) => !knownNames.has(n));
@@ -999,6 +1029,10 @@ function App() {
   const handleOpenTest = async (name: string, destination: 'analyze' | 'edit' = 'analyze', section?: 'components') => {
     if (uploadRenameInFlight.current) return;
     if (await handleTestChange(name)) {
+      if (destination === 'analyze') {
+        setFullFlightComparison(null);
+        setFullFlightRange(null);
+      }
       setEditInitialSection(destination === 'edit' ? section : undefined);
       setTab(destination);
     }
@@ -1668,6 +1702,8 @@ function App() {
     setTimeZoom(session.timeZoom);
     setTimeYRanges(session.timeYRanges);
     setFullRange(session.fullRange);
+    setFullFlightComparison(session.fullFlightComparison);
+    setFullFlightRange(session.fullFlightRange);
     setPlotsUserEdited(session.plotsUserEdited);
     setAxesUserSet(session.axesUserSet);
     setPlotConfigs(session.plotConfigs);
@@ -1772,6 +1808,8 @@ function App() {
       version: 1,
       plotViewports, expandedPlot, clusteringEnabled, datasheetVisible, showHorizontalErrorBars, showVerticalErrorBars,
       currentTest,
+      fullFlightComparison,
+      fullFlightRange,
       xAxis,
       yAxis,
       axesUserSet,
@@ -1879,9 +1917,10 @@ function App() {
   };
 
   // The active time zoom depends on the right-panel mode
-  const activeTimeZoom = viewMode === 'tp' ? timeZoom : fullRange;
+  const activeTimeZoom = viewMode === 'tp' ? timeZoom : comparisonActive ? fullFlightRange : fullRange;
   const handleActiveTimeZoom = (domain: [number, number]) => {
     if (viewMode === 'tp') setTimeZoom(domain);
+    else if (comparisonActive) setFullFlightRange(domain);
     else setFullRange(domain);
   };
   const resetActiveTimeZoom = () => {
@@ -1891,9 +1930,27 @@ function App() {
       setTimeZoomResetVersion((version) => version + 1);
     }
     else {
-      setFullRange(null);
-      setPlotViewports(previous => ({ ...previous, full: Array(9).fill(null) }));
+      if (comparisonActive) setFullFlightRange(null);
+      else setFullRange(null);
+      setPlotViewports(previous => ({ ...previous, full: Array(9).fill(null),
+        ...(viewMode === 'xy' ? { xy: Array(9).fill(null) } : {}) }));
     }
+  };
+  const handleFlightComparisonChange = (next: FullFlightComparison) => {
+    const alignmentChanged = next.timeBasis !== flightComparison.timeBasis ||
+      next.flights.some(flight => {
+        const previous = flightComparison.flights.find(item => item.test === flight.test);
+        return previous && previous.offset !== flight.offset;
+      });
+    if (!fullFlightComparison) setFullFlightRange(alignmentChanged ? null : fullRange);
+    else if (alignmentChanged) setFullFlightRange(null);
+    if (alignmentChanged) setPlotViewports(previous => ({ ...previous, full: Array(9).fill(null), xy: Array(9).fill(null) }));
+    else if (!fullFlightComparison) {
+      const source = sourceCatalog.find(item => item.name === currentTest);
+      setPlotViewports(previous => comparisonViewports(previous, [source?.id ?? currentTest, source?.revision ?? null], next.timeBasis));
+    }
+    setPlotsUserEdited(true);
+    setFullFlightComparison(next);
   };
 
   const handleXAxisChange = (axis: string) => {
@@ -1943,6 +2000,12 @@ function App() {
 
   // -- Edit tab callbacks --
   const handleRebuildStarted = async () => {
+    if (fullFlightComparison?.flights.some(flight => flight.test === currentTest)) {
+      setFullFlightRange(null);
+      setFullFlightComparison(previous => previous ? { ...previous, flights: previous.flights.map(flight =>
+        flight.test === currentTest ? { ...flight, offset: 0 } : flight) } : previous);
+      setPlotViewports(previous => ({ ...previous, full: Array(9).fill(null), xy: Array(9).fill(null) }));
+    }
     rebuildPending.current = true;
     try {
       setTests(await fetchTests());
@@ -1962,6 +2025,8 @@ function App() {
     // batched — or the meta loader refetches the vanished name and 404s.
     const old = currentTest;
     if (newName) {
+      setFullFlightComparison(previous => previous ? { ...previous,
+        flights: previous.flights.map(flight => flight.test === old ? { ...flight, test: newName } : flight) } : previous);
       try {
         setTests(await fetchTests());
       } catch {
@@ -2382,6 +2447,10 @@ function App() {
               tests={tests}
               currentTest={currentTest}
               onTestChange={handleTestChange}
+              flightComparison={flightComparison}
+              comparingFlights={fullFlightComparison !== null}
+              onFlightComparisonChange={handleFlightComparisonChange}
+              flightSourceErrors={flightSourceErrors}
               fullPlotMode={fullPlotMode}
               onFullPlotModeChange={setFullPlotMode}
               specSource={specSource}
@@ -2407,6 +2476,8 @@ function App() {
               viewMode={viewMode}
               density={plotDensity}
               test={currentTest}
+              fullFlights={fullFlights}
+              flightTimeBasis={flightComparison.timeBasis}
               columns={viewMode === 'xy' ? xyGridColumns : gridColumns}
               selectedTPs={selectedTPs}
               hiddenTPs={hiddenTPs}

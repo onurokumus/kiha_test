@@ -1,5 +1,21 @@
 # TODO
 
+The flight comparison and toolbar refinements below are included in the
+user-requested complete Git checkpoint (2026-10-09) on
+codex/ptt-ui-rework-2026-09-28. Next independent milestone: Phase 11b.
+
+## Requested flight toolbar styling (2026-10-09)
+
+- [x] Move the time-basis dropdown inside Align; apply or cancel time basis and flight offsets together, with working mouse/keyboard selection inside the modal. Build/lint and five focused browser groups pass, including nested Escape/focus, native displayed times, reload and light/dark compact 100/150% zoom.
+
+- [x] Shorten "Since recording start" to "Elapsed time" and reduce the selector width. Build/lint pass; behavior is unchanged.
+
+- [x] Unify the Flights picker, alignment controls and selected-flight chips into a compact, coherent toolbar. Preserve all comparison behavior and keyboard access; verify light/dark themes, long selections, narrow desktop panes and browser zoom. This explicit refinement takes priority over Phase 11b. Grouped picker/chips/actions with consistent 32px controls, count badge, hide/remove icons and deliberate pane wrapping. Fixed Align focus return. Build/lint and 12 focused browser groups pass, including both themes, 1500/1050px windows, actual 100/125/150% zoom, 12 long flight names, scrolling and keyboard interaction. See docs/FULL_FLIGHT_COMPARISON_VERIFICATION.md.
+
+## Requested multiple full-flight comparison (2026-10-09)
+
+- [x] Add shared searchable multi-flight selection to Full test Time and XY, persistent flight visibility/colors and stored/elapsed time alignment with optional offsets. Preserve all existing plot variables and filters; distinguish flight color, variable pattern and original/filtered appearance. Cover independent native sample grids, missing signals/partial failures, linked inspection and source-aware CSV/PNG exports. Verify desktop layouts/maximize/zoom/keyboard and quiet identity-safe reload. This explicit request takes priority over independent Phase 11b. Build/lint, 115 frontend helpers, 505 backend tests/469 subtests, 17 native comparison browser groups and nine filter/envelope groups pass. Both themes, 1/4/9/maximized plots, actual 100/125/150% zoom, keyboard, exports, retry and unchanged source samples verified. See docs/FULL_FLIGHT_COMPARISON_VERIFICATION.md. Included in the requested Git checkpoint above.
+
 The completed plot-values and Sessions-removal requests below are included in
 the user-requested complete Git checkpoint (2026-10-08) on
 codex/ptt-ui-rework-2026-09-28. Next independent milestone: Phase 11b.

@@ -25,6 +25,7 @@ import { SearchableSelect } from '../controls/SearchableSelect';
 import styles from './TimeSeriesGrid.module.css';
 import { PlotHoverProvider } from '../../utils/PlotHoverContext';
 import type { PlotHoverMode } from '../../utils/plotHoverGroup';
+import type { FullFlightSource, FlightTimeBasis } from '../../utils/fullFlightComparison';
 
 export type TimeViewMode = 'tp' | 'full' | 'spectrum' | 'xy';
 export type TimeSeriesGridDensity = 'single' | 'quad' | 'nine';
@@ -40,6 +41,8 @@ interface TimeSeriesGridProps {
   /** Number of plots shown in the normal grid. Expanded mode always shows one. */
   density?: TimeSeriesGridDensity;
   test: string;
+  fullFlights?: FullFlightSource[];
+  flightTimeBasis?: FlightTimeBasis;
   columns: string[];
   selectedTPs: SelectedTestPoint[];
   hiddenTPs: Set<string>;
@@ -101,6 +104,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
   viewports, sourceCatalog = [], onViewportChange,
   density = 'nine',
   test,
+  fullFlights, flightTimeBasis = 'stored',
   columns,
   selectedTPs,
   hiddenTPs,
@@ -260,7 +264,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
       )}
       {exportTarget && createPortal(
         <MultiPlotExportControls registry={exportRegistry}
-          contextKey={JSON.stringify([viewMode, test, density, expandedPlot, visibleSelectionFingerprint, plotConfigs, fullPlotExtraColumns, plotFilterSpecs, plotShowOriginal, fullPlotMode, timeZoom, waterfallWindow, waterfallOverlap, waterfallResolution, waterfallBand, waterfallColorRanges, specSource, specMode, specXAxis, specRpmCol, specLogY, xySource, xyXCols, xyYCols])}
+          contextKey={JSON.stringify([viewMode, test, fullFlights, flightTimeBasis, density, expandedPlot, visibleSelectionFingerprint, plotConfigs, fullPlotExtraColumns, plotFilterSpecs, plotShowOriginal, fullPlotMode, timeZoom, waterfallWindow, waterfallOverlap, waterfallResolution, waterfallBand, waterfallColorRanges, specSource, specMode, specXAxis, specRpmCol, specLogY, xySource, xyXCols, xyYCols])}
           kind={viewMode === 'spectrum' && specMode === 'waterfall' ? 'waterfall' : viewMode === 'spectrum' || viewMode === 'xy' ? viewMode : 'time'}
           defaultColumns={density === 'nine' ? 3 : 2}
           disabledReason={expandedPlot !== null ? 'Restore the grid to export multiple plots.' : null}
@@ -273,7 +277,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
           const displayedY = viewMode === 'xy' ? xyYCols[idx] || cfg.key : cfg.key;
           const missingY = !columns.includes(displayedY);
           const missingX = viewMode === 'xy' && !columns.includes(xyXCols[idx] ?? '');
-          if (missingY || missingX) return (
+          if ((missingY || missingX) && !(fullFlights !== undefined && (viewMode === 'full' || viewMode === 'xy' && xySource === 'full'))) return (
             <section key={`plot-${idx}`} className={`${wrapperClass} ${styles.unavailable}`} aria-label={`Unavailable plot ${idx + 1}`}
               data-select-focus-scope={`${selectFocusScope}-${idx}`}>
               <strong>{displayedY} · variable unavailable</strong>
@@ -295,7 +299,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
             const source = sourceCatalog.find(item => item.name === name);
             return [source?.id ?? name, source?.revision ?? null];
           };
-          const fullViewportContext = JSON.stringify(['full', sourceToken(test), cfg.key, fullPlotExtraColumns[idx] ?? []]);
+          const fullViewportContext = JSON.stringify(['full', fullFlights !== undefined ? ['comparison', flightTimeBasis] : sourceToken(test), cfg.key, fullPlotExtraColumns[idx] ?? []]);
           const viewportProps = (kind: 'spectrum' | 'xy') => {
             const source = kind === 'spectrum' ? specSource : xySource;
             // Legacy manual/full sessions use the same Hz/elapsed axes in v2.
@@ -305,7 +309,7 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
               : [specMode, waterfallWindow, waterfallOverlap, waterfallResolution, waterfallBand];
             const contextParts: unknown[] = [kind, displayedY,
               kind === 'spectrum' ? specMode === 'waterfall' ? waterfallContext : [specMode, specXAxis, specRpmCol] : xyXCols[idx], source,
-              source === 'full' ? [sourceToken(test), timeZoom] : selectedTPs
+              source === 'full' ? [kind === 'xy' && fullFlights !== undefined ? ['comparison', flightTimeBasis] : sourceToken(test), timeZoom] : selectedTPs
                 .filter(point => !hiddenTPs.has(point.id))
                 .map(point => [sourceToken(point.test), point.tpId, point.tp.start_s, point.endS,
                   ...(kind === 'spectrum' && specMode === 'waterfall' ? [point.tp.start_idx, point.tp.end_idx] : [])])
@@ -338,7 +342,9 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
           };
           const sourceRates = viewMode === 'tp' ? selectedTPs
             .filter(point => !hiddenTPs.has(point.id) && (columnsByTest[point.test] ?? []).includes(cfg.key))
-            .map(point => sampleRatesByTest[point.test]) : [fs];
+            .map(point => sampleRatesByTest[point.test]) : viewMode === 'full' && fullFlights !== undefined
+              ? fullFlights.filter(flight => [cfg.key, ...(fullPlotExtraColumns[idx] ?? [])].some(column => flight.columns.includes(column)))
+                .map(flight => flight.fs) : [fs];
           const plotFilter = filterForSampleRates(plotFilterSpecs[idx] ?? null, sourceRates);
           const filterProps = {
             fs: plotFilter.fs,
@@ -376,13 +382,14 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
               )}
               {viewMode === 'full' && (
                 <FullTestPlot
-                  key={`full:${test}:${cfg.key}`}
+                  key={`full:${fullFlights !== undefined ? 'comparison' : test}:${cfg.key}`}
+                  fullFlights={fullFlights} timeBasis={flightTimeBasis}
                   onDisplayDetailChange={detailRegistrations[idx]}
                   viewport={viewports?.full[idx]}
                   viewportContext={fullViewportContext}
                   onViewportChange={value => onViewportChange?.('full', idx, value)}
                   {...shared}
-                  additionalConfigs={(fullPlotExtraColumns[idx] ?? []).filter(column => columns.includes(column) && column !== cfg.key)
+                  additionalConfigs={(fullPlotExtraColumns[idx] ?? []).filter(column => (fullFlights !== undefined || columns.includes(column)) && column !== cfg.key)
                     .map(column => ({ key: column, label: column }))}
                   onAdditionalColumnsChange={columns => onFullPlotExtraColumnsChange(idx, columns)}
                   {...filterProps}
@@ -430,13 +437,14 @@ export const TimeSeriesGrid: React.FC<TimeSeriesGridProps> = ({
                 <XYPlot
                   {...viewportProps('xy')}
                   key={`xy:${xyYCols[idx] || cfg.key}:${xyXCols[idx] ?? ''}:${xySource}:${
-                    xySource === 'full' ? test : visibleSelectionFingerprint
+                    xySource === 'full' ? fullFlights !== undefined ? 'comparison' : test : visibleSelectionFingerprint
                   }`}
                   {...shared}
                   cfg={xyYCols[idx] ? { key: xyYCols[idx], label: xyYCols[idx] } : cfg}
                   onConfigChange={(newKey: string) => onXYYColChange?.(idx, newKey)}
                   test={test}
                   xCol={xyXCols[idx] ?? ''}
+                  fullFlights={fullFlights} timeBasis={flightTimeBasis}
                   onXColChange={(c) => onXYXColChange?.(idx, c)}
                   source={xySource}
                   registerExport={exportRegistry.registrations[idx]}

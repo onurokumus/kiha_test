@@ -46,6 +46,8 @@ import { PlotStateOverlay } from './PlotState';
 import { PlotActionMenu } from './PlotActionMenu';
 import { PlotHeader } from './PlotHeader';
 import styles from './TimePlot.module.css';
+import type { FullFlightSource } from '../../utils/fullFlightComparison';
+import { MultiFlightTimePlot } from './MultiFlightTimePlot';
 
 const EMPTY_CONFIGS: TimePlotConfig[] = [];
 
@@ -54,7 +56,9 @@ export interface FullTestDisplayDetail {
   level: number;
 }
 
-interface FullTestPlotProps extends ViewportProps {
+export interface FullTestPlotProps extends ViewportProps {
+  fullFlights?: FullFlightSource[];
+  timeBasis?: 'stored' | 'elapsed';
   onDisplayDetailChange?: (detail: FullTestDisplayDetail | null) => void;
   test: string;
   selectedTPs: SelectedTestPoint[];
@@ -134,7 +138,11 @@ const hasPlottableSamples = (window: DataWindow | null, key: string) => {
 /** Full-test time plot: selected columns served by one aligned windowed read. Auto switches
  *  between a line and a min/max band from sample density; displayMode can
  *  force either representation. Every zoom re-fetches the chosen form. */
-export const FullTestPlot: React.FC<FullTestPlotProps> = ({
+export const FullTestPlot: React.FC<FullTestPlotProps> = (props) => props.fullFlights !== undefined
+  ? <MultiFlightTimePlot {...props} fullFlights={props.fullFlights} />
+  : <SingleFlightTimePlot {...props} />;
+
+const SingleFlightTimePlot: React.FC<FullTestPlotProps> = ({
   onDisplayDetailChange,
   test,
   selectedTPs,

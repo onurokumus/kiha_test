@@ -13,13 +13,17 @@ interface Props {
   colors: readonly string[];
   resolveColors: FullTestColorResolver;
   showingOverlay: boolean;
+  /** Comparison mode uses flight hue and these variable line patterns. */
+  variableDashes?: readonly number[][];
+  hiddenColumns?: ReadonlySet<string>;
+  onToggleVariable?: (column: string) => void;
   onPrimaryChange?: (column: string) => void;
   onAdditionalColumnsChange?: (columns: string[]) => void;
 }
 
 /** The same swatches accompany selection and the folded-away trace legend. */
 export function FullTestVariables({ configs, allConfigs, colors, resolveColors,
-  showingOverlay, onPrimaryChange, onAdditionalColumnsChange }: Props) {
+  showingOverlay, variableDashes, hiddenColumns, onToggleVariable, onPrimaryChange, onAdditionalColumnsChange }: Props) {
   const [open, setOpen] = useState(false);
   const theme = useTheme();
   const variableColor = (key: string) => themeSeriesColor(colors[configs.findIndex(config => config.key === key)], theme === 'dark');
@@ -28,6 +32,8 @@ export function FullTestVariables({ configs, allConfigs, colors, resolveColors,
   const panel = useRef<HTMLDivElement>(null);
   const id = useId();
   const primary = configs[0];
+  const primaryKey = primary?.key;
+  const primaryLabel = primary?.label;
   const extras = configs.slice(1).map(config => config.key);
   const selected = new Set(configs.map(config => config.key));
   const columnsKey = JSON.stringify(configs.map(config => config.key));
@@ -37,13 +43,15 @@ export function FullTestVariables({ configs, allConfigs, colors, resolveColors,
     const option = (config: TimePlotConfig, color: string) => ({ value: config.key, label: config.label,
       color: themeSeriesColor(color, theme === 'dark'), keywords: [config.key] });
     return {
-      primaryOptions: allConfigs.map(config => ({
+      primaryOptions: [...(variableDashes && primaryKey && !allConfigs.some(config => config.key === primaryKey)
+        ? [{ ...option({ key: primaryKey, label: primaryLabel ?? primaryKey }, resolveColors([primaryKey])[0]),
+          disabled: true, description: 'Unavailable in the selected flights' }] : []), ...allConfigs.map(config => ({
         ...option(config, resolveColors([config.key])[0]), disabled: remaining.includes(config.key),
-      })),
+      }))],
       additionalOptions: allConfigs.filter(config => !keys.includes(config.key)).map(config =>
         option(config, resolveColors([...keys, config.key])[keys.length])),
     };
-  }, [allConfigs, columnsKey, resolveColors, theme]);
+  }, [allConfigs, columnsKey, resolveColors, theme, variableDashes, primaryKey, primaryLabel]);
   const legendEntries = configs.map(config => ({ label: config.label,
     color: variableColor(config.key) }));
   const canAdd = configs.length < 6 && allConfigs.some(config => !selected.has(config.key));
@@ -103,7 +111,7 @@ export function FullTestVariables({ configs, allConfigs, colors, resolveColors,
       aria-label={`Variable legend for ${configs.map(config => config.label).join(', ')}`}
       aria-expanded={open} aria-controls={open ? id : undefined} aria-haspopup="dialog"
       data-tooltip={open ? undefined : legendEntries.map(entry => entry.label).join(' · ')}
-      data-tooltip-legend={open ? undefined : JSON.stringify(legendEntries)}
+      data-tooltip-legend={open || variableDashes ? undefined : JSON.stringify(legendEntries)}
       onClick={() => { if (open) close(); else { place(); setOpen(true); } }}>
       <span className={styles.dots} aria-hidden="true">{configs.slice(0, 3).map(config =>
         <i key={config.key} className={styles.dot} style={{ background: variableColor(config.key) }} />)}</span>
@@ -111,7 +119,7 @@ export function FullTestVariables({ configs, allConfigs, colors, resolveColors,
       <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" aria-hidden="true"><path d="m2 4 4 4 4-4" /></svg>
     </button>
     {open && createPortal(<div ref={panel} id={id} className={styles.legend} style={position} role="dialog"
-      tabIndex={-1} aria-label="Plot variables and colors" onKeyDown={event => {
+      tabIndex={-1} aria-label={variableDashes ? 'Plot variables and line styles' : 'Plot variables and colors'} onKeyDown={event => {
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); }
         if (event.key === 'Tab') {
           const buttons = panel.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
@@ -131,18 +139,31 @@ export function FullTestVariables({ configs, allConfigs, colors, resolveColors,
       }}>
       <div className={styles.heading}>{configs.length} variable{configs.length === 1 ? '' : 's'}</div>
       {configs.map((config, index) => <div key={config.key} className={styles.row}>
+        {onToggleVariable && <button type="button" className={styles.remove} aria-label={`${hiddenColumns?.has(config.key) ? 'Show' : 'Hide'} ${config.label} for all flights`}
+          aria-pressed={!hiddenColumns?.has(config.key)} title={hiddenColumns?.has(config.key) ? 'Show variable' : 'Hide variable'}
+          onClick={() => onToggleVariable(config.key)}>{hiddenColumns?.has(config.key) ? '○' : '●'}</button>}
         <div className={styles.variable}>
-          {!showingOverlay && <i className={styles.line} aria-hidden="true" style={{ borderColor: variableColor(config.key) }} />}
+          {variableDashes ? <svg width="30" height="10" viewBox="0 0 30 10" aria-hidden="true" style={{ flexShrink: 0 }}>
+            <path d="M0 5H30" stroke="currentColor" strokeWidth="2" strokeDasharray={variableDashes[index].join(' ')} />
+          </svg> : !showingOverlay && <i className={styles.line} aria-hidden="true" style={{ borderColor: variableColor(config.key) }} />}
           <span className={styles.name} title={config.label}>{config.label}</span>
         </div>
-        {showingOverlay && <div className={styles.samples}>
+        {showingOverlay && !variableDashes && <div className={styles.samples}>
           <span className={styles.sample}><i className={`${styles.line} ${styles.original}`} aria-hidden="true" style={{ borderColor: variableColor(config.key) }} />Original</span>
           <span className={styles.sample}><i className={styles.line} aria-hidden="true" style={{ borderColor: variableColor(config.key) }} />Filtered</span>
+        </div>}
+        {showingOverlay && variableDashes && <div className={styles.samples}>
+          <span className={styles.sample}><svg width="24" height="10" viewBox="0 0 24 10" aria-hidden="true" style={{ opacity: .5 }}>
+            <path d="M0 5H24" stroke="currentColor" strokeWidth="1" strokeDasharray={variableDashes[index].join(' ')} />
+          </svg>Original</span>
+          <span className={styles.sample}><svg width="24" height="10" viewBox="0 0 24 10" aria-hidden="true">
+            <path d="M0 5H24" stroke="currentColor" strokeWidth="2" strokeDasharray={variableDashes[index].join(' ')} />
+          </svg>Filtered</span>
         </div>}
         {index > 0 && <button type="button" className={styles.remove} aria-label={`Remove ${config.label} from plot`}
           title={`Remove ${config.label}`} onClick={() => { onAdditionalColumnsChange?.(extras.filter(key => key !== config.key)); panel.current?.focus({ preventScroll: true }); }}>×</button>}
       </div>)}
-      <p className={styles.hint}>Shared Y axis</p>
+      <p className={styles.hint}>{variableDashes ? 'Flight color · variable line pattern · shared Y axis. Originals are thinner/lighter when overlaid with filtered data.' : 'Shared Y axis'}</p>
     </div>, document.body)}
   </div>;
 }

@@ -26,6 +26,8 @@ export interface PlotStateOverlayProps {
   dataStatus?: string;
   /** Non-blocking partial-result notice; does not dim the chart. */
   partialMessage?: string | null;
+  /** Full source details when the visible partial-result label is compact. */
+  partialTitle?: string;
 }
 
 const ActivityMark: React.FC = () => (
@@ -59,6 +61,7 @@ export const PlotStateOverlay: React.FC<PlotStateOverlayProps> = ({
   errorTitle = hasData ? 'Could not update this view' : 'Could not load this view',
   dataStatus,
   partialMessage,
+  partialTitle,
 }) => {
   const hasError = Boolean(error);
   const initialLoad = loading && !hasData && !hasError;
@@ -128,7 +131,7 @@ export const PlotStateOverlay: React.FC<PlotStateOverlayProps> = ({
       )}
 
       {!loading && !hasError && hasData && partialMessage && (
-        <div className={styles.partialPill} role="status">
+        <div className={styles.partialPill} role="status" title={partialTitle} aria-label={partialTitle}>
           <span className={styles.partialMark} aria-hidden="true" />
           <span>{partialMessage}</span>
           {onRetry && (
