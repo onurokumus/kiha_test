@@ -28,6 +28,7 @@ import styles from './TimePlot.module.css';
 import type { PanelSource } from './SpectrumPlot';
 import { nativeFlightRange, type FullFlightSource } from '../../utils/fullFlightComparison';
 import { alignedXYPairs, xyFlightAxisLabel } from '../../utils/xyFlightComparison';
+import { pointAppearancePlugin } from '../../utils/uplotPointAppearance';
 
 interface XYPlotProps extends ViewportProps {
   test: string;
@@ -250,7 +251,7 @@ export const XYPlot: React.FC<XYPlotProps> = ({
       cursor: { dataIdx: nearestXYDataIdx, drag: { x: true, y: true } },
       plugins: [plotHoverPlugin(u => ({ heading: `${cfg.label} · XY`, columns: [xAxisLabel, yAxisLabel], prefixes: ['x', 'y'],
         rows: sampleHoverRows(u, true) }), hoverGroup, xHoverKey, yHoverKey),
-        axisTitlesPlugin(yAxisLabel), xyPanZoomPlugin(), boxZoomPlugin(viewportControl.setY), viewportControl.plugin],
+        pointAppearancePlugin(), axisTitlesPlugin(yAxisLabel), xyPanZoomPlugin(), boxZoomPlugin(viewportControl.setY), viewportControl.plugin],
       series,
     });
 

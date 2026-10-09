@@ -1,5 +1,163 @@
 # Implementation handoff
 
+## Git checkpoint: preprocessing, appearance and auto-split (2026-10-09)
+
+User explicitly requested committing all pending changes and pushing them on
+codex/ptt-ui-rework-2026-09-28, starting from a5c16ec. This checkpoint includes
+Uploads preprocessing and bulk selection, compact plot-appearance controls,
+auto-split tolerance/custom value exclusion, and their tests/documentation.
+All requested implementation is complete; verification for each is recorded
+below and in its linked report. No deployment is included. Next independent
+milestone remains Phase 11b.
+
+## Complete: preprocessing bulk filter controls (2026-10-09)
+
+User follow-up adds parameter checkboxes, global Select all, filtered-list
+Select visible and explicit bulk Apply/Remove. Individual Configure buttons
+remain available; checked targets survive search and individual inspection.
+Bulk changes use a separate draft, never change unselected parameters, and
+block Save until applied or discarded. Time is excluded. Scope: dialog TSX/CSS
+and isolated browser coverage only; existing uncommitted preprocessing,
+appearance and Split work remain intact. Arbitrary parameter names, including
+Object prototype property names, safely retain individual settings and sparse
+missing-sample counts. Changing the target set marks differing settings pending;
+Apply/Remove clones settings only to current signal targets.
+
+Build/lint and ten preprocessing helpers pass. Nine isolated browser groups
+pass against index-B-wmAcm6.js, including exact 34-filter POST content, hidden
+targets, per-parameter independence, validation/discard, special column names,
+keyboard focus and both themes at actual 100/125/150% zoom. Screenshots and an
+independent code review pass. No browser errors or user-data access; mocked
+source fixture unchanged. Owned preview stopped. Existing Vite size advisory
+remains. Backend tests were not rerun for this frontend-only follow-up.
+
+Entry points: PreprocessDialog TSX/CSS and scripts/verify_preprocess_bulk.py.
+Usage, commands and evidence: docs/PREPROCESSING.md. No remaining bulk work or
+deployment. Included in the combined Git checkpoint above. Next independent
+milestone remains Phase 11b's collapsible variable/filter panel.
+
+## Complete: Auto-split custom value exclusion (2026-10-09)
+
+Explicit request ahead of independent Phase 11b; concurrent upload preprocessing
+and plot-appearance changes in this working tree are preserved. Added an optional
+"Exclude a value" checkbox and finite numeric input beside "Exclude zero values".
+Exact matches in any selected variable break/exclude runs. Zero remains an
+independent option; missing, zero and custom counts are disjoint, in that order.
+Settings persist per test with older preferences defaulting to disabled.
+
+Acceptance: native exact signed/decimal matching, unchanged gaps/boundaries,
+invalid-input rejection, preview invalidation, draft-only Apply and ordinary
+Save/CSV, legacy preferences and desktop keyboard/theme/resize/zoom checks.
+Acceptance complete. Production build/lint and 13 Split/export/Y-range helpers
+pass; focused backend 33 tests/67 subtests and full suite 532 tests/515 subtests
+pass. Seven new native browser groups and all nine existing auto-split groups
+pass, including negative/decimal/exponent values, overlapping exclusions,
+held stale responses, legacy/per-test/reload preferences, draft/saved CSV and
+both themes at 1100px and actual 125/150% zoom. Screenshots visually reviewed;
+the adjacent duration field now stays compact on one line. Ten new-suite and
+15 existing-suite CSV/Parquet/pyramid source files remain unchanged. No unexpected
+browser errors; owned servers/profile/fixtures cleaned up. Independent scoped
+review and whitespace checks pass. Existing Vite size advisory and one backend
+dependency deprecation remain. Build/native checks required approved Windows
+sandbox escalation; the browser harness now waits for the enabled editor.
+
+Entry points: AutoSplitPanel TSX/CSS, types/index.ts, split.py, the preview request
+and route in main.py, test_split.py and verify_autosplit_excluded_value.py.
+Details, commands and evidence: docs/MULTI_VARIABLE_AUTOSPLIT_VERIFICATION.md.
+Branch: codex/ptt-ui-rework-2026-09-28; included in the combined Git checkpoint
+above. No remaining scope, deployment or user-data changes.
+Next independent milestone remains Phase 11b's collapsible variable/filter panel.
+
+## Complete: plot appearance controls (2026-10-09)
+
+Compact follow-up complete: reduced Appearance to inline Line/Scatter fields
+and an icon-only reset. Removed the repeated heading, preview graphics and
+helper copy; full accessible names, percentage units, range tooltips and inline
+validation remain. TP Time/XY popovers now use 360px rather than 520px; Full Time
+and Spectrum keep the space required by their other options. Build/lint and six
+focused browser groups pass (index-D3ukhO0b.js): both themes at 100/150% zoom,
+inline layout, keyboard/reset/validation and working Full/Spectrum controls.
+Screenshots reviewed; no page errors, data writes or changed source hashes.
+Owned servers stopped. No changes to plot rendering, persistence or numeric
+handlers; earlier numerical/export tests were not rerun for this styling pass.
+Evidence: docs/PLOT_APPEARANCE_VERIFICATION.md. No remaining compacting work;
+next independent milestone remains Phase 11b.
+
+Follow-up complete: replaced both sliders with shared NumericField percentage
+text inputs (50–300%, including decimals). Valid edits apply immediately;
+empty/invalid drafts leave the current appearance intact and restore the last
+valid value on blur/Enter. Removed the former 25% step rounding, preserving
+existing saved settings. Build/lint, 13 appearance/numeric helpers and six native
+browser groups pass: exact decimal geometry, invalid drafts, keyboard, blur/
+Enter/Escape, reset/reload and both themes at 1050px/150% zoom with maximize/
+restore. Screenshots visually reviewed; no page errors, dataset writes or sample
+hash changes. Owned servers stopped. Current bundle index-edHYMV-Z.js. Details
+and evidence: docs/PLOT_APPEARANCE_VERIFICATION.md. No remaining follow-up work;
+next independent milestone remains Phase 11b.
+
+Explicit user request on codex/ptt-ui-rework-2026-09-28, ahead of independent
+Phase 11b. Shared Options > Appearance now offers line thickness and scatter
+size (50–300% of existing defaults), immediate updates, browser persistence and
+Reset appearance in every analysis mode. Time, Full test/comparison, Spectrum
+and Split lines plus XY/overview/reference markers use the preference. In-place
+uPlot plugins retain axes, sample arrays and hidden series. Relative original/
+filtered widths remain distinct; cluster membership and default sizes remain.
+
+Fixed the existing frozen SVG radius animation exposed by live size changes;
+hover uses CSS transitions and PNG snapshots retain the configured base radius.
+PNG line/point geometry matches the active plot. Browser preferences use
+ptt.plot-appearance.v1 with validated defaults and safe storage failure behavior.
+
+Verification: final build/lint, all 133 frontend helpers before the animation
+fix, 16 focused appearance/export helpers after it, and 21 native browser groups
+pass. Coverage includes live line/point geometry, multi-flight, Split, selection/
+hover, reload/reset, unchanged data/axes, native PNG exports, keyboard and both
+themes at 1/4/9/maximized layouts and actual 100/125/150% zoom. No page errors or
+dataset writes; original/copied sample hashes unchanged. Screenshots visually
+reviewed. Owned test servers stopped. Final bundle index-CxKuzIBn.js; the existing
+Vite size advisory remains. Backend tests were not rerun for this frontend-only
+request. Windows build/browser setup required approved sandbox escalation.
+
+Entry points: PlotAppearanceControls, plotAppearance/usePlotAppearance,
+uplotAppearance/uplotPointAppearance, plot components and PNG/scatter export.
+Reproduction/evidence: docs/PLOT_APPEARANCE_VERIFICATION.md. No work remains for
+this request; next independent milestone is Phase 11b's collapsible variable/
+filter controls. Included in the combined Git checkpoint above, along with the
+separately verified upload preprocessing and auto-split changes.
+
+## Complete: Uploads preprocessing (2026-10-09)
+
+Explicit user request ahead of independent Phase 11b, starting clean at a5c16ec
+on codex/ptt-ui-rework-2026-09-28. Scope: per-test Pre-process dialog with searchable
+parameters, full-resolution filters and saved settings, validation and background
+status; original data remains untouched and output is a separately named test
+with its own Parquet/pyramid/TPs/raw upload and source provenance. Existing plot
+filters apply independently on either source. Preprocessed copies open their
+saved recipe rather than silently applying filters twice.
+
+Acceptance: full native sample correctness, source preservation, atomic publish
+and failure recovery, source identity/revision checks, independent exports and
+downstream analysis, keyboard focus, light/dark desktop sizing and browser zoom.
+Backend, dialog and Uploads integration are complete. Full combined-tree
+backend suite passes 531 tests/511 subtests; frontend build/lint and 133 helpers
+pass. Sixteen isolated native browser groups pass, including complete SciPy
+parity, unchanged source hashes, explicit downloads, plot-filter layering,
+light/dark, real 100/125/150% zoom and dense short-desktop keyboard/scrolling.
+Real short-gap worker failure/retry and lost-response recovery also pass;
+failed copies publish no samples or broken original download. Saved copies
+preserve original raw CSV and component associations while component totals
+exclude them. Retained acquisition gaps remain hard boundaries after fill edits.
+All seven filter kinds, source revision guards and concurrency checks pass.
+Final reviewed frontend bundle: index-Bg1W2U1i.js.
+Existing bundle-size advisory and dependency warning remain. Scope/method and
+commands: docs/PREPROCESSING.md; browser evidence: host temp
+ptt-preprocess-verification/{results,followup-results,lifecycle-results}.json.
+Owned servers stopped; user datasets/servers untouched. Restart an existing
+backend to load new routes. Included in the combined Git checkpoint above;
+no deployment performed. Concurrent plot-
+appearance and Split changes are preserved; this task owns only preprocessing.
+No remaining work here; next independent milestone remains Phase 11b.
+
 ## Git checkpoint (2026-10-09)
 
 The user requested committing and pushing all pending changes on

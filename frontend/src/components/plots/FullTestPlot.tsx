@@ -1,4 +1,5 @@
 import { usePlotTheme } from '../../utils/usePlotTheme';
+import { lineAppearancePlugin } from '../../utils/uplotAppearance';
 import { plotHoverPlugin } from '../../utils/uplotHover';
 import { usePlotHoverGroup } from '../../utils/usePlotHoverGroup';
 import { sampleHoverRows } from '../../utils/plotHoverValues';
@@ -457,6 +458,7 @@ const SingleFlightTimePlot: React.FC<FullTestPlotProps> = ({
         sync: { key: FULL_SYNC_KEY, scales: ['x', null] },
       },
       plugins: [
+        lineAppearancePlugin(),
         plotHoverPlugin(u => ({ heading: displayedWindow.mode === 'envelope' ? 'Full test · envelope' : 'Full test',
           columns: ['Time (s)', 'Value'], units: ['s', ''], rows: sampleHoverRows(u, false).map(row => ({ ...row,
             label: showingOverlay ? row.label : row.label.replace(/ original(?= (?:max|min)$|$)/, '') })) }), hoverGroup, 'time:absolute'),

@@ -99,6 +99,19 @@ class ComponentStatsTests(DataDirTestCase):
         self.assertEqual(motor['summary']['missing_rpm_samples'], 4)
         self.assertEqual(sum(row['summary'] is None for row in doc['sources']), 2)
 
+    def test_preprocessed_copy_preserves_associations_without_duplicate_physical_use(self):
+        self.fixture('original', [1000., 1000., 1000., 1000.])
+        self.fixture('filtered', [900., 950., 1000., 1050.],
+                     preprocessing={'version': 1, 'source': {'name': 'original'}})
+        doc = self.read()
+        motor = self.motor(doc)
+        self.assertEqual((motor['included_tests'], motor['assigned_tests']), (1, 2))
+        self.assertEqual(motor['summary']['running_seconds'], 2.)
+        copied = next(row for row in doc['sources'] if row['name'] == 'filtered')
+        self.assertEqual(copied['component_ids'], self.ids)
+        self.assertIsNone(copied['summary'])
+        self.assertIn('only from the original test', copied['issue'])
+
     def test_batch_seams_gaps_histogram_and_large_constant(self):
         self.fixture('alpha', [1000.] * 10, time=[0., .5, 1., 1.5, 2., 5., 5.5, 6., 6.5, 7.],
                      acquisition_gap_ranges=[[2, 5], [4, 6]])

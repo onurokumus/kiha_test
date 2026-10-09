@@ -11,6 +11,7 @@ skips both (see CLAUDE.md).
 import asyncio
 import json
 import logging
+import math
 import re
 import time
 import uuid
@@ -25,7 +26,7 @@ from fastapi import (BackgroundTasks, FastAPI, HTTPException, Query, Request,
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from . import dsp, edit, export_progress, formula, image_export, plot_export, recipes, spectrum_export, split, store, uploads, waterfall_export, xy_export
@@ -41,6 +42,7 @@ from . import component_stats
 from .components import ComponentIds, ComponentSets
 from . import trash
 from . import analysis_sources
+from . import preprocess
 
 
 logger = logging.getLogger("kiha.api")
@@ -77,6 +79,13 @@ def _recover_interrupted_ingests() -> list[tuple[str, str]]:
                 continue
             status = store.get_status(test_dir.name).get("status")
             if status == "rebuilding":
+                if store.get_status(test_dir.name).get('preprocessing') is not None:
+                    write_status(test_dir, 'error',
+                        'Pre-processing was interrupted by a backend restart. '
+                        'The original test is unchanged; delete this incomplete '
+                        'copy and create a new version from the original.',
+                        preprocessing=store.get_status(test_dir.name)['preprocessing'])
+                    continue
                 write_status(
                     test_dir,
                     "error",
@@ -123,6 +132,7 @@ app.include_router(waterfall_export.router)
 app.include_router(xy_export.router)
 app.include_router(image_export.router)
 app.include_router(export_progress.router)
+app.include_router(preprocess.router)
 
 
 @app.middleware("http")
@@ -382,7 +392,7 @@ def api_rename_test(name: str, new_name: str = Query(...)):
                 raise HTTPException(404, f"test '{name}' not found")
             return {"ok": True, "name": name}
     status = store.get_status(name).get("status")
-    if status in INGEST_LIKE:
+    if status in BUSY_STATUSES:
         raise HTTPException(409, f"'{name}' is still {status}")
 
     with catalog_write():
@@ -392,7 +402,7 @@ def api_rename_test(name: str, new_name: str = Query(...)):
             if src.parent != tests_root or not src.is_dir():
                 raise HTTPException(404, f"test '{name}' not found")
             status = store.get_status(name).get("status")
-            if status in INGEST_LIKE:
+            if status in BUSY_STATUSES:
                 raise HTTPException(409, f"'{name}' is still {status}")
             dst = TESTS_DIR / new_name
             if dst.exists():
@@ -974,6 +984,16 @@ class AutoSplitPreviewRequest(BaseModel):
         min_length=1, max_length=split.MAX_SPLIT_COLUMNS)
     ignore_zero: Annotated[bool, Field(strict=True)] = True
     min_len_s: Annotated[float, Field(ge=0, allow_inf_nan=False)] = 1.0
+    exclude_value: Annotated[float, Field(strict=True, allow_inf_nan=False)] | None = None
+
+    @field_validator("exclude_value", mode="before")
+    @classmethod
+    def reject_nonfinite_exclusion(cls, value):
+        # JSON number overflow can decode as infinity. FastAPI's default
+        # validation response echoes the invalid input and cannot serialize it.
+        if isinstance(value, float) and not math.isfinite(value):
+            raise HTTPException(422, "exclude_value must be a finite number or null")
+        return value
 
 
 @app.post("/api/tests/{name}/split/preview")
@@ -987,7 +1007,8 @@ def api_autosplit_preview(name: str, payload: AutoSplitPreviewRequest):
             raise HTTPException(404, f"test '{name}' not found or not ready")
         try:
             return split.preview_autosplit(
-                name, payload.columns, payload.ignore_zero, payload.min_len_s)
+                name, payload.columns, payload.ignore_zero, payload.min_len_s,
+                payload.exclude_value)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 

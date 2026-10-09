@@ -65,6 +65,8 @@ def list_tests() -> list[dict]:
                        if "component_sets" in meta or "component_sets" in status else {}),
                     "created_at": meta.get("created_at") or _dir_created_at(d),
                     "edited_at": meta.get("edited_at"),
+                    "preprocessing": meta.get("preprocessing", status.get("preprocessing")),
+                    "preprocessing_progress": status.get("preprocessing_progress"),
                     "ingest_seconds": meta.get("ingest_seconds"),
                     # A random-access staging file can be sparse and its
                     # logical st_size can jump ahead of durable progress.

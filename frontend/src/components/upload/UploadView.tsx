@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { NumericField } from '../controls/NumericField';
 import { parseFiniteNumber } from '../../utils/numericField';
-import { deleteTest, rawCsvUrl, rebuildTpStats } from '../../services/api';
+import { deleteTest, exportCsvUrl, rawCsvUrl, rebuildTpStats } from '../../services/api';
 import {
   cancelUploadSession,
   UploadDataOptions,
@@ -26,6 +26,7 @@ import { useComponentCatalog } from '../../hooks/useComponentCatalog';
 import { componentSetsError, componentSetsSummary, type ComponentSet } from '../../utils/components';
 import { TrashBin } from './TrashBin';
 import TestNameEditor from './TestNameEditor';
+import PreprocessDialog from './PreprocessDialog';
 
 interface Props {
   tests: TestInfo[];
@@ -230,6 +231,7 @@ export default function UploadView({
   const [historyStatus, setHistoryStatus] = useState('all');
   const [qualityTest, setQualityTest] = useState<string | null>(null);
   const [splitDownloadTest, setSplitDownloadTest] = useState<string | null>(null);
+  const [preprocessTest, setPreprocessTest] = useState<TestInfo | null>(null);
   const [uploaderName, setUploaderName] = useState(loadRememberedUploaderName);
   const [description, setDescription] = useState('');
   const catalog = useComponentCatalog();
@@ -393,6 +395,7 @@ export default function UploadView({
       (historyStatus === 'processing' ? isBusyStatus(test.status) : test.status === historyStatus);
     const terms = historyQuery.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
     const searchableText = [test.name, test.source_file, test.uploader_name, test.description,
+      test.preprocessing ? `Filtered ${test.preprocessing.source.name}` : '',
       componentSetsSummary(test, catalog.items)]
       .join(' ')
       .toLocaleLowerCase();
@@ -1127,6 +1130,10 @@ export default function UploadView({
                           <td style={{ ...tdStyle, fontWeight: 600, overflow: 'hidden' }}>
                             <TestNameEditor name={t.name} names={tests.map(test => test.name)}
                               disabled={busy || busyRow !== null || renameDisabled} onRename={handleRename} />
+                            {t.preprocessing && <span className={styles.preprocessedSource}
+                              title={`Preprocessed copy of ${t.preprocessing.source.name}`}>
+                              <strong>{t.status === 'ready' ? 'Filtered' : 'Pre-process'}</strong><span>from {t.preprocessing.source.name}</span>
+                            </span>}
                             <div className={styles.metadataLinks}>
                             {t.status === 'ready' ? (
                               <button className={styles.notesLink} disabled={renameDisabled} onClick={() => onEditNotes(t.name)}
@@ -1156,6 +1163,11 @@ export default function UploadView({
                           <td style={{ ...tdStyle, overflow: 'hidden' }}>
                             <div className="upload-history-status">
                               <StatusChip status={t.status} />
+                              {busy && t.preprocessing_progress && <span className={styles.preprocessProgress}
+                                title={t.preprocessing_progress.stage}>
+                                {t.preprocessing_progress.stage}
+                                <small>{t.preprocessing_progress.completed_columns} / {t.preprocessing_progress.total_columns} parameters</small>
+                              </span>}
                               <DataQualityButton
                                 test={t}
                                 expanded={qualityTest === t.name}
@@ -1227,7 +1239,21 @@ export default function UploadView({
                                   Analyze
                                 </button>
                               )}
-                              {(t.status === 'ready' || t.status === 'error') && (
+                              {t.status === 'ready' && (
+                                <button className="btn" disabled={renameDisabled || busyRow !== null}
+                                  aria-label={`${t.preprocessing ? 'View preprocessing for' : 'Pre-process'} ${t.name}`}
+                                  onClick={() => setPreprocessTest(t)}>
+                                  {t.preprocessing ? 'Pre-process settings' : 'Pre-process'}
+                                </button>
+                              )}
+                              {t.status === 'ready' && t.preprocessing && (
+                                <a className="btn" href={exportCsvUrl(t.name)} download
+                                  aria-label={`Download filtered CSV for ${t.name}`}
+                                  title="Download the complete saved filtered data"
+                                  style={{ textDecoration: 'none' }}>Filtered CSV</a>
+                              )}
+                              {(t.status === 'ready' || t.status === 'error') &&
+                                (!t.preprocessing || (t.status === 'ready' && t.preprocessing.original_raw_available)) && (
                                 <a
                                   className="btn"
                                   href={rawCsvUrl(t.name)}
@@ -1236,7 +1262,7 @@ export default function UploadView({
                                   title="download the original uploaded CSV"
                                   style={{ textDecoration: 'none' }}
                                 >
-                                  CSV
+                                  {t.preprocessing ? 'Original CSV' : 'CSV'}
                                 </a>
                               )}
                               {t.status === 'ready' && (
@@ -1318,6 +1344,15 @@ export default function UploadView({
           <p>Status refreshes automatically. An asterisk marks a test edited after upload; hover its date for details.</p>
         </details>
         <TrashBin refreshKey={trashRevision} onRestored={onTestsChanged} components={catalog.items} />
+        {preprocessTest && <PreprocessDialog test={preprocessTest}
+          existingNames={tests.map(test => test.name)}
+          onClose={() => setPreprocessTest(null)}
+          onCreated={name => {
+            setHistoryQuery('');
+            setHistoryStatus('all');
+            onTestsChanged(name);
+          }}
+          onOpenTest={name => { setPreprocessTest(null); onOpenTest(name); }} />}
       </div>
     </div>
   );

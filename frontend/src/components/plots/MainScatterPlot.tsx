@@ -1,4 +1,5 @@
 import { useTheme } from '../../hooks/useTheme';
+import { usePlotAppearance } from '../../hooks/usePlotAppearance';
 import { createPortal } from 'react-dom';
 import { themeSeriesColor } from '../../constants/uplotTheme';
 import React, { useState, useRef, useCallback, useMemo, useEffect, useId } from 'react';
@@ -84,6 +85,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
   const [chartDimensions, setChartDimensions] = useState({ width: 0, height: 0 });
   const chartRef = useRef<HTMLDivElement>(null);
   const theme = useTheme();
+  const { pointScale, lineScale } = usePlotAppearance();
   const helpId = useId();
   const pointPositions = useRef<Map<string, { cx: number; cy: number }>>(new Map());
   const hoverTargetRef = useRef<Element | null>(null);
@@ -240,8 +242,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       bounds.currentYMax,
       chartWidth,
       chartHeight,
-      // Overlap scale, not FMS's 30px decluttering scale: dots are r=6, so
-      // centers <14px apart render as visually touching/stacked circles.
+      // Keep overlap memberships stable when only the display size changes.
       14,
       2 // even a pair of stacked points must show a count badge
     );
@@ -325,7 +326,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
     })[];
   }, [scatterData, clusteredData, enableClustering, highlightedPointId]);
 
-  // The 15px "nearby points" click test reads dot pixel positions accumulated
+  // The marker-sized "nearby points" click test reads pixel positions accumulated
   // by the shape renderer. Recharts overwrites the entry for each dot it still
   // draws, but points that dropped out of renderData (filtered away, clustered,
   // or off-screen after zoom/pan/axis change) would otherwise linger with stale
@@ -363,8 +364,8 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
       // Store the position for this point
       pointPositions.current.set(clickedPoint.id, { cx, cy });
 
-      // Find all points within a 15px radius
-      const CLICK_RADIUS = 15;
+      // Retain a usable minimum hit neighborhood and include overlapping markers.
+      const CLICK_RADIUS = Math.max(15, 14 * pointScale + 1);
       const nearbyPoints: ScatterDataPoint[] = [];
 
       pointPositions.current.forEach((pos, id) => {
@@ -394,7 +395,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
         onToggleTestPoint(clickedPoint);
       }
     },
-    [scatterData, onToggleTestPoint]
+    [scatterData, onToggleTestPoint, pointScale]
   );
 
   const handleMenuSelect = useCallback(
@@ -443,6 +444,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
           cx={shapeProps.cx}
           cy={shapeProps.cy}
           count={shapeProps.payload.clusterCount}
+          pointScale={pointScale}
           onClick={(event) =>
             handlePointClick(
               shapeProps.payload,
@@ -457,7 +459,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
 
     // During panning, use simple circles for better performance
     if (isPanning) {
-      const r = shapeProps.payload.isSelected ? 8 : 6;
+      const r = (shapeProps.payload.isSelected ? 8 : 6) * pointScale;
       return (
         <circle
           data-scatter-hover-target="point"
@@ -487,6 +489,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
         cx={shapeProps.cx}
         cy={shapeProps.cy}
         payload={shapeProps.payload}
+        pointScale={pointScale}
         onToggle={(event) =>
           handlePointClick(
             shapeProps.payload,
@@ -498,7 +501,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
         isHighlighted={highlightedPointId === shapeProps.payload.id}
       />
     );
-  }, [handlePointClick, highlightedPointId, isPanning, theme]);
+  }, [handlePointClick, highlightedPointId, isPanning, theme, pointScale]);
 
   const datasheetShapeRenderer = useCallback((props: unknown) => {
     const shapeProps = props as { cx: number; cy: number };
@@ -507,13 +510,13 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
         data-scatter-hover-target="datasheet"
         cx={shapeProps.cx}
         cy={shapeProps.cy}
-        r={3.5}
+        r={3.5 * pointScale}
         fill="var(--surface, #f7f8fa)"
         stroke="var(--warning, #806b20)"
         strokeWidth={1.75}
       />
     );
-  }, []);
+  }, [pointScale]);
 
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (navigation.isDragging) return;
@@ -658,7 +661,7 @@ export const MainScatterPlot: React.FC<MainScatterPlotProps> = ({
               data={datasheetData}
               line={{
                 stroke: 'var(--warning, #806b20)',
-                strokeWidth: 2,
+                strokeWidth: 2 * lineScale,
                 strokeDasharray: '7 4',
                 fill: 'none',
               }}

@@ -1,4 +1,5 @@
 import { usePlotTheme } from '../../utils/usePlotTheme';
+import { lineAppearancePlugin } from '../../utils/uplotAppearance';
 import { plotHoverPlugin } from '../../utils/uplotHover';
 import { usePlotHoverGroup } from '../../utils/usePlotHoverGroup';
 import { sampleHoverRows } from '../../utils/plotHoverValues';
@@ -463,7 +464,7 @@ export const TimePlot: React.FC<TimePlotProps> = ({
         drag: { x: true, y: false },
         sync: { key: TP_SYNC_KEY, scales: ['x', null] },
       },
-      plugins: [plotHoverPlugin(u => ({ heading: cfg.label, columns: ['Time (s)', cfg.label], units: ['s', ''],
+      plugins: [lineAppearancePlugin(), plotHoverPlugin(u => ({ heading: cfg.label, columns: ['Time (s)', cfg.label], units: ['s', ''],
         rows: sampleHoverRows(u, true) }), hoverGroup, 'time:relative'),
         visibleYAutoFitPlugin(() => yRangeRef.current !== null), xPanZoomPlugin(
         (r) => onZoomChangeRef.current(r),

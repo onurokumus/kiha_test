@@ -103,6 +103,7 @@ def run_checks(web, api, dataset, temporary, output):
 
         def open_panel():
             button = page.get_by_role('button', name='Configure auto-split', exact=True)
+            expect(button).to_be_enabled()
             button.focus(); page.keyboard.press('Enter')
             expect(panel()).to_be_visible()
 
@@ -369,7 +370,7 @@ def run_checks(web, api, dataset, temporary, output):
             staggered = event.value.json()
             native_cases['staggered_default'] = staggered
             assert [(point['start_idx'], point['end_idx']) for point in staggered['test_points']] == STAGGERED_EXPECTED, staggered
-            assert staggered['excluded'] == {'missing_samples': 0, 'zero_samples': 0,
+            assert staggered['excluded'] == {'missing_samples': 0, 'zero_samples': 0, 'value_samples': 0,
                                               'isolated_samples': 11, 'short_runs': 0}, staggered
             assert gamma_path.read_bytes() == gamma_saved_bytes
             capture_browser_view(cdp, output / 'staggered-constant-preview.png')

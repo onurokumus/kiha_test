@@ -18,6 +18,8 @@ interface Props {
 interface Settings {
   columns: string[];
   ignoreZero: boolean;
+  excludeEnabled: boolean;
+  excludeValue: string;
   minDuration: string;
 }
 
@@ -31,7 +33,9 @@ const PAGE_SIZE = 50;
 const STORAGE_PREFIX = 'ptt.auto-split.v1:';
 
 function readSettings(test: string, available: string[]): Settings {
-  const fallback = { columns: [''], ignoreZero: true, minDuration: '1' };
+  const fallback: Settings = {
+    columns: [''], ignoreZero: true, excludeEnabled: false, excludeValue: '', minDuration: '1',
+  };
   try {
     const raw: unknown = JSON.parse(window.localStorage.getItem(STORAGE_PREFIX + test) ?? 'null');
     if (!raw || typeof raw !== 'object') return fallback;
@@ -41,9 +45,13 @@ function readSettings(test: string, available: string[]): Settings {
         typeof column === 'string' && available.includes(column)))].slice(0, MAX_VARIABLES)
       : [];
     const duration = typeof stored.minDuration === 'string' ? Number(stored.minDuration) : NaN;
+    const excludeValue = typeof stored.excludeValue === 'string' &&
+      parseFiniteNumber(stored.excludeValue) !== null ? stored.excludeValue : '';
     return {
       columns: columns.length ? columns : fallback.columns,
       ignoreZero: typeof stored.ignoreZero === 'boolean' ? stored.ignoreZero : true,
+      excludeEnabled: stored.excludeEnabled === true && excludeValue !== '',
+      excludeValue,
       minDuration: stored.minDuration?.trim() && Number.isFinite(duration) && duration >= 0
         ? stored.minDuration : '1',
     };
@@ -76,6 +84,8 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
   const [rows, setRows] = useState<VariableRow[]>(() =>
     initial.columns.map((column, id) => ({ id, column })));
   const [ignoreZero, setIgnoreZero] = useState(initial.ignoreZero);
+  const [excludeEnabled, setExcludeEnabled] = useState(initial.excludeEnabled);
+  const [excludeValue, setExcludeValue] = useState(initial.excludeValue);
   const [minDuration, setMinDuration] = useState(initial.minDuration);
   const [candidates, setCandidates] = useState<IdCandidate[]>([]);
   const [candidateState, setCandidateState] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -100,11 +110,13 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
   const selectedColumns = rows.map((row) => row.column);
   const duration = parseFiniteNumber(minDuration);
   const validDuration = duration !== null && duration >= 0;
+  const excludedValue = parseFiniteNumber(excludeValue);
+  const validExclusion = !excludeEnabled || excludedValue !== null;
   const validColumns = rows.length > 0 && rows.length <= MAX_VARIABLES &&
     selectedColumns.every((column) => columns.includes(column)) &&
     new Set(selectedColumns).size === rows.length;
   const context = JSON.stringify([test, columns, draft, disabled]);
-  const rules = JSON.stringify([selectedColumns, ignoreZero, minDuration]);
+  const rules = JSON.stringify([selectedColumns, ignoreZero, excludeEnabled, excludeValue, minDuration]);
   const currentRef = useRef({ context, rules, disabled });
   currentRef.current = { context, rules, disabled };
   const proposal = preview?.context === context && preview.rules === rules
@@ -165,11 +177,11 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
   }, [context]);
 
   useEffect(() => {
-    if (!validColumns || !validDuration) return;
-    saveSettings(test, { columns: selectedColumns, ignoreZero, minDuration });
+    if (!validColumns || !validDuration || !validExclusion) return;
+    saveSettings(test, { columns: selectedColumns, ignoreZero, excludeEnabled, excludeValue, minDuration });
     // Serialized rules include every configurable value without unstable array dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [test, rules, validColumns, validDuration]);
+  }, [test, rules, validColumns, validDuration, validExclusion]);
 
   const invalidate = () => {
     changedByUser.current = true;
@@ -208,7 +220,7 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
 
   const runPreview = async (event: FormEvent) => {
     event.preventDefault();
-    if (!validColumns || !validDuration || duration === null || disabled || busy) return;
+    if (!validColumns || !validDuration || !validExclusion || duration === null || disabled || busy) return;
     requestRef.current?.abort();
     const controller = new AbortController();
     requestRef.current = controller;
@@ -226,6 +238,7 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
       const result = await previewAutoSplit(test, {
         columns: selectedColumns,
         ignore_zero: ignoreZero,
+        exclude_value: excludeEnabled ? excludedValue : null,
         min_len_s: duration,
       }, controller.signal);
       if (!isCurrent()) return;
@@ -336,12 +349,26 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
           </div>
 
           <div className={styles.filters}>
-            <label className={styles.checkbox}>
-              <input type="checkbox" checked={ignoreZero} disabled={disabled}
-                aria-describedby={exclusionsId}
-                onChange={(event) => { invalidate(); setIgnoreZero(event.target.checked); }} />
-              Exclude zero values
-            </label>
+            <div className={styles.exclusions}>
+              <label className={styles.checkbox}>
+                <input type="checkbox" checked={ignoreZero} disabled={disabled}
+                  aria-describedby={exclusionsId}
+                  onChange={(event) => { invalidate(); setIgnoreZero(event.target.checked); }} />
+                Exclude zero values
+              </label>
+              <div className={styles.customExclusion}>
+                <label className={styles.checkbox}>
+                  <input type="checkbox" checked={excludeEnabled} disabled={disabled}
+                    aria-describedby={exclusionsId}
+                    onChange={(event) => { invalidate(); setExcludeEnabled(event.target.checked); }} />
+                  Exclude a value
+                </label>
+                <NumericField className="input" step="any" aria-label="Value to exclude"
+                  aria-describedby={exclusionsId} placeholder="e.g. -999"
+                  value={excludeValue} disabled={disabled || !excludeEnabled}
+                  onChange={(event) => { invalidate(); setExcludeValue(event.target.value); }} />
+              </div>
+            </div>
             <div className={styles.duration}>
               <label htmlFor={durationId}>Minimum duration</label>
               <NumericField id={durationId} className="input" step="any" min="0" unit="s"
@@ -359,6 +386,7 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
           <p id={exclusionsId} className={styles.help}>
             Missing or non-finite values in any selected variable always break a run and are excluded.
             {ignoreZero && ' Any zero in a selected variable is excluded too.'}
+            {' '}The custom value excludes exact matches in any selected variable; excluded samples break runs.
             {' '}Runs shorter than the minimum duration are discarded.
             {' '}Isolated samples are excluded even when the minimum duration is zero.
             {' '}Duration is the number of samples in a run divided by the sample rate.
@@ -366,7 +394,7 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
           </details>
           <div className={styles.previewAction}>
             <button type="submit" className="btn-toggle active"
-              disabled={disabled || busy || !validColumns || !validDuration}>
+              disabled={disabled || busy || !validColumns || !validDuration || !validExclusion}>
               {busy ? 'Generating preview…' : 'Preview test points'}
             </button>
             {busy && <button type="button" className="btn" onClick={() => {
@@ -388,7 +416,7 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
           </div>
           {error && <div className={styles.error} role="alert">
             <strong>Preview failed.</strong> {error}
-            <p>Review the variables and duration, then select Preview test points to retry.</p>
+            <p>Review the variables, exclusions and duration, then select Preview test points to retry.</p>
           </div>}
           {proposal && <>
             <p className={styles.sampleSummary}>
@@ -399,6 +427,10 @@ export default function AutoSplitPanel({ test, columns, draft, disabled, onApply
             <dl className={styles.excluded} aria-label="Excluded from proposal">
               <div><dt>Missing / non-finite samples</dt><dd>{proposal.excluded.missing_samples.toLocaleString()}</dd></div>
               <div><dt>Zero-value samples</dt><dd>{proposal.excluded.zero_samples.toLocaleString()}</dd></div>
+              {proposal.exclude_value != null && proposal.excluded.value_samples !== undefined && <div>
+                <dt>Value {proposal.exclude_value} samples (after zero exclusions)</dt>
+                <dd>{proposal.excluded.value_samples.toLocaleString()}</dd>
+              </div>}
               {proposal.excluded.isolated_samples !== undefined && <div>
                 <dt>Isolated samples (no constant interval)</dt><dd>{proposal.excluded.isolated_samples.toLocaleString()}</dd>
               </div>}

@@ -1,4 +1,5 @@
 import { usePlotTheme } from '../../utils/usePlotTheme';
+import { lineAppearancePlugin } from '../../utils/uplotAppearance';
 import { plotHoverPlugin } from '../../utils/uplotHover';
 import { usePlotHoverGroup } from '../../utils/usePlotHoverGroup';
 import { sampleHoverRows } from '../../utils/plotHoverValues';
@@ -300,7 +301,7 @@ export const SpectrumPlot: React.FC<SpectrumPlotProps> = ({
       // Left-drag selects X/Y/both; manual Y survives auto-fitting and restore.
       // Wheel-zoom / shift-drag pan are client-side too (no commit target).
       cursor: { dataIdx: sortedFacetedDataIdx, drag: { x: true, y: false } },
-      plugins: [plotHoverPlugin(u => ({ heading: `${cfg.label} · ${specMode === 'welch' ? 'PSD' : 'FFT'}`,
+      plugins: [lineAppearancePlugin(), plotHoverPlugin(u => ({ heading: `${cfg.label} · ${specMode === 'welch' ? 'PSD' : 'FFT'}`,
         units: [axisMode === 'per_rev' ? 'ord' : 'Hz', `${logY ? 'log10(' : ''}${specMode === 'welch' ? 'U²/Hz' : 'U'}${logY ? ')' : ''}`],
         columns: [axisMode === 'per_rev' ? 'Order (cycles/rev)' : 'Frequency (Hz)',
           `${specMode === 'welch' ? 'PSD (U²/Hz)' : 'Magnitude (U)'}${logY ? ' · log10' : ''}`],

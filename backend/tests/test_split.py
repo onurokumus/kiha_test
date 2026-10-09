@@ -68,12 +68,13 @@ class AutoSplitTests(DataDirTestCase):
         self.assertEqual(preview["method"], "value_changes")
         self.assertEqual(preview["columns"], ["id"])
         self.assertTrue(preview["ignore_zero"])
+        self.assertIsNone(preview["exclude_value"])
         self.assertEqual(preview["min_len_s"], 1)
         self.assertEqual(preview["sample_count"], 24)
         self.assertEqual(preview["fs_hz"], 8)
         self.assertEqual(preview["excluded"], {
             "missing_samples": 0, "zero_samples": 8,
-            "isolated_samples": 0, "short_runs": 0})
+            "value_samples": 0, "isolated_samples": 0, "short_runs": 0})
 
     def test_preview_rejects_ramps_when_any_selected_variable_changes(self):
         self.make_test({
@@ -95,7 +96,7 @@ class AutoSplitTests(DataDirTestCase):
                     self.assertEqual(preview["test_points"], [])
                     self.assertEqual(preview["excluded"], {
                         "missing_samples": 0, "zero_samples": 0,
-                        "isolated_samples": 8, "short_runs": 0})
+                        "value_samples": 0, "isolated_samples": 8, "short_runs": 0})
         # The historical single-variable API keeps its original contract.
         response = client.post("/api/tests/alpha/split/auto", params={"col": "changing"})
         self.assertEqual(response.status_code, 200, response.text)
@@ -114,7 +115,7 @@ class AutoSplitTests(DataDirTestCase):
                     [(2, 6), (6, 8), (10, 14)])
                 self.assertEqual(preview["excluded"], {
                     "missing_samples": 0, "zero_samples": 0,
-                    "isolated_samples": 4, "short_runs": 0})
+                    "value_samples": 0, "isolated_samples": 4, "short_runs": 0})
 
     def test_preview_does_not_join_same_plateau_across_changing_samples(self):
         self.make_test({
@@ -127,12 +128,12 @@ class AutoSplitTests(DataDirTestCase):
             [(0, 3), (4, 7)])
         self.assertEqual(preview["excluded"], {
             "missing_samples": 0, "zero_samples": 0,
-            "isolated_samples": 4, "short_runs": 0})
+            "value_samples": 0, "isolated_samples": 4, "short_runs": 0})
         longer = split.preview_autosplit("alpha", ["id", "mode"], min_len_s=0.4)
         self.assertEqual(longer["test_points"], [])
         self.assertEqual(longer["excluded"], {
             "missing_samples": 0, "zero_samples": 0,
-            "isolated_samples": 4, "short_runs": 2})
+            "value_samples": 0, "isolated_samples": 4, "short_runs": 2})
 
     def test_preview_single_sample_does_not_establish_a_constant_period(self):
         self.make_test({"id": [1.0], "mode": [2.0]}, fs=1)
@@ -140,7 +141,7 @@ class AutoSplitTests(DataDirTestCase):
         self.assertEqual(preview["test_points"], [])
         self.assertEqual(preview["excluded"], {
             "missing_samples": 0, "zero_samples": 0,
-            "isolated_samples": 1, "short_runs": 0})
+            "value_samples": 0, "isolated_samples": 1, "short_runs": 0})
 
     def test_preview_any_changed_variable_splits_repeated_combinations(self):
         self.make_test({
@@ -166,12 +167,12 @@ class AutoSplitTests(DataDirTestCase):
                          [(0, 2), (4, 6)])
         self.assertEqual(preview["excluded"], {
             "missing_samples": 3, "zero_samples": 2,
-            "isolated_samples": 2, "short_runs": 0})
+            "value_samples": 0, "isolated_samples": 2, "short_runs": 0})
         include_zero = split.preview_autosplit(
             "alpha", ["id", "mode"], ignore_zero=False, min_len_s=0)
         self.assertEqual(include_zero["excluded"], {
             "missing_samples": 3, "zero_samples": 0,
-            "isolated_samples": 4, "short_runs": 0})
+            "value_samples": 0, "isolated_samples": 4, "short_runs": 0})
         self.assertEqual([(p["start_idx"], p["end_idx"]) for p in include_zero["test_points"]],
                          [(0, 2), (4, 6)])
 
@@ -186,7 +187,7 @@ class AutoSplitTests(DataDirTestCase):
                          ["id=0, mode=2", "id=1, mode=0"])
         self.assertEqual(preview["excluded"], {
             "missing_samples": 0, "zero_samples": 0,
-            "isolated_samples": 0, "short_runs": 0})
+            "value_samples": 0, "isolated_samples": 0, "short_runs": 0})
 
     def test_preview_exact_minimum_in_late_run_and_nonzero_origin(self):
         self.make_test({"id": [0.0] * 100_003 + [1.0] * 10 + [2.0] * 9}, t_start=8123.4)
@@ -197,6 +198,139 @@ class AutoSplitTests(DataDirTestCase):
         self.assertEqual((point["start_idx"], point["end_idx"]), (100_003, 100_013))
         self.assertEqual(round((point["start_s"] - 8123.4) * 10), 100_003)
         self.assertEqual(round((point["end_s"] - 8123.4) * 10), 100_013)
+
+    def test_preview_excludes_signed_decimal_value_in_any_selected_variable(self):
+        self.make_test({
+            "id": [1.0] * 2 + [-999.5] * 2 + [1.0] * 6,
+            "mode": [2.0] * 6 + [-999.5] * 2 + [2.0] * 2,
+        })
+        for columns in (["id", "mode"], ["mode", "id"]):
+            with self.subTest(columns=columns):
+                preview = split.preview_autosplit(
+                    "alpha", columns, min_len_s=0.2, exclude_value=-999.5)
+                points = preview["test_points"]
+                self.assertEqual([(p["start_idx"], p["end_idx"]) for p in points],
+                                 [(0, 2), (4, 6), (8, 10)])
+                self.assertEqual([p["id"] for p in points], [1, 2, 3])
+                self.assertEqual(preview["exclude_value"], -999.5)
+                self.assertEqual(preview["excluded"], {
+                    "missing_samples": 0, "zero_samples": 0, "value_samples": 4,
+                    "isolated_samples": 0, "short_runs": 0})
+        # An unrelated variable cannot exclude a sample.
+        single = split.preview_autosplit(
+            "alpha", ["id"], min_len_s=0.2, exclude_value=-999.5)
+        self.assertEqual([(p["start_idx"], p["end_idx"]) for p in single["test_points"]],
+                         [(0, 2), (4, 10)])
+        self.assertEqual(single["excluded"]["value_samples"], 2)
+
+    def test_preview_custom_exclusion_compares_exactly_and_preserves_boundaries(self):
+        excluded = 1.25
+        adjacent = np.nextafter(excluded, np.inf)
+        times = [51.2345678901 + i * 0.1 for i in range(8)]
+        self.make_test({"id": [excluded] * 2 + [adjacent] * 2 +
+                       [excluded] * 2 + [adjacent] * 2},
+                       times=times, t_start=times[0])
+        preview = split.preview_autosplit(
+            "alpha", ["id"], min_len_s=0.2, exclude_value=excluded)
+        points = preview["test_points"]
+        self.assertEqual([(p["start_idx"], p["end_idx"]) for p in points],
+                         [(2, 4), (6, 8)])
+        self.assertEqual([(p["start_s"], p["end_s"]) for p in points],
+                         [(times[2], times[4]), (times[6], times[-1] + 0.1)])
+        self.assertEqual(preview["excluded"]["value_samples"], 4)
+        too_short = split.preview_autosplit(
+            "alpha", ["id"], min_len_s=0.3, exclude_value=excluded)
+        self.assertEqual(too_short["test_points"], [])
+        self.assertEqual(too_short["excluded"]["short_runs"], 2)
+        self.assertEqual(too_short["excluded"]["value_samples"], 4)
+
+    def test_preview_missing_zero_and_custom_exclusions_have_disjoint_counts(self):
+        self.make_test({
+            "id": [np.nan, 0.0, -7.0, -7.0, 1.0, 1.0, 3.0, 4.0, 4.0],
+            "mode": [-7.0, -7.0, 0.0, -7.0, 2.0, 2.0, 2.0, 2.0, 2.0],
+        })
+        preview = split.preview_autosplit(
+            "alpha", ["id", "mode"], min_len_s=0.3, exclude_value=-7)
+        self.assertEqual(preview["test_points"], [])
+        self.assertEqual(preview["excluded"], {
+            "missing_samples": 1, "zero_samples": 2, "value_samples": 1,
+            "isolated_samples": 1, "short_runs": 2})
+        including_zero = split.preview_autosplit(
+            "alpha", ["id", "mode"], ignore_zero=False,
+            min_len_s=0.3, exclude_value=-7)
+        self.assertEqual(including_zero["excluded"], {
+            "missing_samples": 1, "zero_samples": 0, "value_samples": 3,
+            "isolated_samples": 1, "short_runs": 2})
+
+    def test_preview_custom_zero_is_independent_of_ignore_zero(self):
+        self.make_test({"id": [0.0, -0.0, 1.0, 1.0, -0.0, 0.0]})
+        for ignore_zero, zero_count, value_count in ((True, 4, 0), (False, 0, 4)):
+            with self.subTest(ignore_zero=ignore_zero):
+                preview = split.preview_autosplit(
+                    "alpha", ["id"], ignore_zero=ignore_zero,
+                    min_len_s=0, exclude_value=-0.0)
+                self.assertEqual([(p["start_idx"], p["end_idx"])
+                                  for p in preview["test_points"]], [(2, 4)])
+                self.assertEqual(preview["excluded"], {
+                    "missing_samples": 0, "zero_samples": zero_count,
+                    "value_samples": value_count, "isolated_samples": 0,
+                    "short_runs": 0})
+
+    def test_preview_custom_value_can_exclude_every_sample(self):
+        self.make_test({"id": [7.5] * 4})
+        preview = split.preview_autosplit("alpha", ["id"], exclude_value=7.5)
+        self.assertEqual(preview["test_points"], [])
+        self.assertEqual(preview["excluded"], {
+            "missing_samples": 0, "zero_samples": 0, "value_samples": 4,
+            "isolated_samples": 0, "short_runs": 0})
+
+    def test_preview_rejects_invalid_native_custom_exclusion(self):
+        # Validation must fail even before a source is read.
+        for value in (True, False, np.bool_(True), "1", "", "nan", [], {},
+                      1j, float("nan"), float("inf"), -float("inf"), 10 ** 1000):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "exclude_value.*finite number"):
+                    split.preview_autosplit("missing", ["id"], exclude_value=value)
+
+    def test_preview_api_custom_value_is_optional_and_never_writes(self):
+        self.make_test({"id": [-2.5] * 2 + [0.0] * 2 + [-2.5] * 2 + [3.0] * 2})
+        directory = self.tests / "alpha"
+        store.write_json_atomic(directory / "testpoints.json", {"test_points": [{"id": 93}]})
+        before = {p.name: p.read_bytes() for p in directory.iterdir()}
+        client = TestClient(main.app)
+        payload = {"columns": ["id"], "min_len_s": 0, "ignore_zero": False}
+        omitted = client.post("/api/tests/alpha/split/preview", json=payload)
+        explicit_null = client.post("/api/tests/alpha/split/preview", json={
+            **payload, "exclude_value": None})
+        self.assertEqual(omitted.status_code, 200, omitted.text)
+        self.assertEqual(explicit_null.status_code, 200, explicit_null.text)
+        self.assertEqual(omitted.json(), explicit_null.json())
+        self.assertIsNone(omitted.json()["exclude_value"])
+        self.assertEqual(omitted.json()["excluded"]["value_samples"], 0)
+        custom = client.post("/api/tests/alpha/split/preview", json={
+            **payload, "exclude_value": -2.5})
+        self.assertEqual(custom.status_code, 200, custom.text)
+        result = custom.json()
+        self.assertEqual(result["exclude_value"], -2.5)
+        self.assertEqual(result["excluded"]["value_samples"], 4)
+        self.assertEqual([(p["start_idx"], p["end_idx"]) for p in result["test_points"]],
+                         [(2, 4), (6, 8)])
+        integer_value = client.post("/api/tests/alpha/split/preview", json={
+            **payload, "exclude_value": 3})
+        self.assertEqual(integer_value.status_code, 200, integer_value.text)
+        self.assertEqual(integer_value.json()["exclude_value"], 3)
+        self.assertEqual(integer_value.json()["excluded"]["value_samples"], 2)
+        self.assertEqual({p.name: p.read_bytes() for p in directory.iterdir()}, before)
+
+    def test_preview_api_rejects_nonfinite_numeric_exclusion_before_reading(self):
+        client = TestClient(main.app)
+        for value in ("NaN", "Infinity", "-Infinity", "1e309"):
+            with self.subTest(value=value):
+                response = client.post("/api/tests/missing/split/preview",
+                    content='{"columns":["id"],"exclude_value":' + value + '}',
+                    headers={"Content-Type": "application/json"})
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertIn("finite number", response.json()["detail"])
 
     def test_preview_preserves_native_indices_and_raw_jittered_boundaries(self):
         times = [51.2345678901, 51.3361234567, 51.4323456789, 51.5356789012]
@@ -223,7 +357,7 @@ class AutoSplitTests(DataDirTestCase):
         self.assertEqual(preview["test_points"], [])
         self.assertEqual(preview["excluded"], {
             "missing_samples": 2, "zero_samples": 1,
-            "isolated_samples": 0, "short_runs": 0})
+            "value_samples": 0, "isolated_samples": 0, "short_runs": 0})
 
     def test_preview_api_is_structured_and_never_writes(self):
         self.make_test({"mode, rig": [1.0] * 10, "id": [2.0] * 10})
@@ -250,6 +384,8 @@ class AutoSplitTests(DataDirTestCase):
             ({"columns": ["id"], "extra": 1}, 422),
             *[({"columns": ["id"], "min_len_s": v}, 422)
               for v in ("nan", "inf", "-inf", -1)],
+            *[({"columns": ["id"], "exclude_value": v}, 422)
+              for v in (True, False, "1", "", "nan", "inf", "-inf", [], {})],
         ]:
             with self.subTest(payload=payload):
                 response = client.post("/api/tests/alpha/split/preview", json=payload)

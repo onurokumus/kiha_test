@@ -1,5 +1,59 @@
 # TODO
 
+The user-requested combined Git checkpoint (2026-10-09) includes all completed
+preprocessing, bulk-selection, plot-appearance and auto-split changes below.
+Their verification is recorded in the linked reports; next remains Phase 11b.
+
+## Requested auto-split custom value exclusion (2026-10-09)
+
+- [x] Add an optional "Exclude a value" numeric control beside "Exclude zero values" in Split auto-split. Exclude exact matches in any selected variable, preserve the independent zero option and run gaps, remember settings, invalidate changed previews, and verify native results plus desktop keyboard/resize/zoom. This explicit request takes priority over independent Phase 11b; concurrent preprocessing work is preserved.
+
+Complete: build/lint, 13 Split/export/Y-range helpers, 33 focused backend tests
+and the full 532-test backend suite pass. Seven new and nine existing native
+browser groups verify exact matching, invalid/stale drafts, saved preferences,
+Apply/Save/CSV, both themes and actual 125/150% zoom. Original source samples
+remain unchanged. See docs/MULTI_VARIABLE_AUTOSPLIT_VERIFICATION.md.
+
+## Requested plot appearance controls (2026-10-09)
+
+- [x] Simplify appearance options to compact Line/Scatter text fields and a reset icon, removing repeated headings, previews and explanatory copy. Narrow appearance-only popovers while keeping other analysis controls usable. Build/lint and six focused browser groups pass: light/dark 100/150% desktop layouts, keyboard/reset/validation, and retained Full/Spectrum options. See docs/PLOT_APPEARANCE_VERIFICATION.md.
+
+- [x] Replace the line-thickness and scatter-size sliders with percentage text inputs, including decimal values, validation, saved settings and reset. Build/lint, 13 focused helpers and six native browser groups pass: exact decimal sizes, invalid/empty drafts, keyboard/blur/Enter/Escape, persistence/reset, retained line/XY geometry and both themes at compact 150% zoom with maximize/restore. See docs/PLOT_APPEARANCE_VERIFICATION.md.
+
+- [x] Add shared line-thickness and scatter-size controls to plot Options, preserving existing default sizes and original/filtered emphasis. Apply immediately without changing axes, data or selection; remember browser preferences and provide a reset. Verify line/XY/overview rendering, PNG parity, keyboard use, desktop resizing/zoom and reload. This explicit request takes priority over independent Phase 11b; concurrent upload preprocessing remains separate.
+
+Complete initial controls: Options > Appearance exposes 50–300% sizes and Reset appearance in
+every analysis mode. Settings persist independently of analysis/source state;
+line/XY updates retain live plots, axes and data. Overview animation and PNG
+snapshots preserve the chosen marker sizes. Build/lint, 133 frontend helpers,
+16 final focused helpers and 21 native browser groups pass, including both
+themes, 1/4/9/maximized views and actual 100/125/150% zoom. See
+docs/PLOT_APPEARANCE_VERIFICATION.md. Next independent milestone remains Phase 11b.
+
+## Requested upload preprocessing (2026-10-09)
+
+- [x] Add styled parameter multi-selection, Select all/visible, and an explicit Apply filter to selected action. Preserve independent per-parameter settings, protect time, show hidden selection scope, and verify keyboard, desktop themes/zoom and exact saved recipes. User-requested follow-up ahead of independent Phase 11b.
+
+Bulk follow-up complete: styled row checkboxes, selected/hidden counts and
+Apply/Remove controls share a separate draft, with Save guarded until it is
+applied or discarded. Build/lint, ten preprocessing helpers and nine isolated
+browser groups pass, covering independent edits, special column names, exact
+saved recipes, keyboard focus, both themes and actual 100/125/150% zoom. Source
+fixtures remain unchanged; no backend changes. See docs/PREPROCESSING.md.
+
+- [x] Add Pre-process to each ready uploaded test with a styled per-parameter filter dialog, native full-recording processing, separately saved original/filtered tests, saved settings/provenance and explicit downloads. Plot filters remain independent additional processing. Cover validation, background completion/failure, unchanged sources, downstream analysis/exports, desktop resizing/zoom and keyboard access. This explicit request takes priority over independent Phase 11b.
+
+Complete. Filtered results are separately named test copies;
+existing source tests remain unchanged and all native analysis paths can read
+either copy. Preprocessed copies expose their saved recipe; processing starts
+from an unprocessed source to avoid accidental repeated smoothing.
+Build/lint, 133 current frontend helpers, 531 backend tests/511 subtests and 16
+isolated native browser groups pass, including numeric parity, original hashes,
+gap handling, failed-job/lost-response recovery, layered plot filters, downloads,
+keyboard and both themes at real 100/125/150% zoom. Component totals exclude
+duplicate analysis copies. See docs/PREPROCESSING.md. Existing backend restart
+is required to load new routes; user datasets and running servers were untouched.
+
 The flight comparison and toolbar refinements below are included in the
 user-requested complete Git checkpoint (2026-10-09) on
 codex/ptt-ui-rework-2026-09-28. Next independent milestone: Phase 11b.

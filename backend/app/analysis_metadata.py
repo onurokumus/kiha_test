@@ -97,6 +97,7 @@ def source_context(name, meta, columns, i0, i1, *, tp_id=None, t0=None, t1=None)
                    'component_sets_status': component_sets_status,
                    'component_sets_revision': meta.get('component_sets_revision', 0),
                    'edited_at': meta.get('edited_at'),
+                   'preprocessing': meta.get('preprocessing'),
                    'time_column': meta['time_column'], 'fs_hz': meta.get('fs_hz'),
                    'n_rows': meta.get('n_rows'), 'stored_t_start_s': meta.get('t_start'),
                    'duration_s': meta.get('duration_s'),

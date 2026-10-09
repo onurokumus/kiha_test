@@ -1,0 +1,9 @@
+.section { flex: 1 0 100%; min-width: 0; border-top: 1px solid var(--border-subtle, #e8ecf3); padding-top: 10px; }
+.section:first-child { border-top: 0; padding-top: 0; }
+.controls { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; }
+.control { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 11px; }
+.reset { display: grid; place-items: center; width: 28px; height: 32px; flex: none; border: 0; border-radius: 4px; padding: 5px; background: transparent; color: var(--muted, #626f83); cursor: pointer; }
+.reset svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.reset:hover:not(:disabled) { color: var(--accent, #405994); background: var(--hover-bg, #f0f3f9); }
+.reset:disabled { color: var(--subtle, #929bab); opacity: .5; cursor: default; }
+.reset:focus-visible { outline: 2px solid var(--focus, #7284c3); outline-offset: 1px; }

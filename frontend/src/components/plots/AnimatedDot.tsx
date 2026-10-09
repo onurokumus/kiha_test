@@ -12,6 +12,7 @@ interface AnimatedDotProps {
   onToggle: (event: React.MouseEvent) => void;
   isHighlighted?: boolean;
   onPointHover?: () => void;
+  pointScale: number;
 }
 
 const AnimatedDotComponent: React.FC<AnimatedDotProps> = ({
@@ -20,11 +21,11 @@ const AnimatedDotComponent: React.FC<AnimatedDotProps> = ({
   payload,
   onToggle,
   isHighlighted = false,
-  onPointHover
+  onPointHover,
+  pointScale,
 }) => {
   const theme = useTheme();
   const [displayColor, setDisplayColor] = useState(payload.color);
-  const [displayR, setDisplayR] = useState(payload.isSelected ? 8 : 6);
   const [displayStroke, setDisplayStroke] = useState(payload.isSelected ? payload.color : 'transparent');
   const [isHovered, setIsHovered] = useState(false);
   const color = themeSeriesColor(displayColor, theme === 'dark');
@@ -33,14 +34,13 @@ const AnimatedDotComponent: React.FC<AnimatedDotProps> = ({
   useEffect(() => {
     const timeout = setTimeout(() => {
       setDisplayColor(payload.color);
-      setDisplayR(payload.isSelected ? 8 : 6);
       setDisplayStroke(payload.isSelected ? payload.color : 'transparent');
     }, 10);
     return () => clearTimeout(timeout);
   }, [payload.color, payload.isSelected]);
 
   // Calculate hover effects
-  const baseRadius = payload.isSelected ? 8 : 6;
+  const baseRadius = (payload.isSelected ? 8 : 6) * pointScale;
   const shouldShowEffects = isHovered || isHighlighted;
   const hoverRadius = shouldShowEffects ? baseRadius * 1.4 : baseRadius;
   const glowRadius = hoverRadius + 6;
@@ -97,15 +97,16 @@ const AnimatedDotComponent: React.FC<AnimatedDotProps> = ({
       <circle
         cx={cx}
         cy={cy}
-        r={displayR}
+        r={hoverRadius}
         fill={color}
         stroke={stroke}
         data-export-fill={displayColor}
         data-export-stroke={displayStroke}
+        data-export-radius={baseRadius}
         strokeWidth={2}
         style={{
           cursor: 'pointer',
-          transition: 'fill 0.3s ease, stroke 0.3s ease',
+          transition: 'r 0.2s ease, fill 0.3s ease, stroke 0.3s ease',
           filter: shouldShowEffects ? 'brightness(1.3) drop-shadow(0 0 4px currentColor)' : 'none',
         }}
         onMouseDown={(e) => {
@@ -120,9 +121,7 @@ const AnimatedDotComponent: React.FC<AnimatedDotProps> = ({
           onPointHover?.();
         }}
         onMouseLeave={() => setIsHovered(false)}
-      >
-        <animate attributeName="r" to={hoverRadius.toString()} dur="0.2s" fill="freeze" />
-      </circle>
+      />
 
       {/* Inner highlight - only visible on hover or highlight */}
       {shouldShowEffects && (
@@ -150,6 +149,7 @@ const arePropsEqual = (prev: AnimatedDotProps, next: AnimatedDotProps) => {
     prev.payload.color === next.payload.color &&
     prev.payload.isSelected === next.payload.isSelected &&
     prev.isHighlighted === next.isHighlighted &&
+    prev.pointScale === next.pointScale &&
     // Coincident points can reuse a Recharts symbol after filtering. Keep
     // handlers current even when the replacement has identical geometry.
     prev.onToggle === next.onToggle &&

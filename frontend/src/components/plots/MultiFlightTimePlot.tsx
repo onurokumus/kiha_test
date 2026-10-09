@@ -14,6 +14,7 @@ import { visibleYAutoFitPlugin, visibleYRange } from '../../utils/visibleYRange'
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
 import { xRangeHighlightsPlugin } from '../../utils/uplotRangeHighlights';
 import { usePlotTheme } from '../../utils/usePlotTheme';
+import { lineAppearancePlugin } from '../../utils/uplotAppearance';
 import { usePlotHoverGroup } from '../../utils/usePlotHoverGroup';
 import { plotHoverPlugin } from '../../utils/uplotHover';
 import { sampleHoverRows } from '../../utils/plotHoverValues';
@@ -201,7 +202,7 @@ export function MultiFlightTimePlot({ fullFlights, timeBasis = 'elapsed', cfg, a
       axes: [{ ...TIME_AXIS_STYLE, label: timeAxisLabel }, { ...AXIS_STYLE }], legend: { show: isExpanded, live: true },
       cursor: { dataIdx: sortedFacetedDataIdx, drag: { x: true, y: false },
         points: { size: 6 }, sync: { key: FULL_SYNC_KEY, scales: ['x', null] } },
-      plugins: [plotHoverPlugin(u => ({ heading: 'Full flights', columns: [timeAxisLabel, 'Value'], units: ['s', ''],
+      plugins: [lineAppearancePlugin(), plotHoverPlugin(u => ({ heading: 'Full flights', columns: [timeAxisLabel, 'Value'], units: ['s', ''],
         rows: sampleHoverRows(u, true) }), hoverGroup, timeBasis === 'elapsed' ? 'time:elapsed-flight' : 'time:absolute'),
         visibleYAutoFitPlugin(() => yRangeRef.current != null), xRangeHighlightsPlugin(() => highlightsRef.current),
         xPanZoomPlugin(value => handlersRef.current.onRangeChange(value), value => {

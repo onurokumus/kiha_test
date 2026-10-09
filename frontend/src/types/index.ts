@@ -1,9 +1,12 @@
 // Domain types for the PTT frontend. Everything is schema-flexible: column
 // names come from each test's meta.json — nothing here hardcodes variables.
 import type { ComponentIds, ComponentSet } from '../utils/components';
+import type { PreprocessingProgress, PreprocessingProvenance } from '../services/preprocessing';
 
 /** One row of GET /api/tests */
 export interface TestInfo {
+  preprocessing?: PreprocessingProvenance | null;
+  preprocessing_progress?: PreprocessingProgress | null;
   component_sets?: ComponentSet[];
   components?: ComponentIds | null;
   description?: string;
@@ -93,6 +96,7 @@ export interface UploadItem {
 
 /** meta.json — GET /api/tests/{name} */
 export interface TestMeta {
+  preprocessing?: PreprocessingProvenance | null;
   component_sets?: ComponentSet[];
   component_sets_revision?: number;
   component_rpm_column?: string | null;
@@ -552,6 +556,8 @@ export interface IdCandidate {
 export interface AutoSplitOptions {
   columns: string[];
   ignore_zero: boolean;
+  /** Exact value excluded in any selected variable; omitted/null disables it. */
+  exclude_value?: number | null;
   min_len_s: number;
 }
 
@@ -563,6 +569,8 @@ export interface AutoSplitProposal extends AutoSplitOptions {
   excluded: {
     missing_samples: number;
     zero_samples: number;
+    /** Counted after missing and zero exclusions; absent in older responses. */
+    value_samples?: number;
     /** Absent in older preview responses. Single samples cannot prove constancy. */
     isolated_samples?: number;
     short_runs: number;

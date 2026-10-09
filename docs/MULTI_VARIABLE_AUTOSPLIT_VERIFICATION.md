@@ -1,5 +1,69 @@
 # Multi-variable auto-split verification
 
+## Custom value exclusion (2026-10-09)
+
+Auto-split now has an optional **Exclude a value** checkbox and numeric field
+beside **Exclude zero values**. It accepts any finite signed decimal or scientific
+notation. An exact match in any selected variable excludes that sample's run;
+retained intervals on either side remain separate. The zero checkbox is
+independent. Missing, zero, custom-value and isolated-sample counts are disjoint
+in that order; minimum duration still applies to remaining constant runs.
+
+The structured preview request accepts optional `exclude_value: number | null`.
+Omission/null preserves prior behavior. The response echoes the option and adds
+`excluded.value_samples`. The native helper and API reject invalid values;
+non-finite JSON numbers return 422 without entering the split calculation.
+The legacy single-variable `/split/auto` endpoint is unchanged.
+
+Per-test browser preferences retain the checkbox and entered value. Older
+preferences start with the new option disabled. Invalid active input blocks
+Preview; changing either the checkbox or value invalidates a displayed or
+pending proposal. Apply changes only the unsaved draft; Save and CSV reuse
+the existing native half-open row boundaries.
+
+Verification:
+
+- Frontend production build and lint pass; 13 Split export/preferences/Y-range
+  helper tests pass. Existing Vite bundle-size advisory remains.
+- Focused backend suite: 33 tests / 67 subtests pass, including exact near-match
+  distinctions, signed decimals, multiple variables, missing/zero overlaps,
+  signed zero, all-excluded data, minimum duration, gaps, legacy/null defaults,
+  read-only preview and invalid JSON numbers.
+- Full backend suite: 532 tests / 515 subtests pass; one existing dependency
+  deprecation remains.
+- New isolated browser suite: seven groups pass for keyboard input, invalid
+  drafts, exponent input, independent zero options, stale responses, per-test
+  preferences/reload/legacy settings, Apply/Save/native CSV, both themes,
+  1100px desktop width and actual 125%/150% browser zoom. Ten source files
+  remain unchanged; no page or console errors.
+- Existing multi-variable auto-split suite: all nine groups pass, including
+  unchanged constant-interval semantics and ten draft/saved CSV downloads.
+  The verifier now waits for the test editor to be enabled before keyboard
+  opening, and accepts the additive custom count. Fifteen source files remain
+  unchanged. Its two intentionally injected 503 failures recover as expected.
+- Independent scoped code review found no issues. Native/backend/browser checks
+  use temporary data and owned servers; user datasets and existing servers are
+  untouched. Windows sandbox access errors required approved native execution.
+
+Commands from the repository root (frontend commands from `frontend/`):
+
+```powershell
+backend\.venv\Scripts\python.exe -m pytest backend\tests\test_split.py -q -p no:cacheprovider --tb=short
+backend\.venv\Scripts\python.exe -m pytest backend\tests -q -p no:cacheprovider --tb=short
+npm run build
+npm run lint
+node --test tests/testPointExport.test.mjs tests/splitPlotPreferences.test.mjs tests/visibleYRange.test.mjs
+python -B -X utf8 scripts/verify_autosplit_excluded_value.py --frontend-port 3352 --backend-port 8352
+python -B -X utf8 scripts/verify_multi_variable_autosplit.py --frontend-port 3348 --backend-port 8348
+```
+
+Evidence: ignored `data/verification/autosplit-excluded-value/results.json`,
+six `exclusion-*.png` captures, and matching `draft-tp1.csv` / `saved-tp1.csv`;
+the earlier suite writes `data/verification/multi-variable-autosplit/results.json`.
+The browser harness explicitly selects the intended test after reload so
+auto-split preference assertions do not depend on the separate active-test
+autosave debounce. All owned servers/profiles/fixtures are cleaned up.
+
 Date: 2026-09-11. Scope: reviewable proposals for intervals where every selected
 ID/state variable is constant together, then explicitly applying the proposal
 to the current TP draft and saving through the existing workflow.

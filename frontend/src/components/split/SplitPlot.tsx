@@ -1,4 +1,5 @@
 import { usePlotTheme } from '../../utils/usePlotTheme';
+import { lineAppearancePlugin } from '../../utils/uplotAppearance';
 import { plotSeriesColor } from '../../constants/uplotTheme';
 import { xPanZoomPlugin } from '../../utils/uplotPanZoom';
 import { AxisRange } from '../../utils/timePlotRanges';
@@ -209,7 +210,7 @@ export default function SplitPlot(props: Props) {
             filters: { pub: (type) => type === 'mousemove', sub: (type) => type === 'mousemove' },
           },
         },
-        plugins: [xPanZoomPlugin(r => {
+        plugins: [lineAppearancePlugin(), xPanZoomPlugin(r => {
           const context = contextRef.current;
           if (context.ready && context.requestKey === requestKey) context.onRangeChange(r);
         }, r => { yRangeRef.current = r; }, undefined, false, 'scroll')],

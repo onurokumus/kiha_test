@@ -350,7 +350,9 @@ def statistics():
                             row['warnings'].append('Uses current edited signal values, including filled values outside acquisition gaps.')
                         if any(cid and known.get(cid) != kind for kind, cid in row['component_ids'].items()):
                             row['warnings'].append('An assigned component is unavailable; its contribution is not reassigned.')
-                        if index in ambiguous:
+                        if meta.get('preprocessing') is not None:
+                            row['issue'] = 'Pre-processed analysis copy; physical component use is counted only from the original test.'
+                        elif index in ambiguous:
                             row['issue'] = 'Duplicate set ID or component assignment within this test; repair these sets before counting them.'
                         elif not any(row['component_ids'].values()):
                             row['issue'] = 'No components assigned.'

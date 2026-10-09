@@ -148,15 +148,20 @@ function snapshotSvg(source: SVGSVGElement): SVGSVGElement {
     const dot = group.querySelector<SVGCircleElement>('circle[fill]:not([fill="none"])');
     if (!dot) return;
     // The first filled circle is the real point. Other circles are transient
-    // hover rings/highlights; its base r attribute retains selection sizing.
+    // hover rings/highlights. Use the stable base radius rather than a transient
+    // hover enlargement, retaining the requested marker and selection sizes.
     group.querySelectorAll('circle').forEach(circle => { if (circle !== dot) circle.remove(); });
+    const radius = Number(dot.getAttribute('data-export-radius'));
+    if (Number.isFinite(radius) && radius > 0) dot.setAttribute('r', String(radius));
     dot.style.filter = 'none';
   });
   clone.querySelectorAll<SVGGElement>('[data-scatter-hover-target="cluster"]').forEach(group => {
     const dot = group.querySelector('circle');
     const count = Number(group.querySelector('text')?.textContent);
     if (!dot || !Number.isFinite(count) || count < 2) return;
-    dot.setAttribute('r', String(Math.min(10 + Math.log10(count) * 5, 20)));
+    const radius = Number(dot.getAttribute('data-export-radius'));
+    dot.setAttribute('r', String(Number.isFinite(radius) && radius > 0
+      ? radius : Math.min(10 + Math.log10(count) * 5, 20)));
     dot.style.setProperty('fill', '#2e5c8a');
     dot.style.setProperty('stroke', '#f7f8fa');
     dot.style.setProperty('stroke-width', '1');

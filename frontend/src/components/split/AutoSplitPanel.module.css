@@ -125,8 +125,30 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
+  margin-top: 10px;
+}
+
+.exclusions {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px 18px;
+}
+
+.customExclusion {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.exclusions .checkbox {
+  min-height: 30px;
+}
+
+.customExclusion > span {
+  width: 110px;
 }
 
 .checkbox,
@@ -141,9 +163,13 @@
   accent-color: var(--accent-solid, #263685);
 }
 
-.duration input {
+.duration > span {
   width: 83px;
   min-width: 0;
+}
+
+.duration label {
+  white-space: nowrap;
 }
 
 .help,

@@ -12,10 +12,13 @@ interface FilterRowProps {
   fs: number | null;
   /** Tooltip on the kind dropdown, e.g. scope of what it applies to. */
   title?: string;
+  /** The same controls also configure durable upload preprocessing. */
+  clearTitle?: string;
 }
 
 /** Labelled DSP controls laid out for the on-demand plot filter dialog. */
-export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title }) => {
+export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title,
+  clearTitle = "Turn off this plot's filter and reset its settings" }) => {
   const windowMs = parseFiniteNumber(ui.despikeWindowMs);
   const maxSpikeMs = parseFiniteNumber(ui.maxSpikeMs);
   const f1 = parseFiniteNumber(ui.f1);
@@ -213,7 +216,7 @@ export const FilterRow: React.FC<FilterRowProps> = ({ ui, onChange, fs, title })
           type="button"
           className={styles.clearButton}
           onClick={() => onChange({ ...DEFAULT_FILTER_UI })}
-          title="Turn off this plot's filter and reset its settings"
+          title={clearTitle}
         >
           Clear
         </button>

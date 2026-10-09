@@ -14,6 +14,7 @@ import { TestSelect } from './TestSelect';
 import { FlightSelectionTray } from './FlightSelection';
 import type { FullFlightComparison } from '../../utils/fullFlightComparison';
 import { AnalysisOptionsPopover } from './AnalysisOptionsPopover';
+import { PlotAppearanceControls } from './PlotAppearanceControls';
 import type { PlotHoverMode } from '../../utils/plotHoverGroup';
 import styles from './SelectedPointsPanel.module.css';
 
@@ -204,7 +205,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
     ? specMode === 'waterfall'
       ? `${waterfallResolution === null ? `${waterfallWindow} samples` : `${waterfallResolution} Hz`} · ${waterfallBand === 'low' ? '0–200 Hz' : 'Full band'}${specLogY ? ' · Log color' : ''}`
       : `${specXAxis === 'hz' ? 'Hz' : 'Per rev'} · ${specLogY ? 'Log scale' : 'Linear'}${specXAxis === 'per_rev' && !specRpmCol ? ' · Choose RPM' : ''}`
-    : FULL_PLOT_MODES.find(mode => mode.value === fullPlotMode)?.label;
+    : viewMode === 'full' ? FULL_PLOT_MODES.find(mode => mode.value === fullPlotMode)?.label : undefined;
 
   return (
     <section className={styles.deck} aria-label="Analysis controls">
@@ -289,7 +290,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
               ))}
             </div>
             <AnalysisOptionsPopover contextKey={`${activeView}-${activeSource}-${specMode}`}
-              available={activeView === 'spectrum' || viewMode === 'full'} summary={optionsSummary}>
+              available compact={activeView !== 'spectrum' && viewMode !== 'full'} summary={optionsSummary}>
                 {viewMode === 'full' && (
                   <div className={styles.contextControl}>
                     <span className={styles.utilityLabel}>Trace</span>
@@ -402,6 +403,7 @@ export const SelectedPointsPanel: React.FC<SelectedPointsPanelProps> = ({
                     </button>
                   </>
                 )}
+                <PlotAppearanceControls />
             </AnalysisOptionsPopover>
         <div className={styles.toolGroup} aria-label="Plot tools">
           <span ref={detailTargetRef} className={styles.displayDetailTarget} />

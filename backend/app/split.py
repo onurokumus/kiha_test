@@ -1,5 +1,7 @@
 """Auto-split helpers: ID candidates and native-sample value-change proposals."""
 
+from numbers import Real
+
 import numpy as np
 import polars as pl
 
@@ -105,12 +107,13 @@ def autosplit(name: str, col: str, ignore_zero: bool = True,
 
 
 def preview_autosplit(name: str, columns: list[str], ignore_zero: bool = True,
-                      min_len_s: float = 1.0) -> dict:
+                      min_len_s: float = 1.0, exclude_value: float | None = None) -> dict:
     """Preview intervals where ALL selected values stay constant together.
 
     Read only selected native columns. Missing values break runs; valid tuples
     on either side never join. Exclusion sample counts are disjoint: missing
-    first, then zero, then isolated samples (no unchanged adjacent tuple).
+    first, then zero, then the custom value, then isolated samples (no
+    unchanged adjacent tuple). Any selected variable can exclude a sample.
     A short run counts only after those exclusions. No writes,
     downsampling, tolerance, value rounding, or silent proposal truncation.
     The caller holds data_read so metadata and samples belong to one read.
@@ -123,6 +126,15 @@ def preview_autosplit(name: str, columns: list[str], ignore_zero: bool = True,
         raise ValueError("select each variable only once")
     if not np.isfinite(min_len_s) or min_len_s < 0:
         raise ValueError("min_len_s must be a finite value >= 0")
+    if exclude_value is not None:
+        if isinstance(exclude_value, bool) or not isinstance(exclude_value, Real):
+            raise ValueError("exclude_value must be a finite number or null")
+        try:
+            exclude_value = float(exclude_value)
+        except (OverflowError, ValueError):
+            raise ValueError("exclude_value must be a finite number or null") from None
+        if not np.isfinite(exclude_value):
+            raise ValueError("exclude_value must be a finite number or null")
     meta = get_meta(name)
     if meta is None:
         raise FileNotFoundError(name)
@@ -153,9 +165,10 @@ def preview_autosplit(name: str, columns: list[str], ignore_zero: bool = True,
     proposal = {
         "method": "value_changes", "columns": list(columns),
         "ignore_zero": ignore_zero, "min_len_s": min_len_s,
+        "exclude_value": exclude_value,
         "sample_count": n_rows, "fs_hz": fs, "test_points": [],
         "excluded": {"missing_samples": 0, "zero_samples": 0,
-                     "isolated_samples": 0, "short_runs": 0},
+                     "value_samples": 0, "isolated_samples": 0, "short_runs": 0},
     }
     if n_rows == 0:
         return proposal
@@ -163,15 +176,18 @@ def preview_autosplit(name: str, columns: list[str], ignore_zero: bool = True,
     changed = np.zeros(n_rows - 1, dtype=bool)
     finite = np.ones(n_rows, dtype=bool)
     zero = np.zeros(n_rows, dtype=bool)
+    custom_value = np.zeros(n_rows, dtype=bool)
     for value in values:
         finite &= np.isfinite(value)
         if ignore_zero:
             zero |= value == 0
+        if exclude_value is not None:
+            custom_value |= value == exclude_value
         prev, curr = value[:-1], value[1:]
         changed |= (curr != prev) & ~(np.isnan(curr) & np.isnan(prev))
     starts = np.concatenate([[0], np.flatnonzero(changed) + 1])
     ends = np.concatenate([starts[1:], [n_rows]])
-    eligible = finite[starts] & ~zero[starts]
+    eligible = finite[starts] & ~zero[starts] & ~custom_value[starts]
     # A single sample cannot establish constancy over time. Without this
     # condition, a ramp becomes one TP per sample whenever min_len_s <= 1/fs,
     # even if another selected variable stays flat for the entire test.
@@ -187,6 +203,7 @@ def preview_autosplit(name: str, columns: list[str], ignore_zero: bool = True,
     proposal["excluded"] = {
         "missing_samples": int(np.count_nonzero(~finite)),
         "zero_samples": int(np.count_nonzero(finite & zero)),
+        "value_samples": int(np.count_nonzero(finite & ~zero & custom_value)),
         "isolated_samples": int(np.count_nonzero(eligible & ~constant)),
         "short_runs": int(np.count_nonzero(eligible & constant & ~long_enough)),
     }

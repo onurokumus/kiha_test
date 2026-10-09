@@ -124,7 +124,7 @@ function legendSnapshot(plot: uPlot): LegendEntry[] {
         ? series.label
         : series.label?.textContent || `Series ${offset + 1}`,
       stroke: stroke || '#41516b',
-      width: Number.isFinite(series.width) ? Math.max(1, series.width!) : 1.5,
+      width: Number.isFinite(series.width) ? (series.width! > 0 ? series.width! : 1) : 1.5,
       dash: [...(series.dash ?? [])],
       alpha: Number.isFinite(series.alpha) ? Math.max(0, Math.min(1, series.alpha!)) : 1,
     }];

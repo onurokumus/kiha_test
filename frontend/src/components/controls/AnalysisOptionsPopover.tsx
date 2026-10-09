@@ -6,11 +6,12 @@ interface Props {
   contextKey: string;
   available: boolean;
   summary: string | undefined;
+  compact?: boolean;
   children: ReactNode;
 }
 
 /** Floating settings keep the analysis deck and its trigger stationary. */
-export function AnalysisOptionsPopover({ contextKey, available, summary, children }: Props) {
+export function AnalysisOptionsPopover({ contextKey, available, summary, compact = false, children }: Props) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -27,7 +28,7 @@ export function AnalysisOptionsPopover({ contextKey, available, summary, childre
     const popup = panel.current;
     const position = () => {
       const rect = anchor.getBoundingClientRect();
-      const width = Math.min(520, document.documentElement.clientWidth - 24);
+      const width = Math.min(compact ? 360 : 520, document.documentElement.clientWidth - 24);
       popup.style.width = `${width}px`;
       popup.style.left = `${Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12))}px`;
       const roomBelow = window.innerHeight - rect.bottom - 20;
@@ -49,7 +50,7 @@ export function AnalysisOptionsPopover({ contextKey, available, summary, childre
       window.removeEventListener('resize', position);
       window.removeEventListener('scroll', position, true);
     };
-  }, [open]);
+  }, [open, compact]);
 
   useEffect(() => {
     if (!open) return;
@@ -111,7 +112,7 @@ export function AnalysisOptionsPopover({ contextKey, available, summary, childre
         }
       }}>
       <div className={styles.optionsHeading}>
-        <span>{contextKey.startsWith('spectrum') ? 'Spectrum options' : 'Time options'}</span>
+        <span>{contextKey.startsWith('spectrum') ? 'Spectrum options' : contextKey.startsWith('xy') ? 'XY options' : 'Time options'}</span>
         <span className={styles.optionsSummary}>{summary}</span>
       </div>
       <div className={styles.optionsBody}>{children}</div>
