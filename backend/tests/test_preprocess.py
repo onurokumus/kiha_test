@@ -77,6 +77,98 @@ class PreprocessTests(DataDirTestCase):
         return {str(p.relative_to(self.directory)): hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in self.directory.rglob('*') if p.is_file()}
 
+    def test_short_record_with_saved_empty_points_opens_and_filters_whole_record(self):
+        # Supported point imports can retain markers at/past the last sample.
+        # Whole-record filtering must not require resolving these point ranges.
+        self.fs, self.count = 1., 15
+        self.times = np.arange(self.count, dtype=float)
+        self.values = np.sin(self.times)
+        self.other = self.times * 2
+        self.write_data()
+        self.meta.update(fs_hz=self.fs, n_rows=self.count, t_start=0., duration_s=15.)
+        store.write_json_atomic(self.directory / 'meta.json', self.meta)
+        expected_source = self.client.get('/api/tests/original/preprocess').json()['source']
+        points = [
+            {'id': 1, 'name': 'End marker', 'start_s': 15, 'end_s': 15,
+             'start_idx': 15, 'end_idx': 15},
+            {'id': 2, 'name': 'Old range', 'start_s': 10, 'end_s': 4,
+             'start_idx': 10, 'end_idx': 4},
+            {'id': 3, 'name': 'Past recording', 'start_s': 20, 'end_s': 25},
+        ]
+        result = self.client.put('/api/tests/original/testpoints', json={
+            'test': 'original', 'fs_hz': self.fs, 'test_points': points})
+        self.assertEqual(result.status_code, 200, result.text)
+        saved_points = store.read_testpoints('original')['test_points']
+        before = self.fingerprint()
+        response = self.client.get('/api/tests/original/preprocess')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.snapshot = response.json()
+        self.assertEqual(self.snapshot['source'], expected_source)
+        out = self.build(self.request(window_s=3.))
+        np.testing.assert_allclose(out['signal'].to_numpy(),
+                                   uniform_filter1d(self.values, 3, mode='nearest'))
+        np.testing.assert_array_equal(out['time'].to_numpy(), self.times)
+        self.assertEqual(store.read_testpoints('processed')['test_points'], saved_points)
+        self.assertEqual(self.fingerprint(), before)
+        # Session recovery still refuses points it cannot resolve safely.
+        catalog = self.client.get('/api/analysis-sources').json()['sources']
+        self.assertTrue(all(entry.get('error') for entry in catalog))
+
+    def test_damaged_identity_is_an_actionable_conflict_for_get_and_post(self):
+        path = self.directory / analysis_sources.IDENTITY_FILE
+        path.write_text('damaged identity', encoding='utf-8')
+        before = self.fingerprint()
+        for method in ('GET', 'POST'):
+            with self.subTest(method=method):
+                response = self.client.request(method, '/api/tests/original/preprocess',
+                    **({'json': self.request()} if method == 'POST' else {}))
+                self.assertEqual(response.status_code, 409, response.text)
+                self.assertIn('source identity', response.json()['detail'])
+                self.assertIn('backend log', response.json()['detail'])
+        self.assertEqual(self.fingerprint(), before)
+        self.assertFalse((self.tests / 'processed').exists())
+
+    def test_legacy_identity_permission_failure_explains_service_account_access(self):
+        path = self.directory / analysis_sources.IDENTITY_FILE
+        path.unlink()
+        before = self.fingerprint()
+        with patch.object(store, 'write_json_atomic', side_effect=PermissionError('read only')):
+            response = self.client.get('/api/tests/original/preprocess')
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn('service account', response.json()['detail'])
+        self.assertIn('permissions', response.json()['detail'])
+        self.assertEqual(self.fingerprint(), before)
+        self.assertFalse(path.exists())
+
+    def test_unreadable_source_metadata_explains_access_and_preserves_source(self):
+        before = self.fingerprint()
+        with patch.object(store, 'get_meta', side_effect=PermissionError('read only')):
+            response = self.client.get('/api/tests/original/preprocess')
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn('permissions', response.json()['detail'])
+        self.assertEqual(self.fingerprint(), before)
+
+    def test_missing_samples_or_damaged_metadata_do_not_create_legacy_identity(self):
+        identity = self.directory / analysis_sources.IDENTITY_FILE
+        identity.unlink()
+        data = (self.directory / 'data.parquet').read_bytes()
+        for failure in ('missing_samples', 'invalid_json', 'invalid_revision'):
+            with self.subTest(failure=failure):
+                (self.directory / 'data.parquet').write_bytes(data)
+                store.write_json_atomic(self.directory / 'meta.json', self.meta)
+                if failure == 'missing_samples':
+                    (self.directory / 'data.parquet').unlink()
+                elif failure == 'invalid_json':
+                    (self.directory / 'meta.json').write_text('broken metadata', encoding='utf-8')
+                else:
+                    store.write_json_atomic(self.directory / 'meta.json', {**self.meta, 'fs_hz': float('nan')})
+                before = self.fingerprint()
+                response = self.client.get('/api/tests/original/preprocess')
+                self.assertEqual(response.status_code, 409, response.text)
+                self.assertIn('metadata', response.json()['detail'])
+                self.assertFalse(identity.exists())
+                self.assertEqual(self.fingerprint(), before)
+
     def test_native_copy_preserves_every_source_byte_time_other_parameter_and_saved_rows(self):
         before = self.fingerprint()
         out = self.build()

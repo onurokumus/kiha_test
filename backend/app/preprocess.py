@@ -6,7 +6,7 @@ not the complete recording. No plot windows/reduced samples enter this path.
 The destination's ready status is the commit marker; failed/interrupted copies
 remain manageable error rows and can never replace their source.
 """
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 import logging
@@ -73,25 +73,45 @@ def _directory(name: str) -> Path:
     return directory
 
 
+@contextmanager
+def _source_access(name: str):
+    """Report recoverable source-file problems without hiding them in a 500."""
+    try:
+        yield
+    except PermissionError:
+        logger.warning("Pre-processing source access denied for '%s'", name, exc_info=True)
+        raise HTTPException(409, 'Pre-processing cannot access this test\'s stored files. '
+                            'Ask the server administrator to check the backend service account\'s '
+                            'read/write permissions for this test, then retry.') from None
+    except (OSError, ValueError, KeyError, TypeError, OverflowError):
+        logger.warning("Pre-processing source verification failed for '%s'", name, exc_info=True)
+        raise HTTPException(409, 'Pre-processing could not verify this test\'s source identity, '
+                            'metadata or stored samples. Ask the server administrator to check '
+                            'this test\'s files and the backend log, then retry. '
+                            'The original test has not been changed.') from None
+
+
 def _ready(name: str) -> dict:
-    directory = _directory(name)
-    if not directory.is_dir():
-        raise HTTPException(404, f"Test '{name}' was not found.")
-    if store.get_status(name).get('status') != 'ready':
-        raise HTTPException(409, f"Test '{name}' is not ready.")
-    for relative in ('meta.json', 'data.parquet', 'testpoints.json', 'raw.csv'):
-        if is_link_or_junction(directory / relative):
-            raise HTTPException(409, 'Linked test files cannot be pre-processed.')
-    meta = store.get_meta(name)
-    if not isinstance(meta, dict):
-        raise HTTPException(409, 'Test metadata is unavailable.')
-    return meta
+    with _source_access(name):
+        directory = _directory(name)
+        if not directory.is_dir():
+            raise HTTPException(404, f"Test '{name}' was not found.")
+        if store.get_status(name).get('status') != 'ready':
+            raise HTTPException(409, f"Test '{name}' is not ready.")
+        for relative in ('meta.json', 'data.parquet', 'testpoints.json', 'raw.csv'):
+            if is_link_or_junction(directory / relative):
+                raise HTTPException(409, 'Linked test files cannot be pre-processed.')
+        meta = store.get_meta(name)
+        if not isinstance(meta, dict):
+            raise HTTPException(409, 'Test metadata is unavailable.')
+        return meta
 
 
 def _source(name: str) -> dict:
     # Caller holds the test writer when migrating a legacy identity. Workers
     # only call this after the reservation already established that identity.
-    snapshot = analysis_sources._snapshot(_directory(name), 'ready')
+    with _source_access(name):
+        snapshot = analysis_sources.sample_snapshot(_directory(name), 'ready')
     return {key: snapshot[key] for key in ('id', 'revision')} | {'name': name}
 
 
@@ -159,8 +179,9 @@ def _reserve_copy(name: str, payload: PreprocessRequest,
     with test_read(name, check=lambda: _ready(name)), test_write(payload.name):
         meta = _ready(name)
         _validate(meta, payload.filters)
-        if analysis_sources.read_identity(_directory(name)) is None:
-            raise HTTPException(409, 'Source identity is unavailable. Close and reopen pre-processing.')
+        with _source_access(name):
+            if analysis_sources.read_identity(_directory(name)) is None:
+                raise HTTPException(409, 'Source identity is unavailable. Close and reopen pre-processing.')
         source = _source(name)
         if source['id'] != str(payload.source_id) or source['revision'] != payload.source_revision:
             raise HTTPException(409, 'The source changed. Close and reopen pre-processing to review the current data.')

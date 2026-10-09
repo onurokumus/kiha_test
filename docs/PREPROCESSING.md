@@ -203,3 +203,40 @@ Evidence: `%TEMP%/ptt-preprocess-bulk-verification/results.json` and the adjacen
 light/dark screenshots. The user-requested Git checkpoint includes preprocessing
 and bulk selection with their tests and documentation. No deployment; next
 independent milestone remains Phase 11b.
+
+### Preprocessing load failure (2026-10-09)
+
+The reported deployed request was `GET /api/tests/s200/preprocess` returning
+HTTP 500. A local 15-row, 1Hz reproduction confirmed that saved empty, reversed
+or out-of-range test points could break this request: preprocessing reused a
+session-recovery snapshot that resolves every saved point interval, then
+discarded those point references. Such definitions can arrive through the
+existing point save/import API.
+
+Preprocessing now uses a sample-only source snapshot. Its identity, revision
+hash and source-change guards remain the same; session recovery still validates
+point intervals independently. Full-record filtering preserves the original
+point definitions and all source bytes. Expected source identity, metadata and
+file-access failures return actionable HTTP 409 details and log the exception.
+Damaged identities are never replaced; failed sample verification does not
+create a legacy identity file.
+
+Five new regressions cover supported point imports and the complete filtered
+copy, numerical parity, source/point preservation, damaged identity on GET and
+POST, missing samples, metadata errors and service-account permission failures.
+Focused preprocessing/recovery checks pass 31 tests/21 subtests; the full native
+Python 3.13 suite passes 537 tests/520 subtests. Build/lint, independent code review
+and whitespace checks pass. No frontend or filtering-method changes were needed.
+Existing Vite size and Starlette dependency advisories remain.
+
+The private host `heliweb1` cannot be resolved from the development environment.
+These are confirmed local causes; the screenshot alone does not identify the
+exact production exception. After deploying the updated backend and restarting
+`ptt-backend`, retry Pre-process. If it still fails, capture its service traceback:
+
+```bash
+sudo journalctl -u ptt-backend --since "15 minutes ago" --no-pager -n 150
+```
+
+The follow-up is committed on the existing feature branch; no deployment or
+production data changes were performed here.

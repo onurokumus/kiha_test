@@ -32,6 +32,14 @@ docs/PLOT_APPEARANCE_VERIFICATION.md. Next independent milestone remains Phase 1
 
 ## Requested upload preprocessing (2026-10-09)
 
+- [x] Fix the reported preprocessing-load HTTP 500. Remove unnecessary saved-test-point range validation from whole-record preprocessing, preserve source identity/revision guards and original data, and report source-file problems clearly. Reproduce and verify with a 15-row/1Hz recording and unchanged source files. Production traceback still needed to confirm the exact heliweb1 failure.
+
+Local fix verified: 537 backend tests/520 subtests, build/lint and independent
+review pass. The reproduced stale-point failure now opens and processes the
+whole recording; damaged identity/permission failures return actionable errors.
+The private production host is unreachable here, so deployment/retry and its
+specific server traceback remain external verification. See docs/PREPROCESSING.md.
+
 - [x] Add styled parameter multi-selection, Select all/visible, and an explicit Apply filter to selected action. Preserve independent per-parameter settings, protect time, show hidden selection scope, and verify keyboard, desktop themes/zoom and exact saved recipes. User-requested follow-up ahead of independent Phase 11b.
 
 Bulk follow-up complete: styled row checkboxes, selected/hidden counts and

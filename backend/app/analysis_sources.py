@@ -36,7 +36,13 @@ def read_identity(directory: Path) -> str | None:
     return str(UUID(doc['id']))
 
 
-def _snapshot(directory: Path, status: str) -> dict:
+def sample_snapshot(directory: Path, status: str) -> dict:
+    """Identify stored samples without requiring valid test-point intervals.
+
+    The caller holds the test writer when a legacy identity may be created.
+    Whole-record operations need this token even when saved point ranges no
+    longer fit the recording; session recovery validates those separately.
+    """
     identity = read_identity(directory)
     if status != 'ready':
         return {'id': identity}
@@ -47,9 +53,6 @@ def _snapshot(directory: Path, status: str) -> dict:
     meta = store.get_meta(directory.name)
     if not isinstance(meta, dict):
         raise ValueError('Test metadata is unavailable.')
-    if identity is None:
-        identity = str(uuid4())
-        store.write_json_atomic(directory / IDENTITY_FILE, {'version': 1, 'id': identity})
     data = directory / 'data.parquet'
     if is_link_or_junction(data):
         raise ValueError('Sample data is a link; automatic recovery is unavailable.')
@@ -57,15 +60,25 @@ def _snapshot(directory: Path, status: str) -> dict:
     # Names, notes, components and derived caches do not change sample identity.
     revision = _hash([stat.st_size, stat.st_mtime_ns, {key: meta.get(key) for key in
         ('columns', 'time_column', 'fs_hz', 'n_rows', 't_start', 'duration_s', 'derived_variables')}])
+    columns = [c for c in meta['columns'] if c != meta.get('time_column')]
+    if identity is None:
+        identity = str(uuid4())
+        store.write_json_atomic(directory / IDENTITY_FILE, {'version': 1, 'id': identity})
+    return {'id': identity, 'revision': revision, 'columns': columns}
+
+
+def _snapshot(directory: Path, status: str) -> dict:
+    snapshot = sample_snapshot(directory, status)
+    if status != 'ready':
+        return snapshot
+    meta = store.get_meta(directory.name)
     points = store.read_testpoints(directory.name)['test_points']
     point_refs = []
     for point in points:
         i0, i1 = store._testpoint_bounds(meta, points, point)
         point_refs.append({'id': point['id'], 'revision': _hash([
             i0, i1, point.get('start_s'), point.get('end_s')])})
-    return {'id': identity, 'revision': revision,
-            'columns': [c for c in meta['columns'] if c != meta.get('time_column')],
-            'test_points': point_refs}
+    return {**snapshot, 'test_points': point_refs}
 
 
 def verify_reference(name: str, expected_id: UUID | None) -> None:

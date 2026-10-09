@@ -1,5 +1,30 @@
 # Implementation handoff
 
+## Complete locally: preprocessing load failure (2026-10-09)
+
+User reported GET /api/tests/s200/preprocess returning HTTP 500 on heliweb1.
+This environment cannot resolve that private host; exact production traceback
+is requested but not yet available. Isolated reproduction confirms an accepted
+empty/out-of-range saved test point makes the route fail because it unnecessarily
+uses the full session-recovery snapshot. Damaged identities and identity-migration
+permission failures also produced unhandled 500s.
+
+Implemented a sample-only snapshot with identical revision semantics, retaining
+point validation for session recovery. Whole-record preprocessing now opens and
+finishes while preserving those saved point definitions. Expected source-file
+errors return actionable 409 responses and log details; damaged identities are
+never replaced, and failed source verification cannot create a legacy identity.
+Five regression tests cover the 15-row/1Hz case, GET/POST damaged identity,
+permissions, missing samples and damaged metadata. Focused 31 tests/21 subtests
+pass. Full backend suite passes 537 tests/520 subtests; build/lint, independent
+review and whitespace checks pass. Existing Vite size advisory and Starlette
+dependency deprecation remain. No frontend/scientific-method changes; source
+recovery tests retain their existing point-range rejection. Working tree started
+clean at 25bd56d; follow-up fix is included in the same-branch Git checkpoint.
+No production access/deployment or user-data changes. Deploy and restart the
+backend on heliweb1, then retry; if it still fails, inspect the service journal
+to identify the production-specific cause. Details: docs/PREPROCESSING.md.
+
 ## Git checkpoint: preprocessing, appearance and auto-split (2026-10-09)
 
 User explicitly requested committing all pending changes and pushing them on
