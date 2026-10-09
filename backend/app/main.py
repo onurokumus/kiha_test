@@ -77,6 +77,8 @@ def _recover_interrupted_ingests() -> list[tuple[str, str]]:
         for test_dir in TESTS_DIR.iterdir():
             if not test_dir.is_dir():
                 continue
+            if preprocess.recover_in_place(test_dir):
+                continue
             status = store.get_status(test_dir.name).get("status")
             if status == "rebuilding":
                 if store.get_status(test_dir.name).get('preprocessing') is not None:
@@ -581,6 +583,8 @@ def api_edit(name: str, ops: EditOps, background: BackgroundTasks):
         raise HTTPException(404, f"test '{name}' not found")
     if store.get_status(name).get("status") != "ready":
         raise HTTPException(409, f"test '{name}' is not ready")
+    if edit.has_active_preprocessing(meta):
+        raise HTTPException(409, edit.PREPROCESSING_EDIT_ERROR)
 
     tcol = meta["time_column"]
     columns = set(meta["columns"])
@@ -646,6 +650,8 @@ def api_edit(name: str, ops: EditOps, background: BackgroundTasks):
         # validated against the schema the first is about to change.
         if store.get_status(name).get("status") != "ready":
             raise HTTPException(409, f"test '{name}' is not ready")
+        if edit.has_active_preprocessing(store.get_meta(name) or {}):
+            raise HTTPException(409, edit.PREPROCESSING_EDIT_ERROR)
         write_status(TESTS_DIR / name, "rebuilding")
     background.add_task(edit.rebuild_test, name, ops.model_dump())
     return {"name": name, "status": "rebuilding"}

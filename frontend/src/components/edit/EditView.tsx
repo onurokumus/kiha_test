@@ -328,6 +328,8 @@ export default function EditView({
   const confirmAction = useConfirm();
   const [status, setStatus] = useState('');
   const [pendingAction, setPendingAction] = useState('');
+  const preprocessingActive = meta.preprocessing?.version === 2 && !!meta.preprocessing.filters.length;
+  const preprocessingEditMessage = 'Restore original data in Uploads > Pre-process before changing columns, trimming, filling missing samples or applying equations.';
   const columnSignature = meta.columns.join('\u0000');
   const firstColumn = meta.columns[0] ?? '';
   const componentsSectionRef = useRef<HTMLDetailsElement>(null);
@@ -875,6 +877,7 @@ export default function EditView({
     additionalDetail = ''
   ) => {
     if (pendingAction) return;
+    if (preprocessingActive) { setStatus(preprocessingEditMessage); return; }
     const draftWarning = discardedDrafts.length
       ? ` Unsaved ${discardedDrafts.join(', ')} drafts will also be discarded.`
       : '';
@@ -1198,6 +1201,7 @@ export default function EditView({
         </div>
       )}
       {status && <div role="status" aria-live="polite" style={{ fontSize: 11, color: 'var(--accent, #405994)', padding: '0 4px' }}>{status}</div>}
+      {preprocessingActive && <p className={styles.preprocessingNotice}>{preprocessingEditMessage} Notes, test points and component assignments remain editable.</p>}
 
       <div className="feature-edit-overview">
         {/* test info + metadata */}
@@ -1317,7 +1321,7 @@ export default function EditView({
             </select>
             <span style={{ fontSize: 10, color: 'var(--muted, #626f83)' }}>{NAN_POLICY_HELP[nanPolicy]}</span>
             <span style={{ flex: 1 }} />
-            <button className="btn" onClick={applyNanPolicy} disabled={!nanPolicyDirty}>apply</button>
+            <button className="btn" onClick={applyNanPolicy} disabled={!nanPolicyDirty || preprocessingActive}>apply</button>
           </div>
           <div style={{ fontSize: 10, color: 'var(--muted, #626f83)' }}>
             ('drop rows' is not offered — it would break the uniform sample rate)
@@ -1335,7 +1339,7 @@ export default function EditView({
                    value={trim1} onChange={(e) => setTrim1(e.target.value)} />
             <span style={{ fontSize: 11, color: 'var(--muted, #626f83)' }}>Data: {tStart.toFixed(1)}–{tEnd.toFixed(1)} s</span>
             <span style={{ flex: 1 }} />
-            <button className="btn" onClick={applyTrim} disabled={!trimDirty || !!trimError}>apply</button>
+            <button className="btn" onClick={applyTrim} disabled={!trimDirty || !!trimError || preprocessingActive}>apply</button>
           </div>
           </div>
         </details>
@@ -1750,7 +1754,7 @@ export default function EditView({
           <button
             className="btn edit-formula-apply"
             onClick={applyFormulas}
-            disabled={!formulasDirty}
+            disabled={!formulasDirty || preprocessingActive}
           >
             apply &amp; rebuild
           </button>
@@ -1867,7 +1871,7 @@ export default function EditView({
           ))}
         </div>
         <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="btn" onClick={applyColumns} disabled={!columnsDirty}>apply renames / removals</button>
+          <button className="btn" onClick={applyColumns} disabled={!columnsDirty || preprocessingActive}>apply renames / removals</button>
           <span style={{ fontSize: 10, color: 'var(--muted, #626f83)' }}>
             time column '{meta.time_column}' is protected; units live in the column name (e.g. thrust_n)
           </span>

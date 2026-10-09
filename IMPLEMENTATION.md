@@ -1,10 +1,53 @@
 # Implementation handoff
 
+## Complete: same-flight reversible preprocessing (2026-10-09)
+
+User corrected the storage model: keep one flight/name, retain originals hidden,
+and restore original samples when all preprocessing filters are removed. User
+confirmed every update must start from the hidden original. The earlier copy
+workflow below is superseded; existing legacy copies remain independent flights.
+The s200-only error was clarified as a datasheet; Uploads now omits preprocessing
+for the configured datasheet.
+
+Backend implements guarded same-name background updates with request UUIDs,
+editable version-2 recipes, hidden original samples/pyramid, and a journaled
+last-good rollback. Empty recipes restore original bytes; metadata, notes,
+test points and identity remain attached to the same flight. Physical component
+usage reads original signals once. Destructive sample/column/formula edits are
+blocked while filters are active, with a visible restore-first instruction;
+notes, test points, components and rename remain usable. Legacy copies are not
+merged or deleted automatically.
+
+Dialog retains styled bulk selection, reloads the saved recipe, removes output
+naming/original-download controls, and applies/restores in place. App tracks
+operations after closing the dialog and refreshes same-name traces/plots while
+preserving selected test points. A Windows status-file read race observed in
+native browser verification is fixed with bounded PermissionError retries.
+
+Verification complete: 548 backend tests/522 subtests, all 135 frontend helpers,
+production build/lint, independent transaction/recovery review and whitespace
+checks pass. Ten native browser groups pass on index-CWAJpLwb.js: full numerical
+apply/update/restore and CSV parity, selection/cache refresh, inactive-flight
+updates, close-while-running, failure/reopen/retry, lost-response idempotency,
+datasheet exclusion, bulk controls and both themes at actual 100/125/150% zoom.
+Screenshots reviewed. No unexpected browser errors or writes; only isolated
+synthetic datasets were used and owned servers/profiles were cleaned up.
+
+Entry points: backend/app/preprocess.py, PreprocessDialog, App.tsx operation
+tracking and scripts/verify_preprocess_inplace.py. Commands/evidence and legacy
+compatibility: docs/PREPROCESSING.md. Existing Vite bundle-size advisory and
+Starlette dependency deprecation remain. Started clean at bdf268a on
+codex/ptt-ui-rework-2026-09-28; included in the same-branch Git checkpoint under
+the user's existing commit/push authorization. No user-data migration or
+production deployment. Deploy frontend and restart backend together to load
+the changed API. Next independent milestone remains Phase 11b.
+
 ## Complete locally: preprocessing load failure (2026-10-09)
 
 User reported GET /api/tests/s200/preprocess returning HTTP 500 on heliweb1.
-This environment cannot resolve that private host; exact production traceback
-is requested but not yet available. Isolated reproduction confirms an accepted
+The user subsequently identified s200 as the datasheet and excluded it from
+preprocessing. This environment cannot resolve that private host. An isolated
+reproduction confirmed an accepted
 empty/out-of-range saved test point makes the route fail because it unnecessarily
 uses the full session-recovery snapshot. Damaged identities and identity-migration
 permission failures also produced unhandled 500s.
@@ -21,9 +64,8 @@ review and whitespace checks pass. Existing Vite size advisory and Starlette
 dependency deprecation remain. No frontend/scientific-method changes; source
 recovery tests retain their existing point-range rejection. Working tree started
 clean at 25bd56d; follow-up fix is included in the same-branch Git checkpoint.
-No production access/deployment or user-data changes. Deploy and restart the
-backend on heliweb1, then retry; if it still fails, inspect the service journal
-to identify the production-specific cause. Details: docs/PREPROCESSING.md.
+No production access/deployment or user-data changes. This earlier robustness
+fix remains; the same-flight workflow above is the current handoff.
 
 ## Git checkpoint: preprocessing, appearance and auto-split (2026-10-09)
 

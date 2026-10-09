@@ -246,6 +246,8 @@ def _calculate(path, meta):
 def _summary(directory, meta, binding):
     # Cache only numeric source summaries. Set names/IDs and component identities
     # are deliberately absent; reassignment must reuse the data, not old totals.
+    from .preprocess import original_data
+    directory, meta = original_data(directory, meta)
     meta = {**meta, 'component_rpm_column': binding['rpm_column'],
             **{key: binding[key] for key in BINDING_FIELDS}}
     path = directory / 'data.parquet'
@@ -294,6 +296,7 @@ def _ambiguous_sets(bindings):
 
 
 def statistics():
+    from .preprocess import is_in_place
     sources, dataset_tests = [], {}
     # Hold catalog membership stable against rename/trash/restore during the
     # scan. Each test is read atomically; this is not a global historical snapshot.
@@ -350,7 +353,8 @@ def statistics():
                             row['warnings'].append('Uses current edited signal values, including filled values outside acquisition gaps.')
                         if any(cid and known.get(cid) != kind for kind, cid in row['component_ids'].items()):
                             row['warnings'].append('An assigned component is unavailable; its contribution is not reassigned.')
-                        if meta.get('preprocessing') is not None:
+                        recipe = meta.get('preprocessing')
+                        if recipe is not None and (not is_in_place(recipe) or recipe.get('legacy_copy')):
                             row['issue'] = 'Pre-processed analysis copy; physical component use is counted only from the original test.'
                         elif index in ambiguous:
                             row['issue'] = 'Duplicate set ID or component assignment within this test; repair these sets before counting them.'
@@ -363,6 +367,8 @@ def statistics():
                         else:
                             try:
                                 row['summary'] = _summary(directory, meta, binding)
+                                if recipe is not None:
+                                    row['warnings'].append('Component use is calculated from the retained original recording; preprocessing filters do not change physical use.')
                                 row['warnings'].extend(row['summary'].get('_warnings', []))
                             except (OSError, ValueError, KeyError, TypeError, OverflowError, FloatingPointError) as error:
                                 row['issue'] = f'Component use unavailable: {error}'

@@ -67,6 +67,9 @@ def list_tests() -> list[dict]:
                     "edited_at": meta.get("edited_at"),
                     "preprocessing": meta.get("preprocessing", status.get("preprocessing")),
                     "preprocessing_progress": status.get("preprocessing_progress"),
+                    "preprocessing_operation": ({key: value for key, value in status['preprocessing_operation'].items()
+                                                 if key in ('request_id', 'state', 'error')}
+                                                if isinstance(status.get('preprocessing_operation'), dict) else None),
                     "ingest_seconds": meta.get("ingest_seconds"),
                     # A random-access staging file can be sparse and its
                     # logical st_size can jump ahead of durable progress.
@@ -151,10 +154,18 @@ def _dir_size(d: Path) -> int:
 
 
 def _read_json(p: Path):
-    try:
-        return json.loads(p.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
+    # Windows may briefly deny opens while another thread atomically replaces
+    # status/metadata. Keep lock-free polling reliable without masking an actual
+    # permission problem after the same bounded retry window as our writer.
+    for attempt in range(6):
+        try:
+            return json.loads(p.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(0.02 * (attempt + 1))
 
 
 def write_json_atomic(path: Path, payload: dict) -> None:

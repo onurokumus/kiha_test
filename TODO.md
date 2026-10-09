@@ -32,13 +32,24 @@ docs/PLOT_APPEARANCE_VERIFICATION.md. Next independent milestone remains Phase 1
 
 ## Requested upload preprocessing (2026-10-09)
 
+- [x] Replace separately named preprocessing copies with reversible updates to the same flight/name. Retain hidden original samples, always rebuild from them, reopen/edit saved filters, and restore original data when the recipe is empty. Preserve metadata/test points/identity, recover failed or interrupted updates, hide preprocessing for the configured datasheet, refresh existing analysis views, and verify full native data plus desktop/bulk/keyboard behavior. User correction supersedes the earlier copy workflow below; existing legacy copies remain independent.
+
+Complete: 548 backend tests/522 subtests, 135 frontend helpers, build/lint,
+independent recovery review and ten isolated native browser groups pass.
+Verified original-based numerical results, byte-exact full restore, native CSV,
+same-flight cache refresh/selection retention, failure/retry and background
+completion, bulk controls and both themes at actual 100/125/150% desktop zoom.
+The browser checks also found and verified a Windows status-read race fix.
+No user datasets were touched. See docs/PREPROCESSING.md for commands/evidence.
+
 - [x] Fix the reported preprocessing-load HTTP 500. Remove unnecessary saved-test-point range validation from whole-record preprocessing, preserve source identity/revision guards and original data, and report source-file problems clearly. Reproduce and verify with a 15-row/1Hz recording and unchanged source files. Production traceback still needed to confirm the exact heliweb1 failure.
 
 Local fix verified: 537 backend tests/520 subtests, build/lint and independent
 review pass. The reproduced stale-point failure now opens and processes the
 whole recording; damaged identity/permission failures return actionable errors.
-The private production host is unreachable here, so deployment/retry and its
-specific server traceback remain external verification. See docs/PREPROCESSING.md.
+The user later clarified the failing s200 entry is a datasheet; the current
+workflow hides its preprocessing action. Production deployment remains external.
+See docs/PREPROCESSING.md.
 
 - [x] Add styled parameter multi-selection, Select all/visible, and an explicit Apply filter to selected action. Preserve independent per-parameter settings, protect time, show hidden selection scope, and verify keyboard, desktop themes/zoom and exact saved recipes. User-requested follow-up ahead of independent Phase 11b.
 

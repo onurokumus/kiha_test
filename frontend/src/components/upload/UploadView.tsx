@@ -33,6 +33,7 @@ interface Props {
   uploads: UploadItem[];
   pendingFiles: File[];
   defaultFsHz?: number;
+  datasheetName?: string | null;
   onStageUploadFiles: (files: File[]) => void;
   onStartUpload: (files: File[], options: UploadDataOptions) => void;
   onClearPendingFiles: () => void;
@@ -52,6 +53,8 @@ interface Props {
   onTestsChanged: (restoredName?: string) => void;
   /** A test's TP averages were recomputed — parent drops its stats cache. */
   onStatsRebuilt: (name: string) => void;
+  /** An in-place preprocessing operation started or reached a terminal state. */
+  onPreprocessed: (name: string, requestId: string) => void;
 }
 
 const fmtBytes = (n?: number | null): string => {
@@ -199,6 +202,7 @@ export default function UploadView({
   uploads,
   pendingFiles,
   defaultFsHz,
+  datasheetName,
   onStageUploadFiles,
   onStartUpload,
   onClearPendingFiles,
@@ -214,6 +218,7 @@ export default function UploadView({
   renameDisabled,
   onTestsChanged,
   onStatsRebuilt,
+  onPreprocessed,
 }: Props) {
   const confirmAction = useConfirm();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -395,7 +400,7 @@ export default function UploadView({
       (historyStatus === 'processing' ? isBusyStatus(test.status) : test.status === historyStatus);
     const terms = historyQuery.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
     const searchableText = [test.name, test.source_file, test.uploader_name, test.description,
-      test.preprocessing ? `Filtered ${test.preprocessing.source.name}` : '',
+      test.preprocessing?.filters.length ? 'Filtered preprocessed' : '',
       componentSetsSummary(test, catalog.items)]
       .join(' ')
       .toLocaleLowerCase();
@@ -1121,6 +1126,7 @@ export default function UploadView({
                 <tbody>
                   {visibleRows.map((t) => {
                     const busy = isBusyStatus(t.status);
+                    const hasPreprocessingHistory = !!t.preprocessing || !!t.preprocessing_operation;
                     const componentSummary = componentSetsSummary(t, catalog.items);
                     const qualityId = `data-quality-${encodeURIComponent(t.name)}`;
                     const splitDownloadId = `split-downloads-${encodeURIComponent(t.name)}`;
@@ -1130,9 +1136,9 @@ export default function UploadView({
                           <td style={{ ...tdStyle, fontWeight: 600, overflow: 'hidden' }}>
                             <TestNameEditor name={t.name} names={tests.map(test => test.name)}
                               disabled={busy || busyRow !== null || renameDisabled} onRename={handleRename} />
-                            {t.preprocessing && <span className={styles.preprocessedSource}
-                              title={`Preprocessed copy of ${t.preprocessing.source.name}`}>
-                              <strong>{t.status === 'ready' ? 'Filtered' : 'Pre-process'}</strong><span>from {t.preprocessing.source.name}</span>
+                            {!!t.preprocessing?.filters.length && <span className={styles.preprocessedSource}
+                              title={t.preprocessing.mode === 'in_place' ? 'Pre-processing filters applied; original data retained' : `Earlier filtered copy of ${t.preprocessing.source.name}`}>
+                              <strong>Filtered</strong><span>{t.preprocessing.filters.length} parameter{t.preprocessing.filters.length === 1 ? '' : 's'}</span>
                             </span>}
                             <div className={styles.metadataLinks}>
                             {t.status === 'ready' ? (
@@ -1168,6 +1174,8 @@ export default function UploadView({
                                 {t.preprocessing_progress.stage}
                                 <small>{t.preprocessing_progress.completed_columns} / {t.preprocessing_progress.total_columns} parameters</small>
                               </span>}
+                              {!busy && t.preprocessing_operation?.state === 'failed' && <span className="upload-history-error"
+                                title={t.preprocessing_operation.error || 'Previous data retained. Open Pre-process to review the filters.'}>Pre-process failed</span>}
                               <DataQualityButton
                                 test={t}
                                 expanded={qualityTest === t.name}
@@ -1239,21 +1247,20 @@ export default function UploadView({
                                   Analyze
                                 </button>
                               )}
-                              {t.status === 'ready' && (
+                              {t.status === 'ready' && t.name !== datasheetName && (
                                 <button className="btn" disabled={renameDisabled || busyRow !== null}
-                                  aria-label={`${t.preprocessing ? 'View preprocessing for' : 'Pre-process'} ${t.name}`}
+                                  aria-label={`Pre-process ${t.name}`}
                                   onClick={() => setPreprocessTest(t)}>
                                   {t.preprocessing ? 'Pre-process settings' : 'Pre-process'}
                                 </button>
                               )}
-                              {t.status === 'ready' && t.preprocessing && (
+                              {t.status === 'ready' && hasPreprocessingHistory && (
                                 <a className="btn" href={exportCsvUrl(t.name)} download
-                                  aria-label={`Download filtered CSV for ${t.name}`}
-                                  title="Download the complete saved filtered data"
-                                  style={{ textDecoration: 'none' }}>Filtered CSV</a>
+                                  aria-label={`Download current CSV for ${t.name}`}
+                                  title="Download this flight’s current data"
+                                  style={{ textDecoration: 'none' }}>CSV</a>
                               )}
-                              {(t.status === 'ready' || t.status === 'error') &&
-                                (!t.preprocessing || (t.status === 'ready' && t.preprocessing.original_raw_available)) && (
+                              {(t.status === 'ready' || t.status === 'error') && !hasPreprocessingHistory && (
                                 <a
                                   className="btn"
                                   href={rawCsvUrl(t.name)}
@@ -1262,7 +1269,7 @@ export default function UploadView({
                                   title="download the original uploaded CSV"
                                   style={{ textDecoration: 'none' }}
                                 >
-                                  {t.preprocessing ? 'Original CSV' : 'CSV'}
+                                  CSV
                                 </a>
                               )}
                               {t.status === 'ready' && (
@@ -1345,13 +1352,8 @@ export default function UploadView({
         </details>
         <TrashBin refreshKey={trashRevision} onRestored={onTestsChanged} components={catalog.items} />
         {preprocessTest && <PreprocessDialog test={preprocessTest}
-          existingNames={tests.map(test => test.name)}
           onClose={() => setPreprocessTest(null)}
-          onCreated={name => {
-            setHistoryQuery('');
-            setHistoryStatus('all');
-            onTestsChanged(name);
-          }}
+          onPreprocessed={onPreprocessed}
           onOpenTest={name => { setPreprocessTest(null); onOpenTest(name); }} />}
       </div>
     </div>

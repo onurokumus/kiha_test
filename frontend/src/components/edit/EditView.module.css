@@ -90,3 +90,13 @@
   .notesGrid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .noteField textarea { min-height: 76px; }
 }
+.preprocessingNotice {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #dfe4ec);
+  border-left: 3px solid var(--accent, #263685);
+  border-radius: 4px;
+  background: var(--surface-raised, #f7f9fd);
+  color: var(--text-secondary, #41516b);
+  font-size: 12px;
+}

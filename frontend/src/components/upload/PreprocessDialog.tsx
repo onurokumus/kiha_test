@@ -1,23 +1,22 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { buildFilterSpec, DEFAULT_FILTER_UI, FILTER_LABELS, type FilterUi } from '../../constants/filters';
-import { exportCsvUrl, getJson, isAbortError, rawCsvUrl } from '../../services/api';
-import { createPreprocessedTest, describePreprocessingFilter, fetchPreprocessing, matchesPreprocessingRequest, preprocessingFilterError,
-  preprocessingNameError, serializePreprocessingFilter, suggestPreprocessingName,
-  type PreprocessingSnapshot } from '../../services/preprocessing';
+import { getJson, isAbortError } from '../../services/api';
+import { applyPreprocessing, fetchPreprocessing, matchesPreprocessingRequest, newPreprocessingRequestId,
+  preprocessingFilterError, preprocessingFiltersEqual, preprocessingFilterUi, serializePreprocessingFilter,
+  type PreprocessingRequest, type PreprocessingSnapshot } from '../../services/preprocessing';
 import type { TestInfo } from '../../types';
 import { FilterRow } from '../controls/FilterRow';
 import styles from './PreprocessDialog.module.css';
 
 interface Props {
   test: TestInfo;
-  existingNames: string[];
   onClose: () => void;
-  onCreated: (name: string) => void;
+  onPreprocessed: (name: string, requestId: string) => void;
   onOpenTest: (name: string) => void;
 }
 
 const HELP: Record<string, string> = {
-  '': 'Choose a filter for this parameter. Parameters set to None are copied unchanged.',
+  '': 'Choose a filter for this parameter. None uses its original data.',
   lowpass: 'Reduce frequencies above the cutoff with a zero-phase Butterworth filter.',
   highpass: 'Reduce frequencies below the cutoff with a zero-phase Butterworth filter.',
   bandpass: 'Keep the frequency band between the two cutoffs with a zero-phase Butterworth filter.',
@@ -34,12 +33,13 @@ const filterDraft = (drafts: Record<string, FilterUi>, column: string): FilterUi
 const sampleCount = (counts: Record<string, number> | undefined, column: string): number =>
   typeof counts?.[column] === 'number' ? counts[column] : 0;
 
-export default function PreprocessDialog({ test, existingNames, onClose, onCreated, onOpenTest }: Props) {
+export default function PreprocessDialog({ test, onClose, onPreprocessed, onOpenTest }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const alive = useRef(true);
   const submitting = useRef(false);
-  const createdCallback = useRef(onCreated);
-  createdCallback.current = onCreated;
+  const changedCallback = useRef(onPreprocessed);
+  changedCallback.current = onPreprocessed;
+  const lastRequest = useRef<PreprocessingRequest | null>(null);
   const id = useId();
   const [snapshot, setSnapshot] = useState<PreprocessingSnapshot | null>(null);
   const [loadKey, setLoadKey] = useState(0);
@@ -56,10 +56,9 @@ export default function PreprocessDialog({ test, existingNames, onClose, onCreat
   const editorRef = useRef<HTMLElement>(null);
   const [query, setQuery] = useState('');
   const [configuredOnly, setConfiguredOnly] = useState(false);
-  const [name, setName] = useState(() => suggestPreprocessingName(test.name, existingNames));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
-  const [createdName, setCreatedName] = useState('');
+  const [pendingRequest, setPendingRequest] = useState<PreprocessingRequest | null>(null);
   const [job, setJob] = useState<TestInfo | null>(null);
   const [statusError, setStatusError] = useState('');
   const [pollKey, setPollKey] = useState(0);
@@ -82,6 +81,12 @@ export default function PreprocessDialog({ test, existingNames, onClose, onCreat
     fetchPreprocessing(test.name, controller.signal).then(data => {
       if (controller.signal.aborted) return;
       setSnapshot(data);
+      setDrafts(Object.fromEntries((data.preprocessing?.filters ?? []).map(entry => [entry.column, preprocessingFilterUi(entry.filter)])));
+      setBulkSelection([]); setBulkEditing(false); setBulkDirty(false); setBulkNote('');
+      setBulkUi({ ...DEFAULT_FILTER_UI }); setSaveError(''); setPendingRequest(null); setStatusError('');
+      setJob(data.preprocessing_operation?.state === 'failed'
+        ? { name: test.name, status: 'ready', preprocessing_operation: data.preprocessing_operation } : null);
+      lastRequest.current = null;
       setSelected(current => data.meta.columns.includes(current) && current !== data.meta.time_column
         ? current : data.meta.columns.find(column => column !== data.meta.time_column) ?? '');
     }).catch(reason => {
@@ -91,7 +96,7 @@ export default function PreprocessDialog({ test, existingNames, onClose, onCreat
   }, [test.name, loadKey]);
 
   useEffect(() => {
-    if (!createdName) return;
+    if (!pendingRequest) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     setStatusError('');
@@ -99,11 +104,25 @@ export default function PreprocessDialog({ test, existingNames, onClose, onCreat
       try {
         const tests = await getJson<TestInfo[]>('/tests', controller.signal);
         if (controller.signal.aborted) return;
-        const current = tests.find(entry => entry.name === createdName);
-        if (!current) throw new Error('The filtered copy is not in the test library. Refresh status or check Uploads.');
+        const current = tests.find(entry => entry.name === test.name);
+        if (!current) throw new Error('This flight is no longer in the library. Close this box and check Uploads.');
+        if (!matchesPreprocessingRequest(current.preprocessing_operation, pendingRequest))
+          throw new Error('This flight was updated by another request. Reload its saved filters before making more changes.');
         setJob(current);
-        if (current.status === 'ready' || current.status === 'error') {
-          createdCallback.current(createdName);
+        if (current.preprocessing_operation?.state !== 'running') {
+          // A ready flight can mean either a committed update or a rolled-back
+          // failure. Refresh the active guard token before enabling another save.
+          const updated = await fetchPreprocessing(test.name, controller.signal);
+          if (controller.signal.aborted) return;
+          setSnapshot(updated);
+          if (current.preprocessing_operation?.state === 'completed') {
+            setDrafts(Object.fromEntries((updated.preprocessing?.filters ?? []).map(entry => [entry.column, preprocessingFilterUi(entry.filter)])));
+            setBulkSelection([]); setBulkEditing(false); setBulkDirty(false); setBulkNote('');
+            setBulkUi({ ...DEFAULT_FILTER_UI });
+          }
+          setPendingRequest(null);
+          lastRequest.current = null;
+          changedCallback.current(test.name, pendingRequest.request_id);
           return;
         }
         timer = setTimeout(() => void poll(), 1200);
@@ -113,11 +132,10 @@ export default function PreprocessDialog({ test, existingNames, onClose, onCreat
     };
     void poll();
     return () => { controller.abort(); if (timer) clearTimeout(timer); };
-  }, [createdName, pollKey]);
+  }, [pendingRequest, pollKey, test.name]);
 
   const meta = snapshot?.meta;
-  const recipe = createdName ? job?.preprocessing : snapshot?.preprocessing;
-  const readonly = !!snapshot?.preprocessing;
+  const recipe = snapshot?.preprocessing;
   const parameters = meta?.columns.filter(column => column !== meta.time_column) ?? [];
   const configured = parameters.filter(column => !!filterDraft(drafts, column).kind);
   const unavailable = Object.keys(drafts).filter(column => !!drafts[column]?.kind && !parameters.includes(column));
@@ -133,23 +151,27 @@ export default function PreprocessDialog({ test, existingNames, onClose, onCreat
   const currentUi = isBulk ? bulkUi : filterDraft(drafts, selected);
   const currentError = isBulk && meta ? preprocessingFilterError(bulkUi, meta.fs_hz, meta.n_rows) : errors.get(selected);
   const missingCount = sampleCount(meta?.nan_counts, selected) + sampleCount(meta?.inf_counts, selected);
-  const nameError = preprocessingNameError(name, existingNames);
-  const sizeError = snapshot && snapshot.meta.n_rows > snapshot.max_samples
+  const sizeError = configured.length > 0 && snapshot && snapshot.meta.n_rows > snapshot.max_samples
     ? `This recording has ${snapshot.meta.n_rows.toLocaleString()} samples. Pre-processing supports up to ${snapshot.max_samples.toLocaleString()} samples per recording.` : '';
-  const done = job?.status === 'ready';
-  const failed = job?.status === 'error';
-  const busy = !!createdName && !done && !failed;
-  const hasJob = !!createdName;
-  const displayedName = createdName || test.name;
-  const readyRecipe = readonly || done;
-  const canSave = !!snapshot && !readonly && !loading && !loadError && !saving && !hasJob && !sizeError
-    && !nameError && configured.length > 0 && invalid.length === 0 && unavailable.length === 0 && !bulkDirty;
+  const done = !pendingRequest && job?.preprocessing_operation?.state === 'completed';
+  const failed = !pendingRequest && job?.preprocessing_operation?.state === 'failed';
+  const busy = !!pendingRequest;
+  const hasJob = !!job || busy;
+  const filters = configured.flatMap(column => {
+    const spec = buildFilterSpec(drafts[column]);
+    return spec ? [{ column, filter: serializePreprocessingFilter(spec) }] : [];
+  });
+  const savedFilters = recipe?.filters ?? [];
+  const changed = invalid.length > 0 || unavailable.length > 0 || !preprocessingFiltersEqual(filters, savedFilters);
+  const restoring = !configured.length && savedFilters.length > 0;
+  const canSave = !!snapshot && !loading && !loadError && !saving && !busy && !sizeError
+    && changed && invalid.length === 0 && unavailable.length === 0 && !bulkDirty;
   const progress = job?.preprocessing_progress;
   const progressText = progress?.stage || 'Processing the full recording';
 
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = bulkTargets.length > 0 && !allSelected;
-  }, [bulkTargets.length, allSelected, loading, hasJob, readonly]);
+  }, [bulkTargets.length, allSelected, loading, busy]);
 
   const selectBulk = (columns: string[]) => {
     const template = !bulkTargets.length ? filterDraft(drafts, selected) : bulkUi;
@@ -166,7 +188,7 @@ export default function PreprocessDialog({ test, existingNames, onClose, onCreat
     setBulkNote('');
   };
   const applyBulk = () => {
-    if (!meta || !bulkTargets.length || preprocessingFilterError(bulkUi, meta.fs_hz, meta.n_rows) || saving) return;
+    if (!meta || !bulkTargets.length || preprocessingFilterError(bulkUi, meta.fs_hz, meta.n_rows) || saving || busy) return;
     setDrafts(current => {
       const next = new Map(Object.entries(current));
       for (const column of bulkTargets) {
@@ -184,20 +206,22 @@ export default function PreprocessDialog({ test, existingNames, onClose, onCreat
   const save = async () => {
     if (!canSave || !snapshot || submitting.current) return;
     submitting.current = true; setSaving(true); setSaveError('');
-    const request = {
-      name: name.trim(), source_id: snapshot.source.id, source_revision: snapshot.source.revision,
-      filters: configured.map(column => ({ column, filter: serializePreprocessingFilter(buildFilterSpec(drafts[column])!) })),
-    };
+    const previous = lastRequest.current;
+    const request: PreprocessingRequest = previous && previous.source_id === snapshot.source.id
+      && previous.source_revision === snapshot.source.revision && preprocessingFiltersEqual(previous.filters, filters)
+      ? previous : { request_id: newPreprocessingRequestId(), source_id: snapshot.source.id,
+        source_revision: snapshot.source.revision, filters };
+    lastRequest.current = request;
     const accepted = (result: TestInfo) => {
-      createdCallback.current(result.name);
-      if (alive.current) { setJob(result); setCreatedName(result.name); }
+      changedCallback.current(test.name, request.request_id);
+      if (alive.current) { setJob(result); setPendingRequest(request); }
     };
     try {
-      accepted(await createPreprocessedTest(test.name, request));
+      accepted(await applyPreprocessing(test.name, request));
     } catch (reason) {
       try {
         const tests = await getJson<TestInfo[]>('/tests');
-        const recovered = tests.find(entry => entry.name === request.name && matchesPreprocessingRequest(entry.preprocessing, request));
+        const recovered = tests.find(entry => entry.name === test.name && matchesPreprocessingRequest(entry.preprocessing_operation, request));
         if (recovered) { accepted(recovered); return; }
       } catch { /* Preserve the original request error when recovery is offline. */ }
       if (alive.current) setSaveError(errorText(reason));
@@ -206,11 +230,6 @@ export default function PreprocessDialog({ test, existingNames, onClose, onCreat
       if (alive.current) setSaving(false);
     }
   };
-  const retryAsNew = () => {
-    setName(suggestPreprocessingName(test.name, [...existingNames, createdName]));
-    setCreatedName(''); setJob(null); setStatusError(''); setSaveError('');
-    setLoadKey(value => value + 1);
-  };
 
   return <dialog ref={dialog} className={styles.dialog} aria-labelledby={`${id}-title`}
     aria-describedby={`${id}-description`} onCancel={event => { event.preventDefault(); if (!saving) onClose(); }}>
@@ -218,16 +237,15 @@ export default function PreprocessDialog({ test, existingNames, onClose, onCreat
       <header className={styles.header}>
         <div className={styles.heading}>
           <span className={styles.headerIcon} aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 17h16M8 4v6m8 4v6" /></svg></span>
-          <div><h2 id={`${id}-title`}>{readonly ? 'Pre-processing details' : 'Pre-process test'}</h2>
+          <div><h2 id={`${id}-title`}>Pre-process flight</h2>
             <p className={styles.sourceName} title={test.name}>{test.name}</p></div>
         </div>
         <button type="button" className={styles.close} aria-label="Close pre-process" disabled={saving} onClick={onClose}>×</button>
       </header>
 
       <div className={styles.body}>
-        <p id={`${id}-description`} className={styles.intro}>{readonly
-          ? 'This test is a saved filtered copy. Its source and processing settings are recorded below.'
-          : 'Apply a filter to each chosen parameter across the full recording. Save a separate filtered test and keep the source.'}</p>
+        <p id={`${id}-description`} className={styles.intro}>Apply filters to the full recording and update this flight under the same name.
+          Every update starts from the original data, kept safely in the background.</p>
         {loading && <div className={styles.state} role="status">Loading native data details…</div>}
         {loadError && <div className={styles.error} role="alert"><p>Could not load pre-processing: {loadError}</p>
           <button type="button" className="btn" onClick={() => setLoadKey(value => value + 1)}>Retry loading</button></div>}
@@ -241,33 +259,25 @@ export default function PreprocessDialog({ test, existingNames, onClose, onCreat
           </div>
 
           {hasJob && <section className={`${styles.job} ${failed ? styles.jobFailed : done ? styles.jobDone : ''}`} aria-live="polite">
-            <div className={styles.jobHeading}><strong>{done ? 'Filtered copy saved' : failed ? 'Filtered copy failed' : 'Creating filtered copy'}</strong>
-              <span title={createdName}>{createdName}</span></div>
+            <div className={styles.jobHeading}><strong>{done ? savedFilters.length ? 'Pre-processing saved' : 'Original data restored' : failed ? 'Pre-processing failed' : 'Updating flight'}</strong>
+              <span title={test.name}>{test.name}</span></div>
             {busy && <><p>{progressText}. You can close this box; processing continues in Uploads.</p>
               {progress && <p>{progress.completed_columns} of {progress.total_columns} parameters filtered</p>}
               <progress aria-label="Pre-processing progress" max={Math.max(1, progress?.total_columns ?? 1)}
                 value={progress && progress.completed_columns < progress.total_columns ? progress.completed_columns : undefined} /></>}
-            {failed && <><p role="alert">{job?.error || 'The copy could not be processed.'} Your source is unchanged.</p>
-              <button type="button" className="btn" onClick={retryAsNew}>Retry with a new copy</button></>}
-            {done && <p>The filtered test is available for analysis. Plot filters remain independent and can be applied on top.</p>}
+            {failed && <p role="alert">{job?.preprocessing_operation?.error || job?.error || 'The update could not be completed.'} The previous data remains available. Review or change the filters below before applying again.</p>}
+            {done && <p>{savedFilters.length ? 'This flight now uses the saved filtered data.' : 'This flight now uses its original data.'} Plot filters remain separate.</p>}
             {statusError && <div className={styles.statusError} role="alert"><p>Could not refresh status: {statusError}</p>
-              <button type="button" className="btn" onClick={() => setPollKey(value => value + 1)}>Refresh status</button></div>}
+              <button type="button" className="btn" onClick={() => setPollKey(value => value + 1)}>Refresh status</button>
+              <button type="button" className="btn" onClick={() => { setJob(null); setLoadKey(value => value + 1); }}>Reload saved filters</button></div>}
           </section>}
 
-          {readyRecipe ? <section className={styles.saved} aria-label="Saved preprocessing recipe">
-            <div className={styles.savedHeader}><h3>Saved filters</h3><span>{recipe?.filters.length ?? 0} {recipe?.filters.length === 1 ? 'parameter' : 'parameters'}</span></div>
-            {recipe && <><dl className={styles.provenance}>
-              <div><dt>Source test</dt><dd>{recipe.source.name}</dd></div>
-              <div><dt>Saved</dt><dd>{new Date(recipe.completed_at ?? recipe.created_at).toLocaleString()}</dd></div>
-            </dl>
-              <ul className={styles.recipe}>{recipe.filters.map(entry => <li key={entry.column}>
-                <strong>{entry.column}</strong><span>{describePreprocessingFilter(entry.filter)}</span>
-              </li>)}</ul>
-              {!!recipe.warnings.length && <div className={styles.warning}><strong>Processing notes</strong>
-                <ul>{recipe.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
-            </>}
-            <p className={styles.muted}>To use different settings, create another filtered copy from the source test.</p>
-          </section> : !hasJob && <>
+          {!busy && <>
+            <div className={styles.savedState} aria-label="Saved preprocessing state">
+              <span className={styles.stateBadge}>{savedFilters.length ? 'Filtered data' : 'Original data'}</span>
+              <span>{savedFilters.length ? `${savedFilters.length} saved parameter filter${savedFilters.length === 1 ? '' : 's'} · edit below` : 'No preprocessing filters applied'}</span>
+              {recipe?.completed_at && <time dateTime={recipe.completed_at}>{new Date(recipe.completed_at).toLocaleString()}</time>}
+            </div>
             <fieldset className={styles.workspace} disabled={saving} aria-label="Pre-processing filters">
               <section className={styles.parameterPane} aria-label="Parameters">
                 <div className={styles.parameterHeading}><h3>Parameters</h3><span>{configured.length} / {parameters.length} filtered</span></div>
@@ -311,7 +321,7 @@ export default function PreprocessDialog({ test, existingNames, onClose, onCreat
                 {selected || isBulk ? <>
                   <div className={styles.editorHeading}><h3 title={isBulk ? bulkTargets.join(', ') : selected}>
                     {isBulk ? `Filter ${bulkTargets.length} parameter${bulkTargets.length === 1 ? '' : 's'}` : selected}</h3>
-                    <span>{isBulk ? 'Bulk settings' : currentUi.kind ? 'Filter configured' : 'Copied unchanged'}</span></div>
+                    <span>{isBulk ? 'Bulk settings' : currentUi.kind ? 'Filter configured' : 'Original data'}</span></div>
                   {isBulk && <p className={styles.bulkScope}>Choose settings, then apply to all {bulkTargets.length} selected.
                     {hiddenSelected > 0 && ` Includes ${hiddenSelected} hidden by the current list filters.`}</p>}
                   <p className={styles.filterHelp}>{isBulk ? HELP[currentUi.kind].replace(/this parameter/g, 'the selected parameters') : HELP[currentUi.kind]}</p>
@@ -337,42 +347,37 @@ export default function PreprocessDialog({ test, existingNames, onClose, onCreat
             {bulkDirty && <div className={styles.pendingBulk} role="status"><span>Bulk changes have not been applied.</span>
               {!isBulk && <button type="button" className={styles.textButton} disabled={!bulkTargets.length} onClick={() => { setBulkEditing(true); focusFilterEditor(); }}>Review bulk settings</button>}
               <button type="button" className={styles.textButton} onClick={() => { discardBulk(); focusFilterEditor(); }}>Discard bulk changes</button></div>}
-            <div className={styles.recipeSummary}><span>{configured.length ? `${configured.length} parameter${configured.length === 1 ? '' : 's'} will be filtered; ${parameters.length - configured.length} copied unchanged.` : 'Choose at least one parameter filter.'}</span>
-              <button type="button" className={styles.textButton} disabled={!configured.length || saving}
+            <div className={styles.recipeSummary}><span>{configured.length ? `${configured.length} parameter${configured.length === 1 ? '' : 's'} will be filtered; ${parameters.length - configured.length} use original data.` : restoring ? 'All filters removed. Apply to restore the original recording.' : 'Choose a parameter filter to update this flight.'}</span>
+              <button type="button" className={styles.textButton} disabled={(!configured.length && !bulkDirty) || saving}
                 onClick={() => { setDrafts({}); setSaveError(''); discardBulk(); }}>Clear all filters</button></div>
             {!!invalid.length && <p className={styles.fieldError} role="status">Review {invalid.length} parameter{invalid.length === 1 ? '' : 's'} with invalid settings: {invalid.join(', ')}.</p>}
             {!!unavailable.length && <div className={styles.error} role="alert"><p>The source changed. These configured parameters are no longer available: {unavailable.join(', ')}.</p>
               <button type="button" className="btn" onClick={() => setDrafts(current => Object.fromEntries(Object.entries(current).filter(([column]) => parameters.includes(column))))}>Remove unavailable filters</button></div>}
 
-            <div className={styles.destination}>
-              <label htmlFor={`${id}-name`}>Filtered test name</label>
-              <input id={`${id}-name`} className="input" value={name} autoComplete="off" spellCheck={false} maxLength={200}
-                disabled={saving} aria-invalid={!!nameError} aria-describedby={nameError ? `${id}-name-error` : `${id}-name-help`}
-                onChange={event => { setName(event.target.value); setSaveError(''); }} />
-              {nameError ? <p id={`${id}-name-error`} className={styles.fieldError}>{nameError}</p>
-                : <p id={`${id}-name-help`}>Saved alongside {test.name} in Uploads.</p>}
-            </div>
+            {restoring && <div className={styles.restoreNotice} role="status"><strong>Restore original data</strong>
+              <p>Applying with no filters restores this flight’s original samples. Its name and saved test points stay the same.</p></div>}
             {sizeError && <p className={styles.error} role="alert">{sizeError}</p>}
             {saveError && <div className={styles.error} role="alert"><p>{saveError}</p>
-              <button type="button" className="btn" onClick={() => { setLoadKey(value => value + 1); setSaveError(''); }}>Reload source details</button></div>}
+              <button type="button" className="btn" onClick={() => { setJob(null); setLoadKey(value => value + 1); }}>Reload saved filters</button></div>}
+            {!!recipe?.warnings.length && <div className={styles.warning}><strong>Saved processing notes</strong>
+              <ul>{recipe.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
           </>}
 
           <details className={styles.details}><summary>Processing and data retention</summary>
-            <p>Filters use every native sample in the current stored source test. Time values, row count, test-point boundaries and parameters without a filter are preserved. Existing calculated parameters are copied as stored unless selected for filtering.</p>
-            <p>The source test stays in the library. The filtered copy also retains the original uploaded CSV separately when available; that file may precede edits to the stored source. Known acquisition gaps remain boundaries for processing.</p>
-            <p>Plot filters are separate analysis settings. On a filtered test they apply additional processing to the saved filtered data.</p>
+            <p>Every update uses every native sample from the original recording saved before its first preprocessing update. Time values, row count and test-point boundaries are preserved. Parameters with no filter use their original values. Known acquisition gaps remain boundaries for processing.</p>
+            <p>The original stays hidden while filters are applied. Clear all filters and apply to restore it. Analysis and CSV exports use this flight’s current data.</p>
+            <p>Plot filters are separate analysis settings and apply additional processing to the current data.</p>
+            {snapshot?.legacy_preprocessing && <p>This flight was created as a filtered copy by an earlier version. Its existing samples are the original for these updates; its earlier source remains a separate flight.</p>}
           </details>
         </>}
       </div>
 
       <footer className={styles.footer}>
-        <div className={styles.footerNote}>{readyRecipe ? 'Saved recipe · full recording' : 'Source retained · plot filters stay separate'}</div>
+        <div className={styles.footerNote}>{busy ? 'Full recording · processing in background' : changed || bulkDirty ? 'Unapplied changes · same flight' : 'Original retained · plot filters stay separate'}</div>
         <div className={styles.footerActions}>
-          {readyRecipe && <><a className="btn" href={exportCsvUrl(displayedName)} download>Filtered CSV</a>
-            {recipe?.original_raw_available && <a className="btn" href={rawCsvUrl(displayedName)} download>Original uploaded CSV</a>}</>}
-          <button type="button" className="btn" disabled={saving} onClick={onClose}>{hasJob || readonly ? 'Close' : 'Cancel'}</button>
-          {readyRecipe ? <button type="button" className={`btn ${styles.primary}`} onClick={() => { onClose(); onOpenTest(displayedName); }}>Analyze filtered test</button>
-            : !hasJob && <button type="button" className={`btn ${styles.primary}`} disabled={!canSave} onClick={() => void save()}>{saving ? 'Starting…' : 'Save filtered copy'}</button>}
+          <button type="button" className="btn" disabled={saving} onClick={onClose}>{hasJob || !changed ? 'Close' : 'Cancel'}</button>
+          {done && !changed && !bulkDirty && <button type="button" className="btn" onClick={() => { onClose(); onOpenTest(test.name); }}>Analyze flight</button>}
+          {!busy && <button type="button" className={`btn ${styles.primary}`} disabled={!canSave} onClick={() => void save()}>{saving ? 'Starting…' : restoring ? 'Restore original data' : 'Apply preprocessing'}</button>}
         </div>
       </footer>
     </div>

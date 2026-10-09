@@ -26,9 +26,17 @@ from .config import ROW_GROUP_SIZE, TESTS_DIR
 from .ingest import build_pyramid
 from .locks import test_write
 from .status import write_status
-from .store import _testpoint_bounds, write_json_atomic
+from .store import _testpoint_bounds, get_meta, write_json_atomic
 
 NAN_POLICIES = ("keep_gaps", "zero_fill", "interpolate")
+PREPROCESSING_EDIT_ERROR = (
+    'Remove all filters in Uploads > Pre-process and restore the original data '
+    'before changing columns, trimming, filling missing samples or applying equations.')
+
+
+def has_active_preprocessing(meta: dict) -> bool:
+    recipe = meta.get('preprocessing')
+    return isinstance(recipe, dict) and recipe.get('mode') == 'in_place' and bool(recipe.get('filters'))
 
 
 def _updated_gap_ranges(
@@ -85,6 +93,8 @@ def _rebuild(name: str, ops: dict) -> None:
     recovery (main._recover_interrupted_ingests) flips to 'error'.  Either way
     there is no persisted state of new-data-with-stale-pyramid-and-meta.
     """
+    if has_active_preprocessing(get_meta(name) or {}):
+        raise ValueError(PREPROCESSING_EDIT_ERROR)
     test_dir = TESTS_DIR / name
     parquet_path = test_dir / "data.parquet"
     pyr_dir = test_dir / "pyramid"

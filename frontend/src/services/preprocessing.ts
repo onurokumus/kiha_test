@@ -16,7 +16,8 @@ export interface PreprocessingFilter {
 }
 export interface PreprocessingParameter { column: string; filter: PreprocessingFilter }
 export interface PreprocessingProvenance {
-  version: 1;
+  version: 1 | 2;
+  mode?: 'in_place';
   source: PreprocessingSource;
   filters: PreprocessingParameter[];
   created_at: string;
@@ -24,27 +25,43 @@ export interface PreprocessingProvenance {
   seconds?: number;
   method: 'whole_native_recording';
   warnings: string[];
-  original_raw_available: boolean;
+  original_raw_available?: boolean;
+}
+export interface PreprocessingOperation {
+  request_id: string;
+  state: 'running' | 'completed' | 'failed';
+  error?: string | null;
 }
 export interface PreprocessingProgress { stage: string; completed_columns: number; total_columns: number }
 export interface PreprocessingSnapshot {
   source: PreprocessingSource;
   meta: TestMeta;
   preprocessing: PreprocessingProvenance | null;
+  legacy_preprocessing?: PreprocessingProvenance | null;
+  preprocessing_operation?: PreprocessingOperation | null;
   max_samples: number;
 }
 export interface PreprocessingRequest {
-  name: string;
+  request_id: string;
   source_id: string;
   source_revision: string;
   filters: PreprocessingParameter[];
+}
+
+/** Plain HTTP deployments support getRandomValues, but not randomUUID. */
+export function newPreprocessingRequestId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 export function fetchPreprocessing(name: string, signal?: AbortSignal): Promise<PreprocessingSnapshot> {
   return getJson(`/tests/${encodeURIComponent(name)}/preprocess`, signal);
 }
 
-export async function createPreprocessedTest(source: string, request: PreprocessingRequest): Promise<{ name: string; status: string }> {
+export async function applyPreprocessing(source: string, request: PreprocessingRequest): Promise<{ name: string; status: string; preprocessing_operation?: PreprocessingOperation }> {
   const response = await fetch(`${API_BASE}/tests/${encodeURIComponent(source)}/preprocess`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request),
   });
@@ -83,25 +100,6 @@ export function preprocessingFilterUi(filter: PreprocessingFilter): FilterUi {
   };
 }
 
-export function preprocessingNameError(name: string, existingNames: readonly string[]): string {
-  const target = name.trim();
-  if (!target) return 'Enter a name for the filtered test.';
-  if (!/^[A-Za-z0-9._-]{1,200}$/.test(target) || !/[A-Za-z0-9]/.test(target) || target.endsWith('.'))
-    return 'Use 1–200 letters, digits, periods, underscores or hyphens; no trailing period.';
-  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(target)) return 'Choose a name that is not reserved by Windows.';
-  if (existingNames.some(existing => existing.toLocaleLowerCase() === target.toLocaleLowerCase()))
-    return 'A test with this name already exists. Choose another name.';
-  return '';
-}
-
-export function suggestPreprocessingName(source: string, existingNames: readonly string[]): string {
-  const base = `${source.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 180).replace(/\.+$/, '') || 'test'}_filtered`;
-  let name = base;
-  let suffix = 2;
-  while (preprocessingNameError(name, existingNames)) name = `${base}_${suffix++}`;
-  return name;
-}
-
 /** Validate against native sample metadata, never a display-decimated plot. */
 export function preprocessingFilterError(ui: FilterUi, fs: number, nRows: number): string {
   if (!ui.kind) return '';
@@ -133,17 +131,21 @@ function roundNativeSamples(value: number): number {
   return value - lower === .5 ? lower + (lower % 2) : Math.round(value);
 }
 
-/** Recover an accepted request if its HTTP response was lost, without adopting
- * another user's same-name output or silently switching source revisions. */
-export function matchesPreprocessingRequest(recipe: PreprocessingProvenance | null | undefined, request: PreprocessingRequest): boolean {
-  if (!recipe || recipe.source.id !== request.source_id || recipe.source.revision !== request.source_revision
-    || recipe.filters.length !== request.filters.length) return false;
-  return request.filters.every(entry => {
-    const saved = recipe.filters.find(item => item.column === entry.column);
+/** Compare meaningful native settings, ignoring server defaults and list order. */
+export function preprocessingFiltersEqual(left: readonly PreprocessingParameter[], right: readonly PreprocessingParameter[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every(entry => {
+    const saved = right.find(item => item.column === entry.column);
     if (!saved || saved.filter.kind !== entry.filter.kind) return false;
+    const requestedSpec = buildFilterSpec(preprocessingFilterUi(entry.filter));
     const savedSpec = buildFilterSpec(preprocessingFilterUi(saved.filter));
-    return !!savedSpec && JSON.stringify(serializePreprocessingFilter(savedSpec)) === JSON.stringify(entry.filter);
+    return !!savedSpec && !!requestedSpec && JSON.stringify(serializePreprocessingFilter(savedSpec)) === JSON.stringify(serializePreprocessingFilter(requestedSpec));
   });
+}
+
+/** Only adopt this exact accepted operation, including restore requests. */
+export function matchesPreprocessingRequest(operation: PreprocessingOperation | null | undefined, request: PreprocessingRequest): boolean {
+  return !!operation && operation.request_id === request.request_id;
 }
 
 export function describePreprocessingFilter(filter: PreprocessingFilter): string {

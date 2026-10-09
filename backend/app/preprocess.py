@@ -1,10 +1,7 @@
-"""Saved whole-record filtering into an independent, non-destructive test copy.
+"""Reversible whole-record filtering within one stable test identity.
 
-Only the destination is ever written. Each selected column is processed at its
-native sample rate, then staged separately so RAM scales with one full column,
-not the complete recording. No plot windows/reduced samples enter this path.
-The destination's ready status is the commit marker; failed/interrupted copies
-remain manageable error rows and can never replace their source.
+Recipes always start from an internal original snapshot. A rollback journal
+protects the last-good active data while staged artifacts are published.
 """
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
@@ -15,7 +12,7 @@ from pathlib import Path
 import shutil
 import time
 from typing import Literal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 import numpy as np
@@ -28,12 +25,22 @@ import scipy
 from . import analysis_sources, dsp, store, trash
 from .config import MAX_FILTER_SAMPLES, ROW_GROUP_SIZE, UPLOAD_DISK_RESERVE_BYTES
 from .ingest import build_pyramid
-from .locks import catalog_write, data_read, test_read, test_write
+from .locks import test_write
 from .paths import is_link_or_junction
 from .status import write_status
 
 router = APIRouter()
 logger = logging.getLogger('kiha.preprocess')
+ORIGINAL = '.preprocess-original'
+WORK = '.preprocess-work'
+ARTIFACTS = ('data.parquet', 'pyramid', 'meta.json')
+SAMPLE_FIELDS = ('columns', 'time_column', 'fs_hz', 'n_rows', 'n_columns',
+                 't_start', 'duration_s', 'nan_counts', 'inf_counts', 'pyramid_rows',
+                 'nan_policy', 'time_gap_ranges', 'acquisition_gap_ranges', 'derived_variables')
+
+
+def is_in_place(recipe) -> bool:
+    return isinstance(recipe, dict) and recipe.get('version') == 2 and recipe.get('mode') == 'in_place'
 
 
 class FilterSettings(BaseModel):
@@ -58,10 +65,10 @@ class ColumnFilter(BaseModel):
 
 class PreprocessRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    name: str = Field(min_length=1, max_length=200)
+    request_id: UUID
     source_id: UUID
     source_revision: str = Field(min_length=1, max_length=128)
-    filters: list[ColumnFilter] = Field(min_length=1, max_length=512)
+    filters: list[ColumnFilter] = Field(max_length=512)
 
 
 def _directory(name: str) -> Path:
@@ -120,15 +127,18 @@ def get_preprocess(name: str):
     _ready(name)  # fail busy promptly, before waiting for a long native writer
     with test_write(name):
         meta = _ready(name)
-        return {'source': _source(name), 'meta': meta,
-                'preprocessing': meta.get('preprocessing'),
+        with _source_access(name):
+            _, baseline = original_data(_directory(name), meta)
+        recipe = meta.get('preprocessing')
+        return {'source': _source(name), 'meta': _sample_meta(meta, baseline),
+                'preprocessing': recipe if is_in_place(recipe) else None,
+                'legacy_preprocessing': recipe if recipe and not is_in_place(recipe) else None,
+                'preprocessing_operation': public_operation(store.get_status(name)),
                 'max_samples': MAX_FILTER_SAMPLES}
 
 
 def _validate(meta: dict, filters: list[ColumnFilter]) -> None:
-    if meta.get('preprocessing') is not None:
-        raise HTTPException(409, 'This is a pre-processed copy. Start from the original test to create another version.')
-    if not 2 <= meta['n_rows'] <= MAX_FILTER_SAMPLES:
+    if filters and not 2 <= meta['n_rows'] <= MAX_FILTER_SAMPLES:
         raise HTTPException(400, f'Whole-record pre-processing supports 2–{MAX_FILTER_SAMPLES:,} samples per test; no samples were changed.')
     columns = [entry.column for entry in filters]
     if len(columns) != len(set(columns)):
@@ -158,70 +168,111 @@ def _validate(meta: dict, filters: list[ColumnFilter]) -> None:
 @router.post('/api/tests/{name}/preprocess', status_code=202)
 def create_preprocess(name: str, payload: PreprocessRequest,
                       background: BackgroundTasks):
+    previous = _repeat(name, payload)
+    if previous:
+        return previous
     _ready(name)
-    destination = _directory(payload.name)
-    # Catalog reservation and guards are short. Expensive native work runs only
-    # after the response, under source read + destination write locks.
-    with catalog_write():
-        if destination.exists():
-            raise HTTPException(409, f"Test '{payload.name}' already exists. Choose a different output name.")
-        return _reserve_copy(name, payload, background, destination)
-
-
-def _reserve_copy(name: str, payload: PreprocessRequest,
-                  background: BackgroundTasks, destination: Path):
-    """Caller holds catalog_write and has rejected occupied destinations.
-
-    The source uses a reader so another independent copy can be reserved while
-    a worker reads it. Both reservation and worker acquire source before output;
-    no long source writer is acquired while blocking the whole catalog.
-    """
-    with test_read(name, check=lambda: _ready(name)), test_write(payload.name):
+    with test_write(name):
+        previous = _repeat(name, payload)
+        if previous:
+            return previous
         meta = _ready(name)
-        _validate(meta, payload.filters)
+        destination = _directory(name)
         with _source_access(name):
+            _cleanup(destination)
+            origin, baseline = original_data(destination, meta)
+            _validate(baseline, payload.filters)
             if analysis_sources.read_identity(_directory(name)) is None:
                 raise HTTPException(409, 'Source identity is unavailable. Close and reopen pre-processing.')
         source = _source(name)
         if source['id'] != str(payload.source_id) or source['revision'] != payload.source_revision:
             raise HTTPException(409, 'The source changed. Close and reopen pre-processing to review the current data.')
-        if destination.exists():
-            raise HTTPException(409, f"Test '{payload.name}' already exists. Choose a different output name.")
-        origin = _directory(name)
-        raw = origin / 'raw.csv'
-        # Advisory reservation includes raw copy, sample data, staged columns,
-        # and pyramid headroom. The worker still handles later disk failures.
-        estimate = (raw.stat().st_size if raw.is_file() else 0)
-        estimate += max((origin / 'data.parquet').stat().st_size * 2,
-                        meta['n_rows'] * len(meta['columns']) * 8)
-        estimate += meta['n_rows'] * len(payload.filters) * 8
+        operation = {'request_id': str(payload.request_id), 'state': 'running',
+                     'request': payload.model_dump(mode='json')}
+        if not payload.filters and not is_in_place(meta.get('preprocessing')):
+            operation['state'] = 'completed'
+            write_status(destination, 'ready', preprocessing_operation=operation)
+            return _response(name)
+        estimate = max((origin / 'data.parquet').stat().st_size * 3,
+                       baseline['n_rows'] * len(baseline['columns']) * 16)
+        estimate += baseline['n_rows'] * len(payload.filters) * 8
         if shutil.disk_usage(store.TESTS_DIR).free < estimate + UPLOAD_DISK_RESERVE_BYTES:
-            raise HTTPException(507, 'Not enough free disk space for an independent pre-processed copy.')
+            raise HTTPException(507, 'Not enough free disk space to safely pre-process this test.')
         created_at = datetime.now(timezone.utc).isoformat(timespec='seconds')
-        recipe = {'version': 1, 'source': source,
+        old = meta.get('preprocessing')
+        recipe = {'version': 2, 'mode': 'in_place',
+                  'source': old['source'] if is_in_place(old) else source,
+                  'legacy_copy': bool(baseline.get('preprocessing')),
                   'filters': [entry.model_dump() for entry in payload.filters],
                   'created_at': created_at, 'method': 'whole_native_recording',
-                  'warnings': [], 'original_raw_available': raw.is_file()}
-        destination.mkdir()
-        try:
-            store.write_json_atomic(destination / analysis_sources.IDENTITY_FILE,
-                                    {'version': 1, 'id': str(uuid4())})
-            write_status(destination, 'rebuilding', preprocessing=recipe,
-                         preprocessing_progress={'stage': 'Queued', 'completed_columns': 0,
-                                                 'total_columns': len(payload.filters)})
-        except BaseException:
-            shutil.rmtree(destination)
-            raise
-    background.add_task(build_copy, name, payload.name, recipe)
-    return {'name': payload.name, 'status': 'rebuilding'}
+                  'warnings': [], 'original_raw_available': (destination / 'raw.csv').is_file()}
+        write_status(destination, 'rebuilding', preprocessing=recipe,
+                     preprocessing_operation=operation,
+                     preprocessing_progress={'stage': 'Queued', 'completed_columns': 0,
+                                             'total_columns': len(payload.filters)})
+    background.add_task(build_in_place, name, source, recipe, operation)
+    return _response(name)
+
+
+def public_operation(status: dict):
+    operation = status.get('preprocessing_operation')
+    if not isinstance(operation, dict):
+        return None
+    return {key: operation[key] for key in ('request_id', 'state', 'error') if key in operation}
+
+
+def _response(name):
+    status = store.get_status(name)
+    return {'name': name, 'status': status['status'],
+            'preprocessing_operation': public_operation(status)}
+
+
+def _repeat(name, payload):
+    _directory(name)
+    status = store.get_status(name)
+    previous = status.get('preprocessing_operation')
+    if not isinstance(previous, dict):
+        return None
+    if previous.get('request_id') != str(payload.request_id):
+        return None
+    if previous.get('request') != payload.model_dump(mode='json'):
+        raise HTTPException(409, 'This pre-processing request ID was already used for different settings.')
+    return _response(name)
+
+
+def _safe_tree(path: Path):
+    if is_link_or_junction(path) or (path.is_dir() and any(is_link_or_junction(p) for p in path.rglob('*'))):
+        raise ValueError('Linked preprocessing artifacts are not supported.')
+
+
+def original_data(directory: Path, meta: dict) -> tuple[Path, dict]:
+    """Return the physical original for processing/statistics, never a catalog row."""
+    if not is_in_place(meta.get('preprocessing')):
+        return directory, meta
+    original = directory / ORIGINAL
+    _safe_tree(original)
+    baseline = store._read_json(original / 'meta.json')
+    if not isinstance(baseline, dict) or not (original / 'data.parquet').is_file():
+        raise ValueError('The retained original is unavailable; no samples were changed.')
+    return original, baseline
+
+
+def _sample_meta(current, baseline):
+    result = deepcopy(current)
+    for key in SAMPLE_FIELDS:
+        if key in baseline:
+            result[key] = deepcopy(baseline[key])
+        else:
+            result.pop(key, None)
+    return result
 
 
 def _filter_column(values: np.ndarray, meta: dict, settings: dict) -> tuple[np.ndarray, list[str]]:
     """Use the plot DSP operators, preserving non-finite samples and hard gaps.
 
-    Unlike temporary plot overlays, a saved copy must never silently replace
+    Unlike temporary plot overlays, a saved result must never silently replace
     short valid segments with NaNs. A filter that cannot cover such a segment
-    fails the entire copy with an actionable error.
+    fails the entire operation with an actionable error.
     """
     output = values.copy()
     settings = dict(settings)
@@ -290,28 +341,135 @@ def _merge_columns(source: Path, staged: dict[str, Path], target: Path) -> None:
                 raise ValueError('Pre-processing output has extra rows.')
 
 
-def build_copy(source_name: str, output_name: str, recipe: dict) -> None:
-    destination = _directory(output_name)
-    staging = destination / '.preprocess'
-    started = time.monotonic()
-    # The source lock is always acquired before the native slot. Busy output
-    # names reject rename/delete/edit immediately, so no inverse lock order.
-    with data_read(source_name), test_write(output_name):
+def _discard(path: Path):
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _copy_artifact(source: Path, target: Path):
+    _safe_tree(source)
+    if source.is_dir():
+        shutil.copytree(source, target)
+    else:
+        shutil.copy2(source, target)
+
+
+def _retain_original(directory: Path, meta: dict):
+    original = directory / ORIGINAL
+    if is_in_place(meta.get('preprocessing')):
+        return original_data(directory, meta)
+    # An unused snapshot can remain after a failed cleanup; it must never be
+    # treated as current after an ordinary Edit changed the active recording.
+    _safe_tree(original)
+    _discard(original)
+    pending = directory / (ORIGINAL + '.tmp')
+    _safe_tree(pending)
+    _discard(pending)
+    pending.mkdir()
+    for relative in ARTIFACTS:
+        source = directory / relative
+        if source.exists():
+            _copy_artifact(source, pending / relative)
+    os.replace(pending, original)
+    return original, deepcopy(meta)
+
+
+def _publish(directory: Path, staging: Path):
+    rollback = staging / 'rollback'
+    rollback.mkdir()
+    manifest = {relative: (directory / relative).exists() for relative in ARTIFACTS}
+    # The manifest precedes every move. Recovery uses backup existence to
+    # distinguish artifacts already moved from those still in their old place.
+    store.write_json_atomic(staging / 'transaction.json', manifest)
+    for relative in ARTIFACTS:
+        active, new = directory / relative, staging / 'next' / relative
+        if manifest[relative]:
+            os.replace(active, rollback / relative)
+        if new.exists():
+            os.replace(new, active)
+
+
+def _rollback(directory: Path):
+    staging = directory / WORK
+    _safe_tree(staging)
+    manifest = store._read_json(staging / 'transaction.json')
+    if manifest is None and not (staging / 'transaction.json').exists():
+        return
+    if not isinstance(manifest, dict) or set(manifest) != set(ARTIFACTS) or any(type(v) is not bool for v in manifest.values()):
+        raise ValueError('Pre-processing rollback journal is invalid.')
+    for relative in ARTIFACTS:
+        active, old = directory / relative, staging / 'rollback' / relative
+        if old.exists():
+            _discard(active)
+            os.replace(old, active)
+        elif not manifest[relative]:
+            _discard(active)
+
+
+def _cleanup(directory: Path):
+    for relative in (WORK, ORIGINAL + '.tmp'):
+        path = directory / relative
+        _safe_tree(path)
+        _discard(path)
+    if not is_in_place((store.get_meta(directory.name) or {}).get('preprocessing')):
+        _safe_tree(directory / ORIGINAL)
+        _discard(directory / ORIGINAL)
+
+
+def recover_in_place(directory: Path) -> bool:
+    """Recover only our marked jobs, before readers are admitted at startup."""
+    status = store.get_status(directory.name)
+    operation = status.get('preprocessing_operation')
+    if not isinstance(operation, dict):
+        return False
+    interrupted = status.get('status') == 'rebuilding'
+    retry_recovery = status.get('status') == 'error' and (directory / WORK / 'transaction.json').is_file()
+    if interrupted or retry_recovery:
         try:
-            meta = _ready(source_name)
-            source = _source(source_name)
-            if source != recipe['source']:
-                raise ValueError('Source changed before processing began. Create a new copy from the current original.')
-            if meta.get('preprocessing') is not None:
-                raise ValueError('Pre-processing must start from an original test.')
-            origin = _directory(source_name)
+            _rollback(directory)
+            message = 'Pre-processing was interrupted by a backend restart. The previous active data has been restored.'
+            operation = {**operation, 'state': 'failed', 'error': message}
+            write_status(directory, 'ready', preprocessing_operation=operation)
+        except Exception:
+            logger.exception("Cannot recover pre-processing for '%s'", directory.name)
+            write_status(directory, 'error', 'Pre-processing recovery could not restore the active files. '
+                         'Retained recovery files have been preserved; ask the server administrator to check the backend log.',
+                         preprocessing_operation={**operation, 'state': 'failed', 'error': 'Recovery needs administrator attention.'})
+            return True
+    if store.get_status(directory.name).get('status') == 'ready':
+        try:
+            _cleanup(directory)
+        except Exception:
+            logger.warning("Pre-processing cleanup pending for '%s'", directory.name, exc_info=True)
+    return True
+
+
+def build_in_place(name: str, expected: dict, recipe: dict, operation: dict) -> None:
+    directory = _directory(name)
+    staging = directory / WORK
+    started = time.monotonic()
+    # Writers serialize native work with every reader and sample/metadata edit.
+    # Busy status is published during reservation so other writes reject early.
+    with test_write(name):
+        try:
+            if _source(name) != expected:
+                raise ValueError('Source changed before processing began. Reload pre-processing to review the current data.')
+            current = store.get_meta(name)
+            origin, baseline = _retain_original(directory, current)
+            _safe_tree(staging)
+            _discard(staging)
             staging.mkdir()
+            next_dir = staging / 'next'
+            next_dir.mkdir()
             staged = {}
             warnings = []
             total = len(recipe['filters'])
 
             def report(stage, completed):
-                write_status(destination, 'rebuilding', preprocessing=recipe,
+                write_status(directory, 'rebuilding', preprocessing=recipe,
+                             preprocessing_operation=operation,
                              preprocessing_progress={'stage': stage, 'completed_columns': completed,
                                                      'total_columns': total})
 
@@ -321,11 +479,10 @@ def build_copy(source_name: str, output_name: str, recipe: dict) -> None:
                 frame = pl.read_parquet(origin / 'data.parquet', columns=[column])
                 try:
                     result, notes = _filter_column(frame[column].to_numpy().astype(np.float64),
-                                                   meta, entry['filter'])
+                                                   baseline, entry['filter'])
                 except ValueError as exc:
                     raise ValueError(f'{column}: {exc}') from None
                 path = staging / f'column-{index}.parquet'
-                # Keep original Arrow nulls separate from IEEE NaN/Inf.
                 array = pa.array(result, mask=frame[column].is_null().to_numpy())
                 pq.write_table(pa.table({column: array}), path, row_group_size=ROW_GROUP_SIZE,
                                compression='zstd')
@@ -333,43 +490,48 @@ def build_copy(source_name: str, output_name: str, recipe: dict) -> None:
                 warnings.extend(f'{column}: {note}' for note in notes)
                 del frame, result, array
 
-            report('Saving complete recording', total)
-            parquet = staging / 'data.parquet'
-            _merge_columns(origin / 'data.parquet', staged, parquet)
-            report('Building plot data', total)
-            inf_counts = {}
-            nan_counts, levels = build_pyramid(parquet, staging / 'pyramid',
-                                               meta['time_column'], inf_counts=inf_counts)
-            report('Preserving original CSV', total)
-            if recipe['original_raw_available']:
-                shutil.copy2(origin / 'raw.csv', staging / 'raw.csv')
-            saved = deepcopy(meta)
-            saved.update(name=output_name, created_at=recipe['created_at'],
-                         nan_counts={c: n for c, n in nan_counts.items() if n},
-                         inf_counts={c: n for c, n in inf_counts.items() if n},
-                         pyramid_rows=levels)
-            recipe = {**recipe, 'warnings': warnings,
-                      'completed_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
-                      'seconds': round(time.monotonic() - started, 2),
-                      'boundary_policy': 'whole continuous regions; sparse missing samples temporarily interpolated and restored; known acquisition gaps never crossed and their stored values preserved',
-                      'derived_variables_policy': 'Stored equation outputs are filtered only when selected; equations are not recomputed after filtering their dependencies.',
-                      'runtime': {'numpy': np.__version__, 'scipy': scipy.__version__}}
-            saved['preprocessing'] = recipe
-            points = deepcopy(store.read_testpoints(source_name))
-            points['test'] = output_name
-            # Publish all artifacts while status is rebuilding. Ready comes
-            # last, after no staged or partial files can be served as a test.
-            os.replace(parquet, destination / 'data.parquet')
-            os.replace(staging / 'pyramid', destination / 'pyramid')
-            if recipe['original_raw_available']:
-                os.replace(staging / 'raw.csv', destination / 'raw.csv')
-            store.write_json_atomic(destination / 'testpoints.json', points)
-            store.write_json_atomic(destination / 'meta.json', saved)
-            shutil.rmtree(staging)
-            write_status(destination, 'ready')
+            saved = _sample_meta(current, baseline)
+            if total:
+                report('Saving complete recording', total)
+                parquet = next_dir / 'data.parquet'
+                _merge_columns(origin / 'data.parquet', staged, parquet)
+                report('Building plot data', total)
+                inf_counts = {}
+                nan_counts, levels = build_pyramid(parquet, next_dir / 'pyramid',
+                                                   baseline['time_column'], inf_counts=inf_counts)
+                saved.update(nan_counts={c: n for c, n in nan_counts.items() if n},
+                             inf_counts={c: n for c, n in inf_counts.items() if n}, pyramid_rows=levels)
+                saved['preprocessing'] = {**recipe, 'warnings': warnings,
+                    'completed_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+                    'seconds': round(time.monotonic() - started, 2),
+                    'boundary_policy': 'whole continuous regions; sparse missing samples temporarily interpolated and restored; known acquisition gaps never crossed and their stored values preserved',
+                    'derived_variables_policy': 'Stored equation outputs are filtered only when selected; equations are not recomputed after filtering their dependencies.',
+                    'runtime': {'numpy': np.__version__, 'scipy': scipy.__version__}}
+            else:
+                report('Restoring original data', 0)
+                for relative in ('data.parquet', 'pyramid'):
+                    if (origin / relative).exists():
+                        _copy_artifact(origin / relative, next_dir / relative)
+                if 'preprocessing' in baseline:
+                    saved['preprocessing'] = deepcopy(baseline['preprocessing'])
+                else:
+                    saved.pop('preprocessing', None)
+            store.write_json_atomic(next_dir / 'meta.json', saved)
+            _publish(directory, staging)
+            write_status(directory, 'ready', preprocessing_operation={**operation, 'state': 'completed'})
         except Exception as exc:
-            if staging.exists():
-                shutil.rmtree(staging, ignore_errors=True)
-            write_status(destination, 'error', f'Pre-processing failed: {exc}. The original test is unchanged.',
-                         preprocessing=recipe)
-            logger.exception("Pre-processing '%s' from '%s' failed", output_name, source_name)
+            logger.exception("Pre-processing '%s' failed", name)
+            try:
+                _rollback(directory)
+                message = f'Pre-processing failed: {exc}. The previous active data is unchanged.'
+                write_status(directory, 'ready', preprocessing_operation={**operation, 'state': 'failed', 'error': message})
+            except Exception:
+                logger.exception("Pre-processing rollback failed for '%s'", name)
+                write_status(directory, 'error', 'Pre-processing recovery could not restore the active files. '
+                             'Recovery files have been preserved; ask the server administrator to check the backend log.',
+                             preprocessing_operation={**operation, 'state': 'failed', 'error': 'Recovery needs administrator attention.'})
+                return
+        try:
+            _cleanup(directory)
+        except Exception:
+            logger.warning("Pre-processing cleanup pending for '%s'", name, exc_info=True)

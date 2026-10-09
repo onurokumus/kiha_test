@@ -15,21 +15,28 @@ const numbersUrl = await moduleUrl('../src/utils/numericField.ts');
 const filtersUrl = await moduleUrl('../src/constants/filters.ts', { '../utils/numericField': numbersUrl });
 const apiUrl = `data:text/javascript;base64,${Buffer.from('export const API_BASE = "/api"; export const getJson = async (path) => ({path});').toString('base64')}`;
 const { DEFAULT_FILTER_UI, buildFilterSpec } = await import(filtersUrl);
-const { describePreprocessingFilter, preprocessingFilterError, preprocessingFilterUi, preprocessingNameError,
-  serializePreprocessingFilter, suggestPreprocessingName, matchesPreprocessingRequest,
-  createPreprocessedTest, fetchPreprocessing } = await import(await moduleUrl('../src/services/preprocessing.ts', {
+const { describePreprocessingFilter, preprocessingFilterError, preprocessingFilterUi, preprocessingFiltersEqual,
+  serializePreprocessingFilter, newPreprocessingRequestId, matchesPreprocessingRequest,
+  applyPreprocessing, fetchPreprocessing } = await import(await moduleUrl('../src/services/preprocessing.ts', {
   '../constants/filters': filtersUrl, './api': apiUrl,
 }));
 const ui = (kind, patch = {}) => ({ ...DEFAULT_FILTER_UI, kind, ...patch });
 
-test('filtered copy names preserve the source identity and avoid case-insensitive collisions', () => {
-  assert.equal(suggestPreprocessingName('flight', ['flight_filtered', 'FLIGHT_FILTERED_2']), 'flight_filtered_3');
-  assert.equal(suggestPreprocessingName('legacy file', []), 'legacy_file_filtered');
-  assert.ok(suggestPreprocessingName('x'.repeat(200), []).length <= 200);
-  for (const value of ['', '..', 'bad/name', 'name.', 'CON', 'LPT1.csv', 'x'.repeat(201)])
-    assert.notEqual(preprocessingNameError(value, []), '');
-  assert.notEqual(preprocessingNameError('Flight', ['flight']), '');
-  assert.equal(preprocessingNameError('flight_filtered', ['flight']), '');
+test('operation IDs work on plain HTTP without randomUUID and carry v4 version/variant bits', () => {
+  const originalCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  let generated = 0;
+  try {
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: {
+      getRandomValues: bytes => { bytes.fill(++generated); return bytes; },
+    } });
+    const first = newPreprocessingRequestId();
+    assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.notEqual(newPreprocessingRequestId(), first);
+    assert.equal(generated, 2);
+  } finally {
+    if (originalCrypto) Object.defineProperty(globalThis, 'crypto', originalCrypto);
+    else delete globalThis.crypto;
+  }
 });
 
 test('recipe serialization excludes plot state and stale settings from previous filter kinds', () => {
@@ -89,32 +96,56 @@ test('saved recipe descriptions retain settings that affect analysis', () => {
   for (const fragment of ['50 ms', '10 ms', '4 MAD', 'min jump 2', 'local median']) assert.ok(label.includes(fragment));
 });
 
-test('lost-response recovery requires the same source revision, parameters and settings', () => {
-  const request = { name: 'filtered', source_id: 'source-id', source_revision: 'revision-1',
+test('saved-recipe dirty checks ignore order and unused server defaults, but detect changes and restore', () => {
+  const filters = [{ column: '__proto__', filter: { kind: 'lowpass', order: 4, f1: 8 } },
+    { column: 'constructor', filter: { kind: 'detrend' } }];
+  const saved = [{ column: 'constructor', filter: { kind: 'detrend', order: 4, f1: null } },
+    { column: '__proto__', filter: { kind: 'lowpass', order: 4, f1: 8, f2: null, window_s: null, abs_floor: 0 } }];
+  assert.equal(preprocessingFiltersEqual(filters, saved), true);
+  assert.equal(preprocessingFiltersEqual(filters, [{ ...saved[0], column: 'different' }, saved[1]]), false);
+  assert.equal(preprocessingFiltersEqual(filters, [saved[0], { ...saved[1], filter: { ...saved[1].filter, f1: 9 } }]), false);
+  assert.equal(preprocessingFiltersEqual([], saved), false);
+  assert.equal(preprocessingFiltersEqual([], []), true);
+});
+
+test('lost-response recovery correlates the exact operation, including restores and failures', () => {
+  const request = { request_id: 'operation-1', source_id: 'source-id', source_revision: 'revision-1',
     filters: [{ column: 'thrust', filter: { kind: 'lowpass', order: 4, f1: 8 } }] };
-  const recipe = { source: { id: 'source-id', revision: 'revision-1', name: 'source' },
-    filters: [{ column: 'thrust', filter: { kind: 'lowpass', order: 4, f1: 8, f2: null, window_s: null, abs_floor: 0 } }] };
-  assert.equal(matchesPreprocessingRequest(recipe, request), true);
-  assert.equal(matchesPreprocessingRequest({ ...recipe, source: { ...recipe.source, id: 'different-source' } }, request), false);
-  assert.equal(matchesPreprocessingRequest({ ...recipe, source: { ...recipe.source, revision: 'revision-2' } }, request), false);
-  assert.equal(matchesPreprocessingRequest(recipe, { ...request, filters: [{ column: 'thrust', filter: { kind: 'lowpass', order: 4, f1: 9 } }] }), false);
-  assert.equal(matchesPreprocessingRequest(recipe, { ...request, filters: [] }), false);
+  for (const state of ['running', 'completed', 'failed']) {
+    assert.equal(matchesPreprocessingRequest({ request_id: 'operation-1', state }, request), true);
+    assert.equal(matchesPreprocessingRequest({ request_id: 'operation-1', state }, { ...request, filters: [] }), true);
+  }
+  assert.equal(matchesPreprocessingRequest({ request_id: 'previous-operation', state: 'completed' }, request), false);
   assert.equal(matchesPreprocessingRequest(null, request), false);
 });
 
 test('submission transmits guarded native-record recipe and surfaces server failures', async () => {
   const originalFetch = globalThis.fetch;
-  const request = { name: 'filtered', source_id: 'source-id', source_revision: 'revision', filters: [{ column: 'thrust', filter: { kind: 'detrend' } }] };
+  const request = { request_id: 'operation-1', source_id: 'source-id', source_revision: 'revision', filters: [{ column: 'thrust', filter: { kind: 'detrend' } }] };
   try {
     globalThis.fetch = async (url, init) => {
       assert.equal(url, '/api/tests/source%20test/preprocess');
       assert.equal(init.method, 'POST');
       assert.deepEqual(JSON.parse(init.body), request);
-      return { ok: true, json: async () => ({ name: 'filtered', status: 'rebuilding' }) };
+      assert.equal(Object.hasOwn(JSON.parse(init.body), 'name'), false);
+      return { ok: true, json: async () => ({ name: 'source test', status: 'rebuilding' }) };
     };
-    assert.deepEqual(await createPreprocessedTest('source test', request), { name: 'filtered', status: 'rebuilding' });
+    assert.deepEqual(await applyPreprocessing('source test', request), { name: 'source test', status: 'rebuilding' });
     globalThis.fetch = async () => ({ ok: false, status: 409, statusText: 'Conflict', json: async () => ({ detail: 'Source revision changed.' }) });
-    await assert.rejects(() => createPreprocessedTest('source test', request), /Source revision changed/);
+    await assert.rejects(() => applyPreprocessing('source test', request), /Source revision changed/);
     assert.deepEqual(await fetchPreprocessing('source test'), { path: '/tests/source%20test/preprocess' });
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('restore submits an explicit empty recipe against the same flight identity', async () => {
+  const originalFetch = globalThis.fetch;
+  const request = { request_id: 'restore-1', source_id: 'source-id', source_revision: 'filtered-revision', filters: [] };
+  try {
+    globalThis.fetch = async (url, init) => {
+      assert.equal(url, '/api/tests/flight/preprocess');
+      assert.deepEqual(JSON.parse(init.body), request);
+      return { ok: true, json: async () => ({ name: 'flight', status: 'rebuilding' }) };
+    };
+    assert.deepEqual(await applyPreprocessing('flight', request), { name: 'flight', status: 'rebuilding' });
   } finally { globalThis.fetch = originalFetch; }
 });

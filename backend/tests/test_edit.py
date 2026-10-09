@@ -114,6 +114,51 @@ class EditTests(DataDirTestCase):
         self.assertEqual(result["status"], "rebuilding")
         self.assertEqual(len(bt.tasks), 1)
 
+    def test_active_preprocessing_blocks_sample_edits_but_keeps_metadata_editable(self):
+        meta = self.meta()
+        meta['preprocessing'] = {'version': 2, 'mode': 'in_place',
+            'filters': [{'column': 'a', 'filter': {'kind': 'detrend'}}]}
+        store.write_json_atomic(self.tests / 'alpha' / 'meta.json', meta)
+        before = (self.tests / 'alpha' / 'data.parquet').read_bytes()
+        for ops in (EditOps(drop=['b']), EditOps(rename={'a': 'force'}),
+                    EditOps(trim_t0=2), EditOps(nan_policy='zero_fill'),
+                    EditOps(formulas=[{'name': 'force', 'expression': '{a} * 2'}])):
+            with self.subTest(ops=ops):
+                background = BackgroundTasks()
+                with self.assertRaises(HTTPException) as caught:
+                    main.api_edit('alpha', ops, background)
+                self.assertEqual(caught.exception.status_code, 409)
+                self.assertIn('restore the original', caught.exception.detail)
+                self.assertFalse(background.tasks)
+        saved = main.api_patch_meta('alpha', main.UserMetaPatch(notes='Preserve this note'))
+        self.assertEqual(saved['notes'], 'Preserve this note')
+        self.assertEqual(store.get_status('alpha')['status'], 'ready')
+        self.assertEqual((self.tests / 'alpha' / 'data.parquet').read_bytes(), before)
+
+    def test_edit_rechecks_preprocessing_after_acquiring_writer(self):
+        original = self.meta()
+        active = {**original, 'preprocessing': {'version': 2, 'mode': 'in_place',
+            'filters': [{'column': 'a', 'filter': {'kind': 'detrend'}}]}}
+        background = BackgroundTasks()
+        with patch.object(store, 'get_meta', side_effect=[original, active]):
+            with self.assertRaises(HTTPException) as caught:
+                main.api_edit('alpha', EditOps(drop=['b']), background)
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertFalse(background.tasks)
+        self.assertEqual(store.get_status('alpha')['status'], 'ready')
+
+    def test_rebuild_worker_cannot_bypass_active_preprocessing_guard(self):
+        meta = self.meta()
+        meta['preprocessing'] = {'version': 2, 'mode': 'in_place',
+            'filters': [{'column': 'a', 'filter': {'kind': 'detrend'}}]}
+        store.write_json_atomic(self.tests / 'alpha' / 'meta.json', meta)
+        before = (self.tests / 'alpha' / 'data.parquet').read_bytes()
+        with self.assertRaisesRegex(ValueError, 'restore the original'):
+            edit._rebuild('alpha', {'drop': ['b']})
+        self.assertEqual(store.get_status('alpha')['status'], 'ready')
+        self.assertEqual(self.meta(), meta)
+        self.assertEqual((self.tests / 'alpha' / 'data.parquet').read_bytes(), before)
+
     def test_failed_rebuild_leaves_the_original_test_intact(self):
         # A crash while building the new pyramid must not touch the live
         # data/meta/pyramid — everything expensive is staged first.

@@ -311,6 +311,9 @@ function App() {
   const dragDepth = useRef(0);
   // Set while an /edit rebuild runs; the poller reloads the test when ready.
   const rebuildPending = useRef(false);
+  const preprocessingPending = useRef(new Map<string, string>());
+  const preprocessingObserved = useRef(new Map<string, string>());
+  const [preprocessingPollVersion, setPreprocessingPollVersion] = useState(0);
 
   // Dedupe guards for async fetches.
   const metaInFlight = useRef<Set<string>>(new Set());
@@ -510,7 +513,7 @@ function App() {
 
   /** Drop every cache for one test (after rebuild/rename/delete/split-save). */
   const invalidateTest = useCallback(
-    (name: string) => {
+    (name: string, preservePointSelection = false) => {
       setSourceCatalog(previous => previous.filter(source => source.name !== name));
       setSourceRefreshVersion(version => version + 1);
       // Bump the generation first so any in-flight fetch for this test drops
@@ -547,9 +550,13 @@ function App() {
         );
         return next.size === prev.size ? prev : next;
       });
-      setSelectedTPs((prev) => prev.filter((s) => s.test !== name));
-      setPendingRestoredSelections((prev) => prev.filter((selection) => selection.test !== name));
-      if (name === currentTest) setFullRange(null);
+      setSelectedTPs((prev) => preservePointSelection
+        ? prev.map(selection => selection.test === name ? { ...selection, traces: {} } : selection)
+        : prev.filter((selection) => selection.test !== name));
+      if (!preservePointSelection) {
+        setPendingRestoredSelections((prev) => prev.filter((selection) => selection.test !== name));
+        if (name === currentTest) setFullRange(null);
+      }
       // Clear the in-flight guards so the loaders can immediately start a FRESH
       // fetch (the stale one, now a lower generation, will be discarded).
       metaInFlight.current.delete(name);
@@ -869,12 +876,47 @@ function App() {
   // first ready test if none is selected, and reload the current test when
   // its rebuild completes.
   const uploadsActive = uploads.some((u) => u.phase !== 'paused' && u.phase !== 'error');
+  // Same-name preprocessing can finish before the first busy poll, or after
+  // the user closes its dialog. Keep track of each operation independently.
+  useEffect(() => {
+    let refreshPlots = false;
+    const names = new Set(tests.map(test => test.name));
+    for (const name of preprocessingPending.current.keys()) {
+      if (!names.has(name)) preprocessingPending.current.delete(name);
+    }
+    for (const test of tests) {
+      const operation = test.preprocessing_operation;
+      const token = operation ? `${operation.request_id}:${operation.state}` : '';
+      const observed = preprocessingObserved.current.get(test.name);
+      const expected = preprocessingPending.current.get(test.name);
+      if (operation?.state === 'running') preprocessingPending.current.set(test.name, operation.request_id);
+      if (operation && operation.state !== 'running') {
+        if (observed !== token && (observed !== undefined || expected === operation.request_id)) {
+          if (operation.state === 'completed') {
+            invalidateTest(test.name, true);
+            refreshPlots = true;
+            setNotice(`${test.name}: ${test.preprocessing?.version === 2 ? 'preprocessing applied' : 'original data restored'}`);
+          } else {
+            setNotice(`${test.name}: ${operation.error || 'preprocessing failed; previous data retained'}`);
+          }
+        }
+        if (expected && (expected === operation.request_id || observed !== token)) {
+          // A different newly observed terminal operation supersedes ours
+          // (another browser may have completed it before this poll).
+          preprocessingPending.current.delete(test.name);
+        }
+      }
+      preprocessingObserved.current.set(test.name, token);
+    }
+    if (refreshPlots) setSessionEpoch(epoch => epoch + 1);
+  }, [tests, invalidateTest]);
+
   useEffect(() => {
     const busy = tests.some((t) => isBusyStatus(t.status));
     // uploadsActive: while a body is still streaming up, the new test only
     // exists server-side as status 'receiving' — poll so it appears in the
     // list without waiting for the POST to resolve.
-    if (!busy && !uploadsActive && !rebuildPending.current && tab !== 'uploads') return;
+    if (!busy && !uploadsActive && !rebuildPending.current && !preprocessingPending.current.size && tab !== 'uploads') return;
     let canceled = false;
     const id = window.setInterval(async () => {
       if (uploadRenameInFlight.current) return;
@@ -905,7 +947,7 @@ function App() {
     return () => { canceled = true; window.clearInterval(id); };
     // `tab` is read in the bail-out above: without it here, opening the Uploads
     // tab would not (re)start polling unless some other dep also changed (1.17).
-  }, [tests, uploadsActive, currentTest, invalidateTest, tab, sessionRecoveryReady, setTests]);
+  }, [tests, uploadsActive, currentTest, invalidateTest, tab, sessionRecoveryReady, setTests, preprocessingPollVersion]);
 
   // Auto-clear transient notices
   useEffect(() => {
@@ -1688,7 +1730,7 @@ function App() {
     recoveryInputRef.current = session;
     setTests(list);
     // Invalidate outstanding loads before applying refreshed source references.
-    new Set([...Object.keys(metaByTest), ...metaInFlight.current]).forEach(invalidateTest);
+    new Set([...Object.keys(metaByTest), ...metaInFlight.current]).forEach(name => invalidateTest(name));
     setSelectedTPs([]);
     setHiddenTPs(new Set());
     setCurrentTest(session.currentTest || list.find(test => test.status === 'ready')?.name || '');
@@ -1936,6 +1978,18 @@ function App() {
         ...(viewMode === 'xy' ? { xy: Array(9).fill(null) } : {}) }));
     }
   };
+
+  const handlePreprocessed = async (name: string, requestId: string) => {
+    preprocessingPending.current.set(name, requestId);
+    setPreprocessingPollVersion(version => version + 1);
+    const epoch = ++testListEpoch.current;
+    try {
+      const list = await fetchTests();
+      if (epoch === testListEpoch.current) setTests(list);
+    } catch {
+      // Polling stays active even after the preprocessing dialog is closed.
+    }
+  };
   const handleFlightComparisonChange = (next: FullFlightComparison) => {
     const alignmentChanged = next.timeBasis !== flightComparison.timeBasis ||
       next.flights.some(flight => {
@@ -2057,6 +2111,8 @@ function App() {
   const uploadView = (
     <UploadView
       tests={tests}
+      datasheetName={settings.datasheetZone}
+      onPreprocessed={(name, requestId) => { void handlePreprocessed(name, requestId); }}
       uploads={uploads}
       pendingFiles={pendingUploadFiles}
       defaultFsHz={parseUploadFs(settings)}

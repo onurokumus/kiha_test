@@ -112,6 +112,33 @@ class ComponentStatsTests(DataDirTestCase):
         self.assertIsNone(copied['summary'])
         self.assertIn('only from the original test', copied['issue'])
 
+    def test_inplace_filters_count_original_physical_use_once_and_keep_current_assignments(self):
+        self.fixture('original', [0., 1000., 3000., 0., 1500., 2000., 0., 500.])
+        before = self.motor(self.read())['summary']
+        snapshot = self.client.get('/api/tests/original/preprocess').json()
+        request = dict(request_id=str(uuid4()), source_id=snapshot['source']['id'],
+                       source_revision=snapshot['source']['revision'],
+                       filters=[{'column': 'rpm', 'filter': {'kind': 'moving_avg', 'window_s': 1.5}}])
+        response = self.client.post('/api/tests/original/preprocess', json=request)
+        self.assertEqual(response.status_code, 202, response.text)
+        doc = self.read()
+        motor = self.motor(doc)
+        self.assertEqual((motor['included_tests'], motor['assigned_tests']), (1, 1))
+        self.assertEqual(motor['summary'], before)
+        self.assertIn('retained original', doc['sources'][0]['warnings'][-1])
+        replacement = self.create('motor', 'replacement')
+        self.change_meta('original', components={**self.ids, 'motor': replacement})
+        doc = self.read()
+        self.assertEqual(self.motor(doc)['included_tests'], 0)
+        self.assertEqual(next(item for item in doc['components'] if item['id'] == replacement)['summary'], before)
+
+    def test_missing_inplace_original_excludes_physical_use_instead_of_counting_filtered_rpm(self):
+        self.fixture('filtered', [500., 1000., 1500., 2000.],
+                     preprocessing={'version': 2, 'mode': 'in_place', 'legacy_copy': False})
+        doc = self.read()
+        self.assertEqual(self.motor(doc)['included_tests'], 0)
+        self.assertIn('retained original', doc['sources'][0]['issue'])
+
     def test_batch_seams_gaps_histogram_and_large_constant(self):
         self.fixture('alpha', [1000.] * 10, time=[0., .5, 1., 1.5, 2., 5., 5.5, 6., 6.5, 7.],
                      acquisition_gap_ranges=[[2, 5], [4, 6]])

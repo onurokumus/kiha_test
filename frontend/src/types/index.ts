@@ -1,12 +1,13 @@
 // Domain types for the PTT frontend. Everything is schema-flexible: column
 // names come from each test's meta.json — nothing here hardcodes variables.
 import type { ComponentIds, ComponentSet } from '../utils/components';
-import type { PreprocessingProgress, PreprocessingProvenance } from '../services/preprocessing';
+import type { PreprocessingOperation, PreprocessingProgress, PreprocessingProvenance } from '../services/preprocessing';
 
 /** One row of GET /api/tests */
 export interface TestInfo {
   preprocessing?: PreprocessingProvenance | null;
   preprocessing_progress?: PreprocessingProgress | null;
+  preprocessing_operation?: PreprocessingOperation | null;
   component_sets?: ComponentSet[];
   components?: ComponentIds | null;
   description?: string;

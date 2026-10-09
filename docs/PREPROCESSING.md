@@ -1,242 +1,183 @@
-# Saved test preprocessing
+# Reversible flight preprocessing
 
-Uploads > **Pre-process** configures one filter independently for each selected
-parameter. Saving creates a separately named test. The source's current stored
-samples, uploaded CSV, test points and notes are preserved. The new test has its
-own full-resolution samples and plot pyramid; unselected parameters and the time
-column are copied unchanged. Test-point boundaries are copied without shifting
-or resampling. Existing materialized formula columns are copied or filtered as
-selected, rather than recalculated from changed dependencies.
+Uploads > **Pre-process** updates a flight under its existing name. There is one
+flight in the library. Its current samples are used by Analyze, Split, plots and
+CSV exports; its original samples are retained internally while filters are
+active. The configured datasheet has no Pre-process action.
 
-Both tests are available to Analyze, Split, Edit and exports. The Uploads row
-identifies filtered copies and opens their saved preprocessing settings. Create
-another version from the original source to avoid accidentally applying the
-same preprocessing twice. The source reference records its identity and data
-revision at creation, including the name at that time.
+Every update starts from the retained original, never from an already-filtered
+result. Reopen Pre-process to edit the saved recipe. Choose filters and click
+**Apply preprocessing**. To return to the original, use **Clear all filters** and
+**Restore original data**. Removing one parameter's filter restores that
+parameter's original values while the remaining filters stay applied.
 
-**Plot filters remain additional, temporary operations.** They process the
-stored samples of whichever test is selected, using their existing plot/TP
-scope. On a preprocessed test, a plot's “Original” trace means the saved samples
-before that plot filter; the original acquisition is in the source test. The
-preprocessing record also travels in analysis export metadata.
+The original means the stored recording immediately before the first
+preprocessing update, including any earlier trims, fills and materialized
+formula columns. It is not necessarily identical to the uploaded CSV. A
+successful full restore removes the internal backup; a later preprocessing
+operation captures the then-current stored recording as its original.
 
-## Apply one filter to multiple parameters
+## Selecting parameters
 
-Check parameter rows to open the shared filter editor, or use **Select all** to
-target every signal parameter. The time column remains locked. When search or
-**Configured only** limits the list, **Select visible** adds those results to the
-selection. Existing selections remain checked, with hidden selections counted
-beside the total and explained in the editor.
+Check individual parameter rows, or use **Select all** for every signal
+parameter. Time is always locked. **Select visible** adds the parameters shown
+by search or Configured only. Hidden selections remain checked and are counted.
 
-Choose a filter and its settings, then click **Apply filter to selected**. This
-replaces each selected parameter's filter while keeping all other settings.
-Choose **None** and **Remove filters from selected** to clear only that group.
-Click a parameter name to inspect or edit it individually; click the selected
-count to return to the shared editor. **Clear selection** clears the checkboxes;
-**Clear all filters** removes the configured recipe.
+The group editor has its own draft. **Apply filter to selected** copies that
+filter to each checked parameter. Choose None and **Remove filters from
+selected** to clear only the group. These actions prepare the recipe; the footer
+applies the complete recipe to the flight. Unapplied group changes must be
+applied or discarded before saving. A parameter name opens its individual
+settings; the selected-count badge returns to the group editor.
 
-The shared editor has a separate draft. Save remains disabled until pending
-changes are applied or discarded, including when more parameters are selected
-after an earlier Apply. **Review bulk settings** returns to an unapplied draft
-from individual editing. Applying settings prepares the recipe; **Save filtered
-copy** starts the existing whole-recording processing and retains the source.
+No output name or second flight is created. There is no original-data download
+control while preprocessing is active. Existing unprocessed rows retain their
+ordinary download behavior; a processed/restored flight's CSV exports its
+current stored samples.
+
+## Data and analysis behavior
+
+Name, durable source UUID, time values, sample count, saved test-point definitions,
+notes, component assignments and annotations stay with the same flight. Names,
+notes, points and assignments can still be edited. Rename and trash/restore move
+the internal original with the flight.
+
+Restore original data before changing columns, trimming, filling missing samples
+or applying equations in Edit. Both the UI and backend guard these operations
+while preprocessing is active so a later restore cannot silently erase such
+changes. Formula preview and ordinary metadata edits remain available.
+
+Stored formula outputs are filtered only when selected. They are not recomputed
+from newly filtered dependencies. Physical component usage uses the original
+recording and current component assignments, counting the flight once; filters
+on RPM, temperature or power therefore do not change physical-use statistics.
+
+**Plot filters remain additional, temporary operations.** They use the current
+stored samples, with their existing plot/TP scope. A plot's Original trace means
+before that plot filter; it does not expose the hidden preprocessing baseline.
+Saved preprocessing provenance is included in analysis export metadata.
+
+The app refreshes data and statistics after same-name updates, including when
+the dialog was closed during processing or an inactive flight was updated.
+Selected test points and their colors remain selected while traces reload.
 
 ## Methods and missing samples
 
-Preprocessing uses the existing operators in `backend/app/dsp.py`, on complete
-native columns before plot reduction. Butterworth low/high/band-pass/band-stop
-uses forward/backward second-order sections with SciPy's odd endpoint padding;
-cutoffs must be strictly below half the sample rate. Moving average uses a
-rounded native-sample window with nearest endpoint extension. Detrend removes a
-linear least-squares trend. Despike uses the existing local-median/MAD detector
-and selected linear or median replacement. See [the filter method](FILTER_METHOD.md)
-for the detector's units and interpretation.
+Existing operators in `backend/app/dsp.py` process complete native columns before
+plot reduction. Butterworth low/high/band-pass/band-stop uses forward/backward
+second-order sections with SciPy's odd endpoint padding. Cutoffs must be strictly
+below half the sample rate. Moving average uses a rounded native-sample window
+with nearest endpoint extension. Detrend removes a linear least-squares trend.
+Despike uses the existing local-median/MAD detector with linear or median
+replacement. See [the filter method](FILTER_METHOD.md) for units and interpretation.
 
 Operator contracts were checked against the official
 [sosfiltfilt documentation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.sosfiltfilt.html),
 [uniform_filter1d documentation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.ndimage.uniform_filter1d.html),
 and [detrend documentation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.detrend.html).
 
-Known acquisition gaps divide processing into independent continuous regions.
-Retained acquisition history is honored even after Edit filled those intervals;
-filled values inside the gaps stay as stored and cannot affect neighboring
-observed samples. Legacy missing gap history is reported as a limitation.
-Sparse missing/nonfinite samples within a region are temporarily interpolated
-for calculation, then their original missing representation is restored. Arrow
-nulls stay null. A filter that cannot process a valid region fails the copy
-instead of publishing partially filtered data. Input constraints and warnings
-are reported with the affected parameter. Recording/region endpoints still
-have filter boundary effects.
+Known acquisition gaps divide filtering into independent continuous regions.
+Retained acquisition history still applies after earlier Edit fills. Values
+inside those gaps remain as stored. Sparse missing/nonfinite samples outside
+these gaps are interpolated only for calculation, then their original missing
+representation is restored; Arrow nulls stay null. Unfilterable short regions
+fail the update instead of publishing partly filtered data. Endpoint effects
+remain inherent to the selected filter. Legacy missing gap history is reported.
 
-## Storage and execution
+The existing 8,000,000-sample per-column filter ceiling remains. Clearing filters
+can restore the original even when the current filter ceiling would prevent a
+new filtering job. Large despike windows may be expensive.
 
-`GET /api/tests/{name}/preprocess` supplies metadata, source identity/revision,
-saved recipe if present, and the sample limit. `POST` accepts a new output name,
-that identity/revision, and a list of `{column, filter}` records. Filter fields
-use the API's snake_case spellings. Duplicate names, time-column filters,
-duplicate parameters, stale sources and invalid filter settings are rejected.
+## Storage, API and recovery
 
-The server reserves an independent output, returns HTTP 202, and processes in
-the background. Progress is exposed through the existing test catalog. It
-filters/stages one complete column at a time, merges columns in bounded batches,
-and builds the pyramid before publishing `ready`. A failed copy remains an
-error entry that can be removed through Manage; the source is unaffected.
-Interrupted jobs are marked failed on server restart. Closing the dialog does
-not cancel accepted server work.
+`GET /api/tests/{name}/preprocess` returns the current source identity/revision,
+original scientific metadata, saved version-2 recipe, latest operation and sample
+ceiling. Source snapshots do not require saved test-point intervals to be valid;
+whole-record processing preserves those definitions without resolving them.
+Session recovery still validates test-point intervals separately.
 
-The existing 8,000,000-sample filter ceiling also bounds whole-recording
-preprocessing. This is a per-column full-resolution computation, not a streaming
-DSP algorithm. Large despike windows can be expensive. A disk-space preflight
-estimates the independent upload copy, saved samples and temporary staging;
-later I/O failures still fail the output safely.
+`POST` accepts `{request_id, source_id, source_revision, filters}`. The output name
+has been removed. Filters are `{column, filter}` records using snake_case filter
+fields. An empty list restores original data. Stale identity/revision, duplicate
+parameters, time-column filters and invalid settings are rejected. A UUID request
+ID makes retries idempotent, including a lost response or completed restore;
+reusing that ID with different settings is rejected.
 
-The original CSV download is the **original uploaded file**, which may differ
-from the source's current stored data after previous Edit operations. The
-filtered CSV download exports the complete saved working samples of the new
-test. Subsequent edits to either test remain independent.
+The existing flight becomes rebuilding and publishes an operation with state
+running, completed or failed. Filtering stages one full column at a time and
+merges in bounded batches. `.preprocess-original` stores original sample data,
+pyramid and scientific metadata inside the flight directory; it is never listed
+as a flight. `.preprocess-work` contains the staged result and rollback journal.
 
-Component associations remain available on the copy for context. Component
-usage statistics exclude these analysis copies so one recording does not count
-twice toward physical runtime.
+Only a completed result replaces active data/pyramid/metadata. Per-test locking
+prevents readers seeing partially published files. The journal retains the
+previous active artifacts until ready is committed. Worker errors and restart
+recovery restore the previous active version. A failed update returns the flight
+to ready with an explicit operation error so it remains usable. If rollback
+itself fails, recovery artifacts are preserved and the flight requires server
+attention. Disk preflight estimates staging/backup needs; later I/O errors use
+this same rollback path. Closing the dialog does not cancel an accepted job.
 
-## Verification
+Legacy version-1 filtered copies are not automatically merged, renamed or deleted.
+They remain independent existing flights. Their own stored samples become the
+baseline if the new workflow is used on them; removing the new filters restores
+that baseline and its legacy provenance. These legacy copies remain excluded
+from duplicated physical component usage.
 
-Production build and lint pass. All 133 current frontend helper tests
-pass, including ten new preprocessing cases for names/collisions, filter
-serialization, native sample validation, duration rounding, source/recipe
-matching and guarded request errors. Concurrent plot-appearance work is present
-in the shared tree and is outside this milestone.
-
-`scripts/verify_preprocess.py` prepares a disposable 1,200-row, 34-column fixture
-with saved test points and independent SciPy reference arrays. Ten Chromium
-groups pass: per-test keyboard opening/Escape/focus, loading retry, parameter
-search/clear-all/validation, real light/dark 100/125/150% browser zoom and desktop
-resizing, rejected POST retry, duplicate-submit protection and status retry,
-full native numerical parity, saved recipe/raw and filtered CSV downloads,
-injected worker failure/retry, and persistence through reload. Original
-sample/time/metadata/pyramid/TP/raw/identity/status file hashes are unchanged;
-the ordinary derived TP-statistics cache is excluded from the source hash guard.
-No JavaScript page errors or unexpected writes occurred. Expected injected HTTP
-failures are recorded separately. Large light and compact dark screenshots were
-visually inspected.
-
-Reproduction (PowerShell, from the project root):
-
-```powershell
-python -X utf8 scripts/verify_preprocess.py --prepare --data-dir "$env:TEMP\ptt-preprocess-unique"
-# Start backend with KIHA_DATA_DIR pointing only at that isolated directory;
-# start Vite with VITE_API_BASE pointing at the isolated API.
-python -X utf8 scripts/verify_preprocess.py --url http://127.0.0.1:8090/ --api http://127.0.0.1:8019/api --data-dir "$env:TEMP\ptt-preprocess-unique"
-backend\.venv\Scripts\python.exe -m pytest backend\tests -q -p no:cacheprovider
-# From frontend:
-npm run build
-npm run lint
-node --test tests/*.test.mjs
-```
-
-Windows sandbox restrictions required approved native execution for atomic
-fixture renames, the browser, and the Vite production build. The initial build
-failed on sandbox `realpath` access; the approved build passed. The original
-browser harness needed to keep its injected failure active across React's
-development StrictMode requests; that verifier issue is fixed. Browser evidence:
-`%TEMP%/ptt-preprocess-verification/results.json` and adjacent screenshots/CSVs.
-The final native Python 3.13 backend suite passes **531 tests / 511 subtests**,
-including all seven filter kinds, row-group seams, exact original/TP/raw
-preservation, null/NaN/infinity, acquisition gaps before/after fills, source
-deletion independence, stale source/name/parameter/disk/sample guards,
-concurrent reservation and worker rechecks, restart/failure recovery, additional
-plot DSP, provenance, and exclusion from duplicate component totals. This run
-also includes concurrent Split/appearance changes; those are not owned here.
-The existing Starlette/httpx deprecation and Vite bundle-size advisory remain.
-
-Three additional read-only browser groups pass (**13 total**): plot moving
-average on top of the saved low-pass result matches independent native values
-for every sample without modifying the saved recipe or samples; dense Despike
-controls and output naming remain reachable by scrolling/keyboard in both
-themes at 1050x700 and actual 100/125/150% zoom. Follow-up evidence:
-`%TEMP%/ptt-preprocess-verification/followup-results.json` and screenshots.
-Three final lifecycle groups pass (**16 browser groups total**) on the final
-backend: a real native acquisition gap causes a short-segment worker failure,
-which publishes no sample file or broken original download; retry with a valid
-window creates an independent copy with exact 1,390-row/gap preservation; a
-successful POST with a deliberately lost response is recovered as the matching
-output with exactly one submission. Original hashes remain unchanged. Evidence:
-`%TEMP%/ptt-preprocess-verification/lifecycle-results.json` and screenshots.
-
-All owned verification servers were stopped; user servers/data were untouched.
-Application restart is needed to load the new backend routes in an already
-running deployment. No deployment was performed. No implementation
-work remains in this milestone; the next independent backlog item is Phase 11b.
-
-### Bulk filter follow-up (2026-10-09)
-
-Production build/lint and all ten preprocessing helper tests pass. The isolated
-`scripts/verify_preprocess_bulk.py` suite passes nine Chromium groups against
-`index-B-wmAcm6.js`: checkbox/keyboard selection, global and visible selection,
-hidden targets, cloned independent settings, selected-only removal, validation,
-unapplied-draft guards and discard/review focus, and the exact saved recipe.
-Thirty-six signal columns yield exactly 34 serialized filters after two are
-cleared, with time excluded. Arbitrary names (`__proto__`, `constructor`,
-`toString`) retain correct individual/bulk behavior and missing-sample notices.
-
-Both themes pass at 1440x1000 and compact 1100x780 desktop windows with actual
-100/125/150% browser zoom. Dense controls, scrolling, fixed dialog footer and
-keyboard focus were exercised; screenshots and independent code review pass.
-Every API request is intercepted: the accepted job exists only in memory, no
-backend or user recordings are accessed, and the source fixture is unchanged.
-No unexpected requests, page errors or console errors occurred. The owned
-preview was stopped. No backend/scientific changes or backend test rerun were
-needed for this frontend-only follow-up; the existing Vite size advisory remains.
-
-Reproduction after building the frontend (use an owned preview process):
-
-```powershell
-# From frontend:
-npm run preview -- --host 127.0.0.1 --port 8107 --strictPort
-# From the project root, with Python + Playwright available:
-python -X utf8 scripts/verify_preprocess_bulk.py --url http://127.0.0.1:8107/ptt/
-# From frontend:
-node --test tests/preprocessing.test.mjs
-```
-
-Evidence: `%TEMP%/ptt-preprocess-bulk-verification/results.json` and the adjacent
-light/dark screenshots. The user-requested Git checkpoint includes preprocessing
-and bulk selection with their tests and documentation. No deployment; next
-independent milestone remains Phase 11b.
-
-### Preprocessing load failure (2026-10-09)
-
-The reported deployed request was `GET /api/tests/s200/preprocess` returning
-HTTP 500. A local 15-row, 1Hz reproduction confirmed that saved empty, reversed
-or out-of-range test points could break this request: preprocessing reused a
-session-recovery snapshot that resolves every saved point interval, then
-discarded those point references. Such definitions can arrive through the
-existing point save/import API.
-
-Preprocessing now uses a sample-only source snapshot. Its identity, revision
-hash and source-change guards remain the same; session recovery still validates
-point intervals independently. Full-record filtering preserves the original
-point definitions and all source bytes. Expected source identity, metadata and
-file-access failures return actionable HTTP 409 details and log the exception.
-Damaged identities are never replaced; failed sample verification does not
-create a legacy identity file.
-
-Five new regressions cover supported point imports and the complete filtered
-copy, numerical parity, source/point preservation, damaged identity on GET and
-POST, missing samples, metadata errors and service-account permission failures.
-Focused preprocessing/recovery checks pass 31 tests/21 subtests; the full native
-Python 3.13 suite passes 537 tests/520 subtests. Build/lint, independent code review
-and whitespace checks pass. No frontend or filtering-method changes were needed.
-Existing Vite size and Starlette dependency advisories remain.
-
-The private host `heliweb1` cannot be resolved from the development environment.
-These are confirmed local causes; the screenshot alone does not identify the
-exact production exception. After deploying the updated backend and restarting
-`ptt-backend`, retry Pre-process. If it still fails, capture its service traceback:
+Expected missing/damaged identity, metadata or source-file permission problems
+return actionable conflicts and log details. Identities are never silently
+replaced. Production errors can be inspected with:
 
 ```bash
 sudo journalctl -u ptt-backend --since "15 minutes ago" --no-pager -n 150
 ```
 
-The follow-up is committed on the existing feature branch; no deployment or
-production data changes were performed here.
+## Verification
+
+Completed on 2026-10-09:
+
+- Backend: 548 tests and 522 subtests pass, including stale guards, independent
+  SciPy parity, gaps/nulls, unchanged source identity and metadata, byte-exact
+  restore, publication crash points, repeated rollback recovery, rename and
+  trash/restore, destructive-edit guards and physical component totals.
+- Frontend: all 135 helper tests (12 preprocessing helpers), production build
+  and lint pass. Independent backend transaction/recovery review found no
+  actionable issues. Existing Vite bundle-size advisory and Starlette
+  dependency deprecation remain.
+- `scripts/verify_preprocess_inplace.py`: ten native browser groups pass on
+  `index-CWAJpLwb.js` / `index-CVAZx315.css`. Covers exact full CSV low-pass/bulk
+  parity, updated filters rebuilt from the original, full restore, same name
+  and catalog identity, selected TP trace refresh, inactive-flight updates,
+  closing while running, failed-operation reopen/retry, lost response with one
+  submission, reload, datasheet exclusion and bulk Select all/visible.
+- Both desktop themes pass at actual 100/125/150% zoom, including dense
+  1100x780 windows, scrollable content, fixed header/footer, keyboard controls
+  and reachable bulk Apply. Screenshots were visually inspected. No unexpected
+  page errors or writes; expected injected load/conflict/disconnect failures
+  are recorded. Owned servers, profiles and synthetic datasets were cleaned up.
+
+The native browser suite exposed a transient Windows PermissionError while
+polling status during atomic replacement. Bounded JSON-read retries now handle
+this race; permanent permission errors still surface, with regression coverage.
+
+Reproduction commands (repository root, except build/lint in frontend):
+
+```powershell
+backend\.venv\Scripts\python.exe -m pytest backend\tests
+node --test frontend/tests/*.test.mjs
+python -X utf8 scripts/verify_preprocess_inplace.py
+# In frontend:
+npm run build
+npm run lint
+```
+
+Build the frontend before running the browser verifier. Its global Python
+requires Playwright; scientific work uses the project's Python 3.13 environment.
+Evidence: `%TEMP%\ptt-preprocess-inplace-verification\results.json` and
+`selection-{light,dark}-{1,1.25,1.5}.png` / `editor-*` in the same directory.
+No production deployment or user-data migration was performed. Deploy frontend
+and restart backend together because the preprocessing POST contract changed.
+
+The earlier `verify_preprocess.py` and `verify_preprocess_bulk.py` document the
+superseded named-copy workflow and its historical checks. Use the new in-place
+verifier for the current API and UI.
