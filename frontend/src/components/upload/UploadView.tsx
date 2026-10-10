@@ -237,6 +237,7 @@ export default function UploadView({
   const [qualityTest, setQualityTest] = useState<string | null>(null);
   const [splitDownloadTest, setSplitDownloadTest] = useState<string | null>(null);
   const [preprocessTest, setPreprocessTest] = useState<TestInfo | null>(null);
+  const [preprocessView, setPreprocessView] = useState<'filters' | 'compare'>('filters');
   const [uploaderName, setUploaderName] = useState(loadRememberedUploaderName);
   const [description, setDescription] = useState('');
   const catalog = useComponentCatalog();
@@ -1250,9 +1251,15 @@ export default function UploadView({
                               {t.status === 'ready' && t.name !== datasheetName && (
                                 <button className="btn" disabled={renameDisabled || busyRow !== null}
                                   aria-label={`Pre-process ${t.name}`}
-                                  onClick={() => setPreprocessTest(t)}>
+                                  onClick={() => { setPreprocessView('filters'); setPreprocessTest(t); }}>
                                   {t.preprocessing ? 'Pre-process settings' : 'Pre-process'}
                                 </button>
+                              )}
+                              {t.status === 'ready' && t.name !== datasheetName && t.preprocessing?.version === 2 && !!t.preprocessing.filters.length && (
+                                <button className="btn" disabled={renameDisabled || busyRow !== null}
+                                  aria-label={`Compare original and filtered data for ${t.name}`}
+                                  title="Compare saved filtered data with the original"
+                                  onClick={() => { setPreprocessView('compare'); setPreprocessTest(t); }}>Compare</button>
                               )}
                               {t.status === 'ready' && hasPreprocessingHistory && (
                                 <a className="btn" href={exportCsvUrl(t.name)} download
@@ -1352,6 +1359,7 @@ export default function UploadView({
         </details>
         <TrashBin refreshKey={trashRevision} onRestored={onTestsChanged} components={catalog.items} />
         {preprocessTest && <PreprocessDialog test={preprocessTest}
+          initialView={preprocessView}
           onClose={() => setPreprocessTest(null)}
           onPreprocessed={onPreprocessed}
           onOpenTest={name => { setPreprocessTest(null); onOpenTest(name); }} />}

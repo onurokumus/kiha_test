@@ -6,10 +6,12 @@ import { applyPreprocessing, fetchPreprocessing, matchesPreprocessingRequest, ne
   type PreprocessingRequest, type PreprocessingSnapshot } from '../../services/preprocessing';
 import type { TestInfo } from '../../types';
 import { FilterRow } from '../controls/FilterRow';
+import PreprocessComparison from './PreprocessComparison';
 import styles from './PreprocessDialog.module.css';
 
 interface Props {
   test: TestInfo;
+  initialView?: 'filters' | 'compare';
   onClose: () => void;
   onPreprocessed: (name: string, requestId: string) => void;
   onOpenTest: (name: string) => void;
@@ -33,13 +35,14 @@ const filterDraft = (drafts: Record<string, FilterUi>, column: string): FilterUi
 const sampleCount = (counts: Record<string, number> | undefined, column: string): number =>
   typeof counts?.[column] === 'number' ? counts[column] : 0;
 
-export default function PreprocessDialog({ test, onClose, onPreprocessed, onOpenTest }: Props) {
+export default function PreprocessDialog({ test, initialView = 'filters', onClose, onPreprocessed, onOpenTest }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const alive = useRef(true);
   const submitting = useRef(false);
   const changedCallback = useRef(onPreprocessed);
   changedCallback.current = onPreprocessed;
   const lastRequest = useRef<PreprocessingRequest | null>(null);
+  const keepDraftsOnReload = useRef(false);
   const id = useId();
   const [snapshot, setSnapshot] = useState<PreprocessingSnapshot | null>(null);
   const [loadKey, setLoadKey] = useState(0);
@@ -62,6 +65,8 @@ export default function PreprocessDialog({ test, onClose, onPreprocessed, onOpen
   const [job, setJob] = useState<TestInfo | null>(null);
   const [statusError, setStatusError] = useState('');
   const [pollKey, setPollKey] = useState(0);
+  const [view, setView] = useState<'filters' | 'compare'>(initialView);
+  const [comparisonExpanded, setComparisonExpanded] = useState(false);
 
   useEffect(() => {
     alive.current = true;
@@ -81,9 +86,14 @@ export default function PreprocessDialog({ test, onClose, onPreprocessed, onOpen
     fetchPreprocessing(test.name, controller.signal).then(data => {
       if (controller.signal.aborted) return;
       setSnapshot(data);
-      setDrafts(Object.fromEntries((data.preprocessing?.filters ?? []).map(entry => [entry.column, preprocessingFilterUi(entry.filter)])));
-      setBulkSelection([]); setBulkEditing(false); setBulkDirty(false); setBulkNote('');
-      setBulkUi({ ...DEFAULT_FILTER_UI }); setSaveError(''); setPendingRequest(null); setStatusError('');
+      if (data.preprocessing?.version !== 2 || !data.preprocessing.filters.length) setView('filters');
+      if (!keepDraftsOnReload.current) {
+        setDrafts(Object.fromEntries((data.preprocessing?.filters ?? []).map(entry => [entry.column, preprocessingFilterUi(entry.filter)])));
+        setBulkSelection([]); setBulkEditing(false); setBulkDirty(false); setBulkNote('');
+        setBulkUi({ ...DEFAULT_FILTER_UI });
+      }
+      keepDraftsOnReload.current = false;
+      setSaveError(''); setPendingRequest(null); setStatusError('');
       setJob(data.preprocessing_operation?.state === 'failed'
         ? { name: test.name, status: 'ready', preprocessing_operation: data.preprocessing_operation } : null);
       lastRequest.current = null;
@@ -168,10 +178,15 @@ export default function PreprocessDialog({ test, onClose, onPreprocessed, onOpen
     && changed && invalid.length === 0 && unavailable.length === 0 && !bulkDirty;
   const progress = job?.preprocessing_progress;
   const progressText = progress?.stage || 'Processing the full recording';
+  const canCompare = !!snapshot && recipe?.version === 2 && savedFilters.length > 0 && !loading && !loadError && !saving && !busy;
+  const changeView = (next: 'filters' | 'compare', focusTab = false) => {
+    setView(next);
+    if (focusTab) requestAnimationFrame(() => document.getElementById(`${id}-tab-${next}`)?.focus());
+  };
 
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = bulkTargets.length > 0 && !allSelected;
-  }, [bulkTargets.length, allSelected, loading, busy]);
+  }, [bulkTargets.length, allSelected, loading, busy, view]);
 
   const selectBulk = (columns: string[]) => {
     const template = !bulkTargets.length ? filterDraft(drafts, selected) : bulkUi;
@@ -231,7 +246,7 @@ export default function PreprocessDialog({ test, onClose, onPreprocessed, onOpen
     }
   };
 
-  return <dialog ref={dialog} className={styles.dialog} aria-labelledby={`${id}-title`}
+  return <dialog ref={dialog} className={`${styles.dialog} ${view === 'compare' ? styles.comparisonDialog : ''} ${view === 'compare' && comparisonExpanded ? styles.expandedDialog : ''}`} aria-labelledby={`${id}-title`}
     aria-describedby={`${id}-description`} onCancel={event => { event.preventDefault(); if (!saving) onClose(); }}>
     <div className={styles.shell}>
       <header className={styles.header}>
@@ -240,25 +255,49 @@ export default function PreprocessDialog({ test, onClose, onPreprocessed, onOpen
           <div><h2 id={`${id}-title`}>Pre-process flight</h2>
             <p className={styles.sourceName} title={test.name}>{test.name}</p></div>
         </div>
-        <button type="button" className={styles.close} aria-label="Close pre-process" disabled={saving} onClick={onClose}>×</button>
+        <div className={styles.headerActions}>
+          {view === 'compare' && <button type="button" className={styles.expand} aria-label={comparisonExpanded ? 'Restore comparison size' : 'Expand comparison'}
+            title={comparisonExpanded ? 'Restore comparison size' : 'Expand comparison'} aria-pressed={comparisonExpanded}
+            onClick={() => setComparisonExpanded(value => !value)}>
+            <svg viewBox="0 0 20 20" aria-hidden="true">{comparisonExpanded
+              ? <path d="M3 7h4V3m6 0v4h4M3 13h4v4m6 0v-4h4" />
+              : <path d="M7 3H3v4m10-4h4v4M3 13v4h4m6 0h4v-4" />}</svg>
+          </button>}
+          <button type="button" className={styles.close} aria-label="Close pre-process" disabled={saving} onClick={onClose}>×</button>
+        </div>
       </header>
 
-      <div className={styles.body}>
-        <p id={`${id}-description`} className={styles.intro}>Apply filters to the full recording and update this flight under the same name.
-          Every update starts from the original data, kept safely in the background.</p>
+      <div className={styles.tabs} role="tablist" aria-label="Pre-processing views"
+        onKeyDown={event => {
+          if (!canCompare || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          changeView(event.key === 'Home' ? 'filters' : event.key === 'End' ? 'compare' : view === 'filters' ? 'compare' : 'filters', true);
+        }}>
+        <button type="button" role="tab" id={`${id}-tab-filters`} aria-controls={`${id}-panel-filters`}
+          aria-selected={view === 'filters'} tabIndex={view === 'filters' ? 0 : -1} disabled={saving || busy}
+          onClick={() => changeView('filters')}>Filters</button>
+        <button type="button" role="tab" id={`${id}-tab-compare`} aria-controls={`${id}-panel-compare`}
+          aria-selected={view === 'compare'} tabIndex={view === 'compare' ? 0 : -1} disabled={!canCompare}
+          title={canCompare ? 'Compare saved filtered data with the retained original' : 'Apply preprocessing filters to compare with the original'}
+          onClick={() => changeView('compare')}>Compare data</button>
+      </div>
+      <div className={styles.body} role="tabpanel" id={`${id}-panel-${view}`} aria-labelledby={`${id}-tab-${view}`} tabIndex={0}>
+        <p id={`${id}-description`} className={styles.intro}>{view === 'compare'
+          ? 'Compare the saved filtered recording with its original samples. Plot filters are not applied here.'
+          : 'Apply filters to the full recording and update this flight under the same name. Every update starts from the original data, kept safely in the background.'}</p>
         {loading && <div className={styles.state} role="status">Loading native data details…</div>}
         {loadError && <div className={styles.error} role="alert"><p>Could not load pre-processing: {loadError}</p>
           <button type="button" className="btn" onClick={() => setLoadKey(value => value + 1)}>Retry loading</button></div>}
 
         {meta && !loading && !loadError && <>
-          <div className={styles.scope} aria-label="Processing scope">
+          {view === 'filters' && <div className={styles.scope} aria-label="Processing scope">
             <span><strong>{meta.n_rows.toLocaleString()}</strong> native samples</span>
             <span><strong>{displayNumber(meta.fs_hz)}</strong> Hz</span>
             <span><strong>{displayNumber(meta.duration_s)}</strong> seconds</span>
             <span className={styles.scopeEnd}>Full recording</span>
-          </div>
+          </div>}
 
-          {hasJob && <section className={`${styles.job} ${failed ? styles.jobFailed : done ? styles.jobDone : ''}`} aria-live="polite">
+          {hasJob && (view === 'filters' || busy) && <section className={`${styles.job} ${failed ? styles.jobFailed : done ? styles.jobDone : ''}`} aria-live="polite">
             <div className={styles.jobHeading}><strong>{done ? savedFilters.length ? 'Pre-processing saved' : 'Original data restored' : failed ? 'Pre-processing failed' : 'Updating flight'}</strong>
               <span title={test.name}>{test.name}</span></div>
             {busy && <><p>{progressText}. You can close this box; processing continues in Uploads.</p>
@@ -272,7 +311,11 @@ export default function PreprocessDialog({ test, onClose, onPreprocessed, onOpen
               <button type="button" className="btn" onClick={() => { setJob(null); setLoadKey(value => value + 1); }}>Reload saved filters</button></div>}
           </section>}
 
-          {!busy && <>
+          {!busy && view === 'compare' && snapshot && <PreprocessComparison name={test.name} snapshot={snapshot}
+            expanded={comparisonExpanded} hasDraftChanges={changed || bulkDirty}
+            onReload={() => { keepDraftsOnReload.current = changed || bulkDirty; setJob(null); setLoadKey(value => value + 1); }} />}
+
+          {!busy && view === 'filters' && <>
             <div className={styles.savedState} aria-label="Saved preprocessing state">
               <span className={styles.stateBadge}>{savedFilters.length ? 'Filtered data' : 'Original data'}</span>
               <span>{savedFilters.length ? `${savedFilters.length} saved parameter filter${savedFilters.length === 1 ? '' : 's'} · edit below` : 'No preprocessing filters applied'}</span>
@@ -363,21 +406,22 @@ export default function PreprocessDialog({ test, onClose, onPreprocessed, onOpen
               <ul>{recipe.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
           </>}
 
-          <details className={styles.details}><summary>Processing and data retention</summary>
+          {view === 'filters' && <details className={styles.details}><summary>Processing and data retention</summary>
             <p>Every update uses every native sample from the original recording saved before its first preprocessing update. Time values, row count and test-point boundaries are preserved. Parameters with no filter use their original values. Known acquisition gaps remain boundaries for processing.</p>
-            <p>The original stays hidden while filters are applied. Clear all filters and apply to restore it. Analysis and CSV exports use this flight’s current data.</p>
+            <p>The original stays out of the flight library. Use Compare data to inspect it alongside the saved filtered data, or clear all filters and apply to restore it. Analysis and CSV exports use this flight’s current data.</p>
             <p>Plot filters are separate analysis settings and apply additional processing to the current data.</p>
             {snapshot?.legacy_preprocessing && <p>This flight was created as a filtered copy by an earlier version. Its existing samples are the original for these updates; its earlier source remains a separate flight.</p>}
-          </details>
+          </details>}
         </>}
       </div>
 
       <footer className={styles.footer}>
-        <div className={styles.footerNote}>{busy ? 'Full recording · processing in background' : changed || bulkDirty ? 'Unapplied changes · same flight' : 'Original retained · plot filters stay separate'}</div>
+        <div className={styles.footerNote}>{view === 'compare' ? 'Saved data comparison · same flight' : busy ? 'Full recording · processing in background' : changed || bulkDirty ? 'Unapplied changes · same flight' : 'Original retained · plot filters stay separate'}</div>
         <div className={styles.footerActions}>
-          <button type="button" className="btn" disabled={saving} onClick={onClose}>{hasJob || !changed ? 'Close' : 'Cancel'}</button>
+          <button type="button" className="btn" disabled={saving} onClick={onClose}>{view === 'compare' || hasJob || !changed ? 'Close' : 'Cancel'}</button>
           {done && !changed && !bulkDirty && <button type="button" className="btn" onClick={() => { onClose(); onOpenTest(test.name); }}>Analyze flight</button>}
-          {!busy && <button type="button" className={`btn ${styles.primary}`} disabled={!canSave} onClick={() => void save()}>{saving ? 'Starting…' : restoring ? 'Restore original data' : 'Apply preprocessing'}</button>}
+          {view === 'compare' && <button type="button" className="btn" onClick={() => changeView('filters', true)}>Back to filters</button>}
+          {!busy && view === 'filters' && <button type="button" className={`btn ${styles.primary}`} disabled={!canSave} onClick={() => void save()}>{saving ? 'Starting…' : restoring ? 'Restore original data' : 'Apply preprocessing'}</button>}
         </div>
       </footer>
     </div>

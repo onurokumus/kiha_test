@@ -13,6 +13,20 @@
   overflow: hidden;
 }
 .dialog::backdrop { background: var(--backdrop, #18253c70); }
+.comparisonDialog { width: min(1160px, calc(100vw - 40px)); }
+.expandedDialog { width: calc(100vw - 32px); height: calc(100dvh - 32px); max-height: calc(100dvh - 32px); }
+.expandedDialog .shell { height: 100%; max-height: 100%; }
+.expandedDialog .body { flex: 1; }
+.headerActions { display: flex; align-items: center; gap: 8px; flex: none; }
+.expand { display: grid; place-items: center; width: 30px; height: 30px; padding: 5px; background: transparent; color: var(--muted, #626f83); border: 0; border-radius: 4px; cursor: pointer; }
+.expand:hover { background: var(--hover-bg, #edf1f8); color: var(--text, #202c42); }
+.expand svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.tabs { display: flex; gap: 20px; flex: none; padding: 0 24px; border-bottom: 1px solid var(--border, #dfe4ec); }
+.tabs button { padding: 11px 1px 9px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted, #626f83); font: inherit; font-weight: 600; cursor: pointer; }
+.tabs button[aria-selected='true'] { border-bottom-color: var(--accent, #263685); color: var(--accent, #263685); }
+.tabs button:hover:not(:disabled) { color: var(--text, #202c42); }
+.tabs button:disabled { color: var(--subtle, #8a95a8); cursor: default; }
+.tabs button:focus-visible, .expand:focus-visible { outline: 2px solid var(--focus, #263685); outline-offset: 3px; }
 .shell { display: flex; flex-direction: column; max-height: calc(100dvh - 42px); min-height: 0; }
 .header { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex: none; padding: 18px 24px; border-bottom: 1px solid var(--border, #dfe4ec); }
 .heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -129,4 +143,9 @@
   .header { padding-top: 12px; padding-bottom: 12px; }
   .body { padding-top: 12px; }
   .intro { margin-bottom: 12px; }
+  .comparisonDialog .header { padding-top: 8px; padding-bottom: 8px; }
+  .comparisonDialog .heading h2 { font-size: 17px; }
+  .comparisonDialog .headerIcon { width: 30px; height: 30px; }
+  .comparisonDialog .tabs button { padding-top: 8px; padding-bottom: 6px; }
+  .comparisonDialog .footer { padding-top: 8px; padding-bottom: 8px; }
 }

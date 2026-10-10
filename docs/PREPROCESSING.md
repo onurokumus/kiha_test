@@ -35,6 +35,49 @@ control while preprocessing is active. Existing unprocessed rows retain their
 ordinary download behavior; a processed/restored flight's CSV exports its
 current stored samples.
 
+## Comparing the saved result with the original
+
+For a flight with saved preprocessing, choose **Compare** in Uploads or open
+Pre-process and choose **Compare data**. The retained original stays inside the
+same flight. This view reads both versions without changing either one.
+
+Choose a parameter and use **Both**, **Original** or **Filtered** to control
+the visible traces. A subdued dashed original and a stronger filtered trace
+share time and value axes. The filter summary describes the saved recipe for
+that parameter; parameters without a saved filter use their original values.
+
+Zoom to inspect a time interval, pan across the recording, or reset to the full
+range. Expand the comparison for more plotting space. PNG exports capture the
+displayed comparison. Wide windows show paired min/max envelopes; zooming in
+loads native samples and enables exact paired differences. Envelope extrema
+are never subtracted to imply a sample-level difference.
+
+Drag across the plot to zoom, Shift-drag to pan and double-click to reset.
+The visible + / − and Reset zoom buttons provide the same controls. With the
+plot focused, use + / −, the arrow keys and Home. Both themes support expanded
+views and desktop browser zoom; short windows keep the plot accessible through
+the dialog's scrollable body while its header and footer stay visible.
+
+Raw cursor differences use Filtered minus Original. RMS difference and maximum
+absolute difference use every finite aligned pair in the loaded native window,
+before display formatting. Missing/nonfinite pairs and known acquisition gaps
+are excluded. Broad views reuse stored float32 min/max pyramids and reread
+partial edge buckets from native data. Buckets overlapping known acquisition
+gaps are hidden; comparison details explain the reduction. No additional rounding
+is applied to native sample values or timestamps.
+
+Comparison uses the last **saved** preprocessing result. Switching between
+Filters and Compare data preserves unapplied filter drafts and shows a notice
+when drafts differ from the saved result. Temporary Analyze plot filters are
+not applied in this view. Clear all preprocessing filters and apply to restore
+the original as the flight's active data; comparison is then no longer needed.
+
+The comparison endpoint requires the active source identity and revision from
+the preprocessing snapshot. Both versions are read under one test read lock.
+Stale or unavailable sources produce an explicit error instead of mixing data
+from different revisions. Legacy version-1 named copies have no direct original comparison
+because this workflow cannot assume their earlier source is still unchanged.
+
 ## Data and analysis behavior
 
 Name, durable source UUID, time values, sample count, saved test-point definitions,
@@ -133,6 +176,34 @@ sudo journalctl -u ptt-backend --since "15 minutes ago" --no-pager -n 150
 ```
 
 ## Verification
+
+Comparison follow-up completed on 2026-10-10:
+
+- Full backend suite: 563 tests and 534 subtests pass, including 15 comparison
+  tests covering independent numerical pairs/statistics, tiny-value/time
+  precision, gaps, cropped bucket edges, large windows, read-only hashes,
+  stale identity/revision and missing/linked/corrupt source guards.
+- All 140 frontend helpers (five new comparison tests), production build and
+  lint pass. Independent backend/frontend reviews pass.
+- Ten native groups in `scripts/verify_preprocess_comparison.py` pass on
+  `index-BckEXm4y.js` / `index-Drwb0811.css`: direct Uploads/tab access,
+  independently computed original/filtered values and cursor differences,
+  unchanged parameters, trace toggles, zoom/pan/reset, native PNG, filter draft
+  retention, stale/error retry and late response rejection, partial selection
+  round trips, 24,000-sample envelopes refining into native windows, and both
+  desktop themes at actual 100/125/150% zoom with expand/restore.
+- All ten groups in the existing same-flight verifier pass on that final build,
+  retaining apply/update/restore, background/failure/retry behavior and selected
+  analysis traces. Final screenshots and exported PNG reviewed. All five new
+  comparison fixture flight directories remain unchanged, with no extra flight
+  or unexpected browser errors/writes. Owned servers, profiles and data cleaned.
+
+Run `python -X utf8 scripts/verify_preprocess_comparison.py` after building the
+frontend. Evidence: `%TEMP%\ptt-preprocess-comparison-verification\results.json`,
+`native-overlay-light.png`, `plot-dark-1.5-True.png`, `large-envelope-dark.png`
+and `comparison.png`. The existing suite's evidence directory is listed below.
+Both suites use isolated synthetic data. No production deployment was performed;
+deploy frontend and backend together to load the new GET comparison endpoint.
 
 Completed on 2026-10-09:
 

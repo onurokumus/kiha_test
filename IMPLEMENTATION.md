@@ -1,5 +1,48 @@
 # Implementation handoff
 
+## Complete: preprocessing original comparison (2026-10-10)
+
+User requests styled comparison of saved filtered samples with retained originals.
+This takes priority over independent Phase 11b. Scope: a read-only Compare data
+tab in Pre-process, plus a direct Compare action for ready version-2 flights.
+One shared-axis parameter plot provides Both/Original/Filtered, native cursor
+differences, zoom/pan/reset, expand/restore and PNG. Saved data is explicitly
+separate from unapplied filter drafts and temporary Analyze plot filters.
+
+Backend adds a guarded paired window endpoint reading active and internal
+original data under the same lock. Native samples at close zoom; paired min/max
+envelopes for broad views, with exact delta summaries only for native windows.
+No new flight or changes to original/active samples. Legacy copies keep their
+existing semantics. Acceptance includes numerical parity, read-only file hashes,
+stale/error handling, tabs/draft preservation, light/dark desktop zoom/resize,
+keyboard and existing apply/update/restore regression checks.
+
+Complete: paired read-only endpoint, comparison UI, direct Uploads access and
+preserved filter drafts. Raw responses retain float64 precision; independent
+envelope extrema never imply paired differences. Short desktop windows use a
+compact header and plot so the full canvas and axes can be scrolled into view
+at actual 150% zoom. Reload adopts a newer saved recipe unless unapplied drafts
+need preserving; partial selection stays mixed when returning from comparison.
+
+Verification: 563 backend tests/534 subtests, all 140 frontend helpers, build,
+lint and independent backend/frontend reviews pass. Ten comparison browser
+groups plus all ten existing same-flight apply/update/restore groups pass on
+index-BckEXm4y.js / index-Drwb0811.css. Verified independent SciPy values and
+min/max peaks, cursor/readout parity, late response rejection, stale/error retry,
+native PNG, tab/draft retention, zoom/pan/reset, expand/restore, both themes and
+actual 100/125/150% zoom. Final screenshots and PNG reviewed. All five comparison
+fixture flight directories unchanged; no unexpected browser errors or writes.
+Owned native test servers, browser profiles and datasets cleaned up.
+
+Entry points: backend/app/preprocess_compare.py, PreprocessComparison TSX/CSS,
+preprocessingComparison.ts, PreprocessDialog tabs and UploadView actions.
+New verifier: scripts/verify_preprocess_comparison.py; commands/evidence in
+docs/PREPROCESSING.md. Existing Vite size advisory and Starlette deprecation
+remain. Started clean at 108def1 on codex/ptt-ui-rework-2026-09-28; same-branch
+Git checkpoint under prior commit/push authorization. No deployment or user-data
+changes. Deploy frontend and backend together for the new comparison endpoint.
+Next independent milestone remains Phase 11b.
+
 ## Complete: same-flight reversible preprocessing (2026-10-09)
 
 User corrected the storage model: keep one flight/name, retain originals hidden,

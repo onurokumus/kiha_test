@@ -43,6 +43,7 @@ from .components import ComponentIds, ComponentSets
 from . import trash
 from . import analysis_sources
 from . import preprocess
+from . import preprocess_compare
 
 
 logger = logging.getLogger("kiha.api")
@@ -135,6 +136,7 @@ app.include_router(xy_export.router)
 app.include_router(image_export.router)
 app.include_router(export_progress.router)
 app.include_router(preprocess.router)
+app.include_router(preprocess_compare.router)
 
 
 @app.middleware("http")

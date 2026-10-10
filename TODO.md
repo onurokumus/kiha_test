@@ -32,6 +32,15 @@ docs/PLOT_APPEARANCE_VERIFICATION.md. Next independent milestone remains Phase 1
 
 ## Requested upload preprocessing (2026-10-09)
 
+- [x] Add a styled original-versus-filtered comparison for saved preprocessing: direct Uploads access and a Compare data tab, parameter selection, distinct traces, Both/Original/Filtered views, zoom/pan/reset and image export. Keep one flight, preserve unapplied filter drafts and all samples, separate plot filters, and verify paired native/envelope data plus desktop themes/resize/zoom/keyboard. Requested 2026-10-10 ahead of independent Phase 11b.
+
+Comparison complete: 563 backend tests/534 subtests, all 140 frontend helpers,
+build/lint, independent review, ten new native browser groups and ten existing
+preprocessing regression groups pass. Original/filtered numerical parity, exact
+raw differences, large min/max envelopes, PNG, stale/error/late responses,
+draft retention, keyboard and both desktop themes at actual 100/125/150% zoom
+verified. All comparison fixture files unchanged. See docs/PREPROCESSING.md.
+
 - [x] Replace separately named preprocessing copies with reversible updates to the same flight/name. Retain hidden original samples, always rebuild from them, reopen/edit saved filters, and restore original data when the recipe is empty. Preserve metadata/test points/identity, recover failed or interrupted updates, hide preprocessing for the configured datasheet, refresh existing analysis views, and verify full native data plus desktop/bulk/keyboard behavior. User correction supersedes the earlier copy workflow below; existing legacy copies remain independent.
 
 Complete: 548 backend tests/522 subtests, 135 frontend helpers, build/lint,
