@@ -78,6 +78,41 @@ Stale or unavailable sources produce an explicit error instead of mixing data
 from different revisions. Legacy version-1 named copies have no direct original comparison
 because this workflow cannot assume their earlier source is still unchanged.
 
+### XY scatter comparison
+
+Choose **XY scatter** in Compare data, then choose **X** and **Y** using the same
+searchable parameter controls. Time is available on either axis. Swap axes to
+reverse the relationship. **Both**, **Original** and **Filtered** control the
+visible point clouds; outlined original markers and filled filtered markers
+distinguish the two versions without connecting samples into lines.
+
+Each original point uses original X and Y from one native sample. Its filtered
+counterpart uses filtered X and Y from that same sample. Coordinates are never
+assembled from independent time-plot extrema. The readout compares coordinates
+at a shared sample time, even when the two versions occupy different positions.
+
+XY uses the recording interval selected in Time. Switching views retains that
+interval and the Time parameter. XY zoom and pan change the visible value axes;
+they do not change which recording interval is loaded. Reset the value axes or
+return to the full recording with the separate controls. PNG captures the
+visible point clouds, axes and legend.
+
+Long recordings use a bounded, shared subset of native row indices for both
+versions. The view reports sampling; value-axis zoom does not add samples.
+Narrow the interval in Time to inspect more native points in a particular part
+of the recording. Sampling can omit brief events and extrema. Nonfinite
+coordinate pairs and known acquisition gaps are excluded. A sparse version
+whose finite points all miss the regular stride contributes its first finite
+row to both versions, within the same point budget. This remains a read-only
+comparison of the saved preprocessing result.
+
+The guarded `GET /api/tests/{name}/preprocess/compare/xy` reads only the time,
+X and Y columns in bounded batches. It validates native time alignment before
+sampling and handles different Parquet row-group boundaries in the two saved
+versions. The response reports shared row indices, stride, any sparse fallback
+rows, and displayed versus full-interval finite-pair counts. Native coordinates
+and times retain float64 precision.
+
 ## Data and analysis behavior
 
 Name, durable source UUID, time values, sample count, saved test-point definitions,
@@ -176,6 +211,38 @@ sudo journalctl -u ptt-backend --since "15 minutes ago" --no-pager -n 150
 ```
 
 ## Verification
+
+XY comparison follow-up completed on 2026-10-10:
+
+- Full backend suite: 573 tests and 554 subtests pass. Ten new XY tests verify
+  independent paired coordinates, time/swapped/same axes, float64 precision,
+  shared sampling across different row groups, sparse fallback, gaps/nonfinite
+  pairs, stale/busy/corrupt sources and read-only hashes. A constructor-failure
+  regression fixed a shared Parquet schema-check file-handle leak on Windows.
+- All 145 frontend helper tests, production build and lint pass. Five new tests
+  cover query/identity validation, shared rows, sparse fallback, exact cursor
+  deltas and time axes. Independent backend/frontend reviews pass.
+- Nine native groups in `scripts/verify_preprocess_xy_comparison.py` pass on
+  `index-6CGizV2o.js` / `index-CfzACtv9.css`: independent SciPy values on both
+  filtered axes and same-row cursor deltas; styled searchable X/Y controls,
+  swap, time and same-variable axes; visibility, value zoom/pan/reset, Time
+  interval retention, native PNG, late/error/stale responses, shared sampling
+  refining to native pairs, and both themes at actual 100/125/150% desktop zoom.
+  Existing Analyze XY keeps its wheel/pan/reset behavior while Ctrl/Meta wheel
+  remains available to the browser. Screenshots and PNG visually reviewed.
+- All ten existing Time comparison browser groups pass on this build, including
+  filter-draft retention, envelopes, native values, cursor differences and
+  desktop layouts. Both suites leave all five fixture flights byte-identical;
+  no extra flights, unexpected browser errors or browser API writes. Owned
+  servers, profiles and datasets are cleaned up.
+
+Run `python -X utf8 scripts/verify_preprocess_xy_comparison.py` after building.
+Evidence: `%TEMP%\ptt-preprocess-xy-comparison-verification\results.json`,
+`xy-native-light.png`, `xy-selector-dark-1.5-True.png`,
+`xy-plot-dark-1.5-True.png`, `xy-large-sampled-dark.png` and `xy-comparison.png`.
+Run the Time regression with `python -X utf8 scripts/verify_preprocess_comparison.py`.
+Native scientific work uses Python 3.13; global Playwright only drives the browser.
+No production deployment; deploy frontend and backend together for the XY endpoint.
 
 Comparison follow-up completed on 2026-10-10:
 

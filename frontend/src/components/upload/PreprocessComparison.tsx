@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type Dispatch, type KeyboardEvent, type SetStateAction } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { AXIS_STYLE, PLOT_PADDING, TIME_AXIS_STYLE, plotSeriesColor, themeSeriesColor } from '../../constants/uplotTheme';
@@ -12,6 +12,8 @@ import { xPanZoomPlugin, type PanZoomControl } from '../../utils/uplotPanZoom';
 import { visibleYAutoFitPlugin, visibleYRange } from '../../utils/visibleYRange';
 import { downloadPlotPng } from '../../utils/plotPngExport';
 import { SearchableSelect } from '../controls/SearchableSelect';
+import PreprocessXYComparison from './PreprocessXYComparison';
+import type { PlotViewport } from '../../utils/plotViewport';
 import styles from './PreprocessComparison.module.css';
 
 interface Props {
@@ -36,12 +38,69 @@ export default function PreprocessComparison(props: Props) {
 }
 
 function SavedComparison({ name, snapshot, hasDraftChanges = false, onReload, expanded = false }: Props) {
-  const helpId = useId();
   const columns = snapshot.meta.columns.filter(column => column !== snapshot.meta.time_column);
   const savedFilters = snapshot.preprocessing?.filters ?? [];
   const [column, setColumn] = useState(() => savedFilters.find(entry => columns.includes(entry.column))?.column ?? columns[0] ?? '');
+  const [view, setView] = useState<'time' | 'xy'>('time');
+  const [x, setX] = useState(() => columns.find(value => value !== column) ?? snapshot.meta.time_column);
+  const [y, setY] = useState(column);
   const [display, setDisplay] = useState<Display>('both');
   const [range, setRange] = useState<Range | null>(null);
+  const [xyViewport, setXYViewport] = useState<PlotViewport | null>(null);
+  const supported = snapshot.preprocessing?.version === 2 && savedFilters.length > 0;
+  const options = (includeTime = false) => (includeTime ? snapshot.meta.columns : columns).map(value => ({ value, label: value,
+    description: value === snapshot.meta.time_column ? 'Time · seconds' : savedFilters.some(entry => entry.column === value) ? 'Preprocessed' : 'Unchanged',
+    group: value === snapshot.meta.time_column ? 'Recording time' : savedFilters.some(entry => entry.column === value) ? 'Preprocessed parameters' : 'Other parameters' }));
+  if (!supported) return <p className={styles.state}>Apply preprocessing filters to compare the saved result with its original data.</p>;
+  return <section className={styles.comparison} aria-label="Saved preprocessing comparison">
+    {hasDraftChanges && <p className={styles.draftNotice} role="status">You have unapplied filter changes. This comparison shows the currently saved result.</p>}
+    <div className={styles.viewControls}>
+      <div className={styles.display} role="group" aria-label="Comparison view">
+        <button type="button" aria-pressed={view === 'time'} onClick={() => setView('time')}>Time</button>
+        <button type="button" aria-pressed={view === 'xy'} onClick={() => setView('xy')}>XY scatter</button>
+      </div>
+      <div className={styles.display} role="group" aria-label="Comparison traces">
+        {(['both', 'original', 'filtered'] as const).map(mode => <button type="button" key={mode}
+          aria-pressed={display === mode} onClick={() => setDisplay(mode)}>{mode === 'both' ? 'Both' : mode === 'original' ? 'Original' : 'Filtered'}</button>)}
+      </div>
+    </div>
+    {view === 'time' ? <div className={styles.controls}>
+      <div className={styles.parameter}>
+        <span>Parameter</span>
+        <SearchableSelect value={column} onChange={setColumn} ariaLabel="Comparison parameter"
+          options={options()} optionNoun="parameter" searchPlaceholder="Find a parameter…" menuMaxWidth={560} />
+      </div>
+    </div> : <div className={styles.axisSelectors}>
+      <div className={styles.parameter}>
+        <span>X</span><SearchableSelect value={x} onChange={setX} ariaLabel="Comparison X variable"
+          options={options(true)} optionNoun="variable" searchPlaceholder="Find an X variable…" menuMaxWidth={560} />
+      </div>
+      <button type="button" className={styles.swapAxes} aria-label="Swap comparison axes" title="Swap X and Y"
+        onClick={() => { setX(y); setY(x); }}><span aria-hidden="true">⇄</span></button>
+      <div className={styles.parameter}>
+        <span>Y</span><SearchableSelect value={y} onChange={setY} ariaLabel="Comparison Y variable"
+          options={options(true)} optionNoun="variable" searchPlaceholder="Find a Y variable…" menuMaxWidth={560} />
+      </div>
+    </div>}
+    {view === 'time'
+      ? <TimeComparison name={name} snapshot={snapshot} onReload={onReload} expanded={expanded}
+          column={column} display={display} range={range} setRange={setRange} />
+      : <PreprocessXYComparison name={name} snapshot={snapshot} onReload={onReload} expanded={expanded}
+          x={x} y={y} display={display} range={range} onResetInterval={() => setRange(null)}
+          viewport={xyViewport} onViewportChange={setXYViewport} />}
+  </section>;
+}
+
+interface TimeProps extends Props {
+  column: string;
+  display: Display;
+  range: Range | null;
+  setRange: Dispatch<SetStateAction<Range | null>>;
+}
+
+function TimeComparison({ name, snapshot, onReload, expanded = false, column, display, range, setRange }: TimeProps) {
+  const helpId = useId();
+  const savedFilters = snapshot.preprocessing?.filters ?? [];
   const [retry, setRetry] = useState(0);
   const [loaded, setLoaded] = useState<{ key: string; data: PreprocessingComparisonData | null; error: string } | null>(null);
   const [box, setBox] = useState({ width: 0, height: 0 });
@@ -182,29 +241,13 @@ function SavedComparison({ name, snapshot, hasDraftChanges = false, onReload, ex
     } catch (reason) { if (!controller.signal.aborted) setExportError(errorText(reason)); }
     finally { if (!controller.signal.aborted) setExporting(false); }
   };
-  const changedParameter = (next: string) => { navigation.current?.cancel(); setColumn(next); setExportError(''); };
   const empty = !!data && ![data.original, data.filtered].some(values =>
     (data.mode === 'raw' ? values as ComparisonSamples : [...(values as ComparisonEnvelope).min, ...(values as ComparisonEnvelope).max])
       .some(value => value !== null));
 
   if (!supported) return <p className={styles.state}>Apply preprocessing filters to compare the saved result with its original data.</p>;
 
-  return <section className={styles.comparison} aria-label="Saved preprocessing comparison">
-    {hasDraftChanges && <p className={styles.draftNotice} role="status">You have unapplied filter changes. This comparison shows the currently saved result.</p>}
-    <div className={styles.controls}>
-      <div className={styles.parameter}>
-        <span>Parameter</span>
-        <SearchableSelect value={column} onChange={changedParameter} ariaLabel="Comparison parameter"
-          options={columns.map(value => ({ value, label: value,
-            description: savedFilters.some(entry => entry.column === value) ? 'Preprocessed' : 'Unchanged',
-            group: savedFilters.some(entry => entry.column === value) ? 'Preprocessed parameters' : 'Other parameters' }))}
-          optionNoun="parameter" searchPlaceholder="Find a parameter…" menuMaxWidth={560} />
-      </div>
-      <div className={styles.display} role="group" aria-label="Comparison traces">
-        {(['both', 'original', 'filtered'] as const).map(mode => <button type="button" key={mode}
-          aria-pressed={display === mode} onClick={() => setDisplay(mode)}>{mode === 'both' ? 'Both' : mode === 'original' ? 'Original' : 'Filtered'}</button>)}
-      </div>
-    </div>
+  return <>
     <div className={styles.recipe}>
       <span className={styles.savedBadge}>Saved data</span>
       <span className={currentFilter ? styles.recipeBadge : styles.unchangedBadge}>{currentFilter ? 'Applied filter' : 'Unchanged'}</span>
@@ -254,5 +297,5 @@ function SavedComparison({ name, snapshot, hasDraftChanges = false, onReload, ex
     {data?.mode === 'envelope' && <p className={styles.envelopeNote}>Each band shows its own minimum and maximum. Zoom in to inspect paired samples and exact differences.</p>}
     {!!data?.warnings.length && <details className={styles.warnings}><summary>Comparison details ({data.warnings.length})</summary>
       <ul>{data.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></details>}
-  </section>;
+  </>;
 }

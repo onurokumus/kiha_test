@@ -1,5 +1,37 @@
 # Implementation handoff
 
+## Complete: preprocessing XY comparison (2026-10-10)
+
+Compare data now has Time / XY scatter, the same searchable X/Y selectors,
+axis swap, Original/Filtered/Both, paired-row readouts and coordinate differences,
+zoom/pan/reset and PNG. Time is available on either axis. Switching views retains
+the Time parameter/recording interval and XY viewport. Value-axis zoom does not
+change the recording interval; the UI and exports explain sampling limits.
+
+The guarded, read-only `/preprocess/compare/xy` endpoint streams native pairs
+under one source lock, aligning different Parquet batch boundaries. A bounded,
+common row subset never fabricates XY coordinates from independent extrema.
+Gaps/nonfinite pairs are masked; sparse fallback retains visible valid pairs.
+No samples, flight identity or library entries change. Shared XY wheel handling
+allows ordinary dialog scrolling and leaves Ctrl/Meta wheel to the browser.
+A corrupt-Parquet test also fixed a shared schema-check file-handle leak.
+
+Verification: 573 backend tests/554 subtests, all 145 frontend helpers, build,
+lint and independent reviews pass. Nine native XY browser groups and all ten
+existing Time comparison groups pass on index-6CGizV2o.js / index-CfzACtv9.css.
+Independent SciPy coordinate/cursor checks, time/same/swapped axes, shared sampling,
+late/stale/error reads, PNG, keyboard, both themes, expand/restore, actual
+100/125/150% zoom, and existing Analyze XY gestures pass. Five fixture flight
+directories remain byte-identical; no unexpected browser errors/writes.
+Final screenshots/PNG reviewed; isolated servers, profiles and data cleaned up.
+
+Entry points: preprocess_compare.py, PreprocessComparison / PreprocessXYComparison,
+preprocessingXYComparison.ts and scripts/verify_preprocess_xy_comparison.py.
+Commands/evidence: docs/PREPROCESSING.md. Existing Vite size advisory and Starlette
+deprecation remain. Started clean at 857c491 on codex/ptt-ui-rework-2026-09-28;
+same-branch commit/push under prior authorization. No production deployment;
+deploy frontend and backend together. Next independent milestone: Phase 11b.
+
 ## Complete: preprocessing original comparison (2026-10-10)
 
 User requests styled comparison of saved filtered samples with retained originals.

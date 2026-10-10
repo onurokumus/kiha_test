@@ -32,6 +32,8 @@ docs/PLOT_APPEARANCE_VERIFICATION.md. Next independent milestone remains Phase 1
 
 ## Requested upload preprocessing (2026-10-09)
 
+- [x] Extend saved preprocessing comparison with an XY scatter view and matching searchable X/Y variable selectors. Preserve Original/Filtered/Both, paired native row identity, time-view state, read-only data, axis swap, zoom/pan/reset, PNG and clear sampling scope; verify numeric coordinates and desktop themes/keyboard/resize/zoom. Requested 2026-10-10 ahead of independent Phase 11b.
+
 - [x] Add a styled original-versus-filtered comparison for saved preprocessing: direct Uploads access and a Compare data tab, parameter selection, distinct traces, Both/Original/Filtered views, zoom/pan/reset and image export. Keep one flight, preserve unapplied filter drafts and all samples, separate plot filters, and verify paired native/envelope data plus desktop themes/resize/zoom/keyboard. Requested 2026-10-10 ahead of independent Phase 11b.
 
 Comparison complete: 563 backend tests/534 subtests, all 140 frontend helpers,

@@ -2,6 +2,13 @@
 .savedBadge { flex: none; padding: 3px 7px; border: 1px solid var(--border, #dfe4ec); border-radius: 4px; color: var(--muted, #626f83); font-size: 11px; }
 .draftNotice { margin: 0 0 14px; padding: 9px 12px; border-left: 3px solid var(--accent, #263685); background: var(--selected-bg, #edf1fb); color: var(--text-secondary, #41516b); font-size: 12px; }
 .controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; }
+.viewControls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 9px 16px; margin-bottom: 14px; }
+.axisSelectors { display: grid; grid-template-columns: minmax(0, 1fr) 32px minmax(0, 1fr); align-items: center; gap: 12px; }
+.axisSelectors .parameter { max-width: none; }
+.axisSelectors .parameter > span { width: 12px; font-weight: 650; color: var(--accent, #263685); }
+.swapAxes { width: 32px; height: 32px; padding: 0; border: 1px solid var(--border, #dfe4ec); border-radius: 4px; background: var(--surface, #fff); color: var(--muted, #626f83); font: inherit; font-size: 20px; cursor: pointer; }
+.swapAxes:hover { border-color: var(--border-strong, #bdcbe4); color: var(--accent, #263685); background: var(--hover-bg, #edf1f8); }
+.swapAxes:focus-visible, .display button:focus-visible, .plotActions button:focus-visible { outline: 2px solid var(--focus, #263685); outline-offset: 2px; }
 .parameter { display: flex; align-items: center; gap: 10px; flex: 1 1 280px; min-width: 0; max-width: 620px; }
 .parameter > span { color: var(--muted, #626f83); font-size: 12px; }
 .parameter > div { flex: 1; min-width: 0; }
@@ -11,6 +18,9 @@
 .display button[aria-pressed='true'] { border-color: var(--border-strong, #bdcbe4); color: var(--accent, #263685); background: var(--surface, #fff); font-weight: 650; }
 .recipe { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px 10px; padding: 12px 0; color: var(--text-secondary, #41516b); font-size: 12px; }
 .recipe > span:last-child { overflow-wrap: anywhere; }
+.xyRecipe { gap: 7px 18px; }
+.xyRecipe > span { min-width: 0; overflow-wrap: anywhere; }
+.xyRecipe b { margin-right: 5px; color: var(--muted, #626f83); font-size: 11px; }
 .recipeBadge, .unchangedBadge { flex: none; font-size: 11px; font-weight: 600; color: var(--accent, #263685); }
 .unchangedBadge { color: var(--muted, #626f83); }
 .plotFrame { overflow: hidden; border: 1px solid var(--border, #dfe4ec); border-radius: 6px; background: var(--surface, #fff); }
@@ -35,6 +45,11 @@
 .traceValue strong, .difference strong { font-weight: 600; color: var(--text, #202c42); }
 .originalSwatch, .filteredSwatch { display: inline-block; width: 20px; align-self: center; border-top: 2px solid; }
 .originalSwatch { border-top-style: dashed; }
+.originalPoint, .filteredPoint { display: inline-block; width: 8px; height: 8px; flex: none; align-self: center; border-radius: 50%; }
+.originalPoint { border: 1.5px solid; }
+.filteredPoint { width: 7px; height: 7px; }
+.xyReadout .traceValue { flex-wrap: wrap; min-width: 0; }
+.xyReadout strong { overflow-wrap: anywhere; }
 .difference { display: inline-flex; align-items: baseline; gap: 7px; margin-left: auto; color: var(--muted, #626f83); }
 .detailRow { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 5px 18px; margin-top: 9px; font-size: 10px; color: var(--muted, #626f83); }
 .detailRow p { margin: 0; }

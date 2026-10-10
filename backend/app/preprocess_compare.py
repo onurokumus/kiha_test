@@ -3,9 +3,12 @@
 Broad windows use both saved min/max pyramids with the same bucket boundaries.
 Exact difference statistics are only calculated when the complete native window
 fits the existing raw display budget; reduced extrema are never subtracted.
+XY comparison streams aligned native rows and uses one bounded common stride
+for both versions, with first-finite fallback for sparse recordings.
 """
 import logging
 import math
+from contextlib import closing
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
@@ -46,7 +49,9 @@ def _json(values: np.ndarray) -> list:
 
 
 def _schema(directory: Path, meta: dict, column: str) -> None:
-    with pq.ParquetFile(directory / 'data.parquet') as file:
+    # Own the file descriptor before Arrow opens it: a corrupt footer can make
+    # ParquetFile's constructor raise before its context manager can close it.
+    with (directory / 'data.parquet').open('rb') as stream, pq.ParquetFile(stream) as file:
         if file.metadata.num_rows != meta['n_rows']:
             raise ValueError('Stored sample counts do not match metadata.')
         if not {meta['time_column'], column}.issubset(file.schema_arrow.names):
@@ -136,6 +141,172 @@ def _envelope(directory: Path, tcol: str, column: str, level: int,
     invalid = ~np.isfinite(minimum) | ~np.isfinite(maximum)
     minimum[invalid] = maximum[invalid] = np.nan
     return times, (minimum, maximum)
+
+
+def _xy_pairs(original: Path, current: Path, tcol: str, x: str, y: str,
+              i0: int, i1: int, max_points: int, gaps: list[tuple[int, int]]) -> dict:
+    """Stream and validate both native grids before sampling common XY rows.
+
+    Physical row-group boundaries can differ after preprocessing. Align chunks
+    by absolute row, never by coordinates, time joins, or independent extrema.
+    Memory stays bounded by two Arrow batches plus the returned point budget.
+    """
+    columns = list(dict.fromkeys([tcol, x, y]))
+    stride = max(1, math.ceil((i1 - i0) / max_points))
+    records = []
+    first_finite = [None, None]
+    native_finite = [0, 0]
+    sampled_finite = [0, 0]
+    row, last_time = i0, None
+    arrays = [None, None]
+    offsets = [0, 0]
+    with closing(store._iter_parquet_slice(original / 'data.parquet', columns, i0, i1)) as orig, \
+            closing(store._iter_parquet_slice(current / 'data.parquet', columns, i0, i1)) as saved:
+        readers = [orig, saved]
+        while row < i1:
+            for version, reader in enumerate(readers):
+                if arrays[version] is None or offsets[version] == len(arrays[version][tcol]):
+                    entry = next(reader, None)
+                    if entry is None or entry[0] != row or entry[1].num_rows < 1:
+                        raise ValueError('Stored XY sample rows are incomplete or inconsistent.')
+                    arrays[version] = {c: store._batch_float64(entry[1], c) for c in columns}
+                    offsets[version] = 0
+            count = min(len(arrays[v][tcol]) - offsets[v] for v in (0, 1))
+            count = min(count, i1 - row)
+            parts = [{c: values[offsets[v]:offsets[v] + count]
+                      for c, values in arrays[v].items()} for v in (0, 1)]
+            times = parts[0][tcol]
+            _aligned(times, parts[1][tcol], count)
+            if last_time is not None and times[0] <= last_time:
+                raise ValueError('Original and processed sample times are not increasing.')
+            last_time = times[-1]
+            gap_mask = np.zeros(count, dtype=bool)
+            for lo, hi in gaps:
+                if lo < row + count and hi > row:
+                    gap_mask[max(0, lo - row):min(count, hi - row)] = True
+            pairs = []
+            finite = []
+            for version, part in enumerate(parts):
+                valid = np.isfinite(part[x]) & np.isfinite(part[y]) & ~gap_mask
+                finite.append(valid)
+                native_finite[version] += int(valid.sum())
+                pairs.append((np.where(valid, part[x], np.nan),
+                              np.where(valid, part[y], np.nan)))
+
+            def record(index):
+                return (row + index, float(times[index]),
+                        float(pairs[0][0][index]), float(pairs[0][1][index]),
+                        float(pairs[1][0][index]), float(pairs[1][1][index]))
+
+            for version in (0, 1):
+                if first_finite[version] is None and finite[version].any():
+                    first_finite[version] = record(int(np.flatnonzero(finite[version])[0]))
+            sampled = np.arange((-(row - i0)) % stride, count, stride, dtype=np.int64)
+            records.extend(record(int(index)) for index in sampled)
+            for version in (0, 1):
+                sampled_finite[version] += int(finite[version][sampled].sum())
+                offsets[version] += count
+            row += count
+        # Keep reader lifetime inside the data lock, including empty windows.
+        for version, reader in enumerate(readers):
+            if ((arrays[version] is not None and offsets[version] != len(arrays[version][tcol]))
+                    or next(reader, None) is not None):
+                raise ValueError('Stored XY sample counts do not match the requested window.')
+
+    # A uniform display stride can miss every finite point in a sparse source.
+    # Add each affected source's first finite row to BOTH versions; replacing a
+    # final ordinary stride row preserves the shared indices and point budget.
+    fallback = {first_finite[v][0]: first_finite[v] for v in (0, 1)
+                if not sampled_finite[v] and first_finite[v] is not None}
+    if fallback:
+        # Keep a version's only already-visible point when making room for the
+        # other version's fallback, even when that point is the final row.
+        protected = {next((entry[0] for entry in records if math.isfinite(entry[2 + v * 2])), None)
+                     for v in (0, 1)}
+        excess = max(0, len(records) + len(fallback) - max_points)
+        if excess:
+            remove = {entry[0] for entry in
+                      [entry for entry in reversed(records) if entry[0] not in protected][:excess]}
+            records = [entry for entry in records if entry[0] not in remove]
+        records += list(fallback.values())
+        records.sort(key=lambda entry: entry[0])
+    times = np.array([entry[1] for entry in records], dtype=np.float64)
+    result = {'stride': stride, 'indices': [entry[0] for entry in records],
+              't': _json(times), 'fallback_indices': sorted(fallback), 'summary': {}}
+    for version, key in enumerate(('original', 'filtered')):
+        xv = np.array([entry[2 + version * 2] for entry in records], dtype=np.float64)
+        yv = np.array([entry[3 + version * 2] for entry in records], dtype=np.float64)
+        finite_count = int(np.count_nonzero(np.isfinite(xv) & np.isfinite(yv)))
+        result[key] = {'x': _json(xv), 'y': _json(yv)}
+        result['summary'][key] = {'finite_pairs': finite_count,
+                                 'missing_pairs': len(records) - finite_count,
+                                 'native_finite_pairs': native_finite[version],
+                                 'native_missing_pairs': i1 - i0 - native_finite[version]}
+    return result
+
+
+@router.get('/api/tests/{name}/preprocess/compare/xy')
+def compare_preprocess_xy(
+    name: str,
+    x: Annotated[str, Query(min_length=1, max_length=255)],
+    y: Annotated[str, Query(min_length=1, max_length=255)],
+    source_id: UUID,
+    source_revision: Annotated[str, Query(min_length=1, max_length=128)],
+    t0: Annotated[float | None, Query(allow_inf_nan=False)] = None,
+    t1: Annotated[float | None, Query(allow_inf_nan=False)] = None,
+    max_points: Annotated[int, Query(ge=100, le=12000)] = 6000,
+):
+    if t0 is not None and t1 is not None and t1 <= t0:
+        raise HTTPException(400, 'Choose an end time after the start time.')
+    _available(name)
+    with data_read(name):
+        directory, meta = _available(name)
+        try:
+            if analysis_sources.read_identity(directory) is None:
+                raise ValueError('Source identity is unavailable.')
+            source = preprocess._source(name)
+            if source['id'] != str(source_id) or source['revision'] != source_revision:
+                raise HTTPException(409, 'This flight changed. Reload the comparison to use its current data.')
+            original, baseline = preprocess.original_data(directory, meta)
+            for key in ('columns', 'time_column', 'fs_hz', 'n_rows', 't_start',
+                        'duration_s', 'time_gap_ranges', 'acquisition_gap_ranges'):
+                if meta.get(key) != baseline.get(key):
+                    raise ValueError('Original and processed recording metadata do not match.')
+            if x not in meta['columns'] or y not in meta['columns']:
+                raise HTTPException(400, 'Choose X and Y parameters available in this flight.')
+            fs, count = float(meta['fs_hz']), meta['n_rows']
+            start = float(meta.get('t_start') or 0)
+            if (not math.isfinite(fs) or fs <= 0 or type(count) is not int
+                    or count < 1 or not math.isfinite(start) or not math.isfinite(start + count / fs)):
+                raise ValueError('Recording sample bounds are invalid.')
+            for axis in set((x, y)):
+                _schema(directory, meta, axis)
+                _schema(original, baseline, axis)
+            i0, i1 = store.window_bounds(meta, t0, t1)
+            i0, i1 = min(count, i0), min(count, i1)
+            gaps = _gaps(baseline, i0, i1)
+            pairs = _xy_pairs(original, directory, meta['time_column'], x, y,
+                              i0, i1, max_points, gaps)
+            messages = []
+            if pairs['stride'] > 1:
+                messages.append('XY uses a common subset of native sample rows for both versions. '
+                                'Sampling can omit brief events and extrema; narrow the recording time window '
+                                'for more detail. Zooming the X/Y value axes does not load additional samples.')
+            if pairs['fallback_indices']:
+                messages.append('The regular sample stride missed all finite pairs for a version. '
+                                'Its first finite row is included in both versions within the point limit.')
+            if gaps:
+                messages.append('Known acquisition-gap rows are omitted from both point clouds, including previously filled values.')
+            return {'source': source, 'x': x, 'y': y,
+                    'mode': 'raw' if pairs['stride'] == 1 else 'sampled',
+                    'n_raw': i1 - i0, 'n_sampled': len(pairs['indices']), 'i0': i0, 'i1': i1,
+                    **pairs, 'range': {'start': start, 'end': start + count / fs},
+                    'gaps': [{'start': start + lo / fs, 'end': start + hi / fs} for lo, hi in gaps],
+                    'warnings': messages}
+        except (OSError, ValueError, KeyError, TypeError, OverflowError, pl.exceptions.PolarsError):
+            logger.warning("XY comparison source verification failed for '%s'", name, exc_info=True)
+            raise HTTPException(409, 'The original and processed data could not be compared safely. '
+                                'Check this flight\'s stored files and reload the comparison.') from None
 
 
 @router.get('/api/tests/{name}/preprocess/compare')

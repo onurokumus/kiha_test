@@ -240,7 +240,7 @@ export function boxZoomPlugin(commitY: (range: AxisRange) => void = () => {}): u
  * - plain left-drag: supplied by the adjacent boxZoomPlugin
  * - double-click: left to uPlot's built-in auto-range reset
  */
-export function xyPanZoomPlugin(): uPlot.Plugin {
+export function xyPanZoomPlugin(wheelMode: 'zoom' | 'scroll' = 'zoom'): uPlot.Plugin {
   let destroyed = false;
   let detachReadyListeners: (() => void) | null = null;
   let finishPan: (() => void) | null = null;
@@ -257,6 +257,8 @@ export function xyPanZoomPlugin(): uPlot.Plugin {
     hooks: {
       ready: (u) => {
         const onWheel = (e: WheelEvent) => {
+          // Preserve desktop browser zoom and scrolling inside plot dialogs.
+          if (e.ctrlKey || e.metaKey || (wheelMode === 'scroll' && !e.shiftKey && !e.altKey)) return;
           const xMin = u.scales.x.min;
           const xMax = u.scales.x.max;
           const yMin = u.scales.y.min;
